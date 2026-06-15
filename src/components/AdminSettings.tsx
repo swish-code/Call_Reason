@@ -278,7 +278,7 @@ export default function AdminSettings({ currentUser }: AdminSettingsProps) {
         <div className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-3xl space-y-6">
           <div>
             <h3 className="text-sm font-extrabold text-white">2. Manage Case Categories</h3>
-            <p className="text-xs text-[#71717a] mt-1 font-light">Create classification terms to seed the Gemini classifier and telemetry.</p>
+            <p className="text-xs text-[#71717a] mt-1 font-light">Create classification terms used across logging forms and reporting telemetry.</p>
           </div>
 
           <form onSubmit={handleAddCategory} className="flex gap-2">

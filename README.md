@@ -22,7 +22,6 @@ seeded with demo data on first run.
    `npm install`
 2. Configure environment variables in `.env.local`:
    - `DATABASE_URL` – PostgreSQL connection string (required)
-   - `GEMINI_API_KEY` – your Gemini API key (enables AI call classification)
    - `JWT_SECRET` – secret used to sign auth tokens (recommended)
    - `PGSSL=require` – set when connecting over SSL (e.g. a public proxy URL)
 3. Run the app:
@@ -36,4 +35,3 @@ Set the following variables on the app service:
 - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
 - `NODE_ENV` = `production`
 - `JWT_SECRET` = a long random string
-- `GEMINI_API_KEY` = your Gemini API key

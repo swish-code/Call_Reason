@@ -5,8 +5,6 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB } from "./server/db.js";
-import { GoogleGenAI, Type } from "@google/genai";
-import { Interaction } from "./src/types.js";
 
 dotenv.config();
 
@@ -16,19 +14,6 @@ const PORT = Number(process.env.PORT) || 3000;
 // Increase request size limit for base64 file uploads
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-// Shared server-side Gemini initialization as per instructions
-let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
-}
 
 // ----------------------------------------------------
 // Authentication & JWT Security Support
@@ -663,127 +648,6 @@ app.get("/api/reports/monthly", authenticateJWT, requireLeaderOrAdmin, asyncHand
     averageHandlingTime: "4m 12s",
     followUpRate,
   });
-}));
-
-// ----------------------------------------------------
-// AI Auto-Classification API using Gemini SDK (Protected)
-// ----------------------------------------------------
-app.post("/api/ai/classify", authenticateJWT, asyncHandler(async (req, res) => {
-  const { notes } = req.body;
-
-  if (!notes || notes.trim() === "") {
-    return res.status(400).json({ error: "Please enter call details for AI auto-classification." });
-  }
-
-  if (!ai) {
-    return res.status(503).json({
-      error: "Gemini API Key is not set up correctly. Please add it from the Settings menu.",
-    });
-  }
-
-  const activeBrands = (await DB.getBrands()).map((b) => b.brand_name);
-  const activeCategories = (await DB.getCategories()).map((c) => c.category_name);
-
-  const systemInstruction = `You are a professional sales representative and an AI assistant for a CRM Call Logging and customer service system.
-Your task is to analyze the phone call notes (written in English or Arabic) and accurately extract the following fields in accordance with the system constraints.
-Current database brand options are: [${activeBrands.join(", ")}].
-Current database category options are: [${activeCategories.join(", ")}].
-
-You must classify the brand and category based on these options as a top priority. If the brand does not match any registered option, choose the most appropriate one or 'Other' or a custom value and write its name in the brand field.
-Accepted types and properties:
-- interaction_type: must be strictly one of: ["SR", "Complaint", "Inquiry", "Escalation", "Follow Up", "Feedback"]
-- category: must be strictly one of: [${activeCategories.map(c => `"${c}"`).join(", ")}]
-- call_direction: must be strictly "Inbound" or "Outbound".
-- priority: must be strictly one of: ["Low", "Medium", "High", "Critical"]
-- status: must be strictly one of: ["Open", "Pending", "Resolved", "Closed"]
-- summary: A precise and professional summary of the conversation in English.
-- action_taken: A professional suggested or taken action to resolve the call, in English.
-- follow_up_required: boolean value (true or false)
-- follow_up_date: expected follow-up date in YYYY-MM-DD format if required.
-- follow_up_notes: details for follow-up if applicable.
-
-You must respond strictly with valid JSON conforming to the schema specification. Do not write any other text or markdown block indicators outside of the JSON output.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Analyze the following call and accurately extract its details. Formulate the summary and action_taken in English:\n\n"${notes}"`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          required: [
-            "interaction_type",
-            "brand",
-            "call_direction",
-            "category",
-            "priority",
-            "status",
-            "summary",
-            "action_taken",
-            "follow_up_required",
-          ],
-          properties: {
-            interaction_type: {
-              type: Type.STRING,
-              description: "Must be SR, Complaint, Inquiry, Escalation, Follow Up, or Feedback",
-            },
-            brand: {
-              type: Type.STRING,
-              description: "Highly aligned brand value matching registered list",
-            },
-            call_direction: {
-              type: Type.STRING,
-              description: "Inbound or Outbound",
-            },
-            category: {
-              type: Type.STRING,
-              description: "Matched interaction category",
-            },
-            priority: {
-              type: Type.STRING,
-              description: "Priority: Low, Medium, High, or Critical",
-            },
-            status: {
-              type: Type.STRING,
-              description: "Status: Open, Pending, Resolved, or Closed",
-            },
-            summary: {
-              type: Type.STRING,
-              description: "English professional summarization of the raw call notes",
-            },
-            action_taken: {
-              type: Type.STRING,
-              description: "English suggested or actual action taken to resolve the customer's request",
-            },
-            follow_up_required: {
-              type: Type.BOOLEAN,
-              description: "True if follow-up is necessary based on the issue, otherwise false",
-            },
-            follow_up_date: {
-              type: Type.STRING,
-              description: "If follow_up_required is true, a plausible date YYYY-MM-DD, else empty",
-            },
-            follow_up_notes: {
-              type: Type.STRING,
-              description: "Notes for the future agent doing the follow-up work",
-            },
-          },
-        },
-      },
-    });
-
-    const jsonText = response.text || "{}";
-    const result = JSON.parse(jsonText.trim());
-    res.json(result);
-  } catch (error: any) {
-    console.error("Gemini Classify Error:", error);
-    res.status(500).json({
-      error: "An error occurred while communicating with Gemini for call classification. Please check your API key or perform manual logging.",
-      details: error.message,
-    });
-  }
 }));
 
 // ----------------------------------------------------

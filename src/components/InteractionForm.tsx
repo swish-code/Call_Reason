@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Brand, Category, User, InteractionType, CommunicationType, CallDirection, PriorityLevel, InteractionStatus } from "../types.js";
-import { Phone, UserIcon, ShieldAlert, CheckSquare, Sparkles, AlertCircle, FilePlus, Eye, Clock, Calendar, Check, Send, Trash, Loader2 } from "lucide-react";
+import { Phone, UserIcon, ShieldAlert, CheckSquare, AlertCircle, FilePlus, Eye, Clock, Calendar, Check, Send, Trash, Loader2 } from "lucide-react";
 import { apiFetch } from "../lib/api.ts";
 
 interface InteractionFormProps {
@@ -90,12 +90,6 @@ export default function InteractionForm({ currentUser, onSuccess }: InteractionF
   const [followUpNotes, setFollowUpNotes] = useState(FOLLOW_UP_NOTES_LIST[0]);
   const [attachments, setAttachments] = useState<FileAttachmentInput[]>([]);
 
-  // AI Assistant raw notes paste
-  const [aiNotes, setAiNotes] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiSuccessMessage, setAiSuccessMessage] = useState("");
-  const [aiError, setAiError] = useState("");
-
   // General Form States
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState("");
@@ -123,80 +117,6 @@ export default function InteractionForm({ currentUser, onSuccess }: InteractionF
     };
     loadFields();
   }, []);
-
-  // Handle AI Call Classifier trigger call
-  const handleAICallAnalyze = async () => {
-    if (!aiNotes.trim()) {
-      setAiError("Please type or paste call notes first.");
-      return;
-    }
-
-    try {
-      setAiLoading(true);
-      setAiError("");
-      setAiSuccessMessage("");
-
-      const response = await apiFetch("/api/ai/classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: aiNotes })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "A problem occurred during AI analysis");
-      }
-
-      const parsed = await response.json();
-
-      // Form fill operations with mapping defaults
-      if (parsed.interaction_type) setInteractionType(parsed.interaction_type);
-      if (parsed.call_direction) setCallDirection(parsed.call_direction);
-      if (parsed.priority) setPriority(parsed.priority);
-      if (parsed.status) setStatus(parsed.status);
-      if (parsed.summary) setSummary(parsed.summary);
-      if (parsed.action_taken) setActionTaken(parsed.action_taken);
-      
-      // Handle Brand Mapping
-      if (parsed.brand) {
-        const matched = brands.some(b => b.brand_name.toLowerCase() === parsed.brand.toLowerCase());
-        if (matched) {
-          setSelectedBrand(parsed.brand);
-        } else {
-          // Check custom brand selection
-          setSelectedBrand("Custom Value");
-          setCustomBrand(parsed.brand);
-        }
-      }
-
-      // Handle Category Mapping
-      if (parsed.category) {
-        const matchedCat = categories.some(c => c.category_name.toLowerCase() === parsed.category.toLowerCase());
-        if (matchedCat) {
-          setSelectedCategory(parsed.category);
-        } else {
-          if (categories.length > 0) {
-            setSelectedCategory(categories[0].category_name); // back up matching or other
-          }
-        }
-      }
-
-      // Handle follow ups
-      if (parsed.follow_up_required !== undefined) {
-        setFollowUpRequired(!!parsed.follow_up_required);
-        if (parsed.follow_up_required) {
-          if (parsed.follow_up_date) setFollowUpDate(parsed.follow_up_date);
-          if (parsed.follow_up_notes) setFollowUpNotes(parsed.follow_up_notes);
-        }
-      }
-
-      setAiSuccessMessage("Call details classified and form fields populated successfully!");
-    } catch (err: any) {
-      setAiError(err.message || "Sorry, AI classification failed. Please fill out the form manually.");
-    } finally {
-      setAiLoading(false);
-    }
-  };
 
   // Drag and Drop files uploader setup
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -290,74 +210,10 @@ export default function InteractionForm({ currentUser, onSuccess }: InteractionF
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start animate-fade-in text-[#e4e4e7]">
-      
-      {/* AI Assistant Call Analysis Helper (Left Bar on Desktops) */}
-      <div className="bg-[#121214] text-[#e4e4e7] p-6 rounded-3xl lg:col-span-4 border border-[#27272a] shadow-xl space-y-5 relative">
-        <div className="absolute right-4 top-4 bg-blue-600/10 p-2 rounded-xl text-blue-400 border border-blue-500/20">
-          <Sparkles className="w-5 h-5 animate-pulse" />
-        </div>
-        
-        <div>
-          <h2 className="text-md font-extrabold text-white flex items-center gap-2 pr-10">
-            Automated AI Assistant
-          </h2>
-          <p className="text-xs text-[#71717a] mt-1.5 font-light leading-relaxed">
-            Paste client conversation details or quick raw notes. The AI system (Gemini) will automatically analyze the call, classify priority & brand, write a precise summary, and populate the form fields instantaneously!
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          <label className="text-xs font-bold text-zinc-300 block">Call Text or Raw Notes:</label>
-          <textarea
-            value={aiNotes}
-            onChange={(e) => setAiNotes(e.target.value)}
-            placeholder="e.g., Customer called complaining about delayed food delivery on Talabat. The food arrived cold. He was upset and demanded a refund. We escalated to the branch and promised to follow up tomorrow..."
-            rows={7}
-            className="w-full p-4 bg-[#0a0a0b] text-[#e4e4e7] border border-[#27272a] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition leading-relaxed font-sans placeholder:text-zinc-600"
-          ></textarea>
-        </div>
-
-        {aiError && (
-          <div className="flex bg-rose-550/10 border border-rose-500/20 text-rose-300 p-3.5 rounded-2xl text-xs gap-2 items-center">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <p>{aiError}</p>
-          </div>
-        )}
-
-        {aiSuccessMessage && (
-          <div className="flex bg-emerald-555/10 border border-emerald-500/20 text-emerald-300 p-3.5 rounded-2xl text-xs gap-2 items-center">
-            <Check className="w-4 h-4 shrink-0 bg-emerald-500 text-slate-950 rounded-full p-0.5" />
-            <p className="font-medium">{aiSuccessMessage}</p>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={handleAICallAnalyze}
-          disabled={aiLoading}
-          className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 active:scale-95 disabled:opacity-50 text-white font-extrabold rounded-2xl text-xs shadow-lg shadow-blue-500/10 transition flex items-center justify-center gap-2"
-        >
-          {aiLoading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Classifying call & preparing form...
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              Classify Call with AI 🌟
-            </>
-          )}
-        </button>
-
-        <div className="pt-3 border-t border-[#27272a]/80 text-[10px] text-[#71717a] text-center">
-          Supports highly accurate Arabic speech & dialect interpretation
-        </div>
-      </div>
+    <div className="animate-fade-in text-[#e4e4e7]">
 
       {/* Main CRM Interaction Logger Form */}
-      <form onSubmit={handleSubmit} className="lg:col-span-8 bg-[#121214] border border-[#27272a] rounded-3xl p-6 md:p-8 shadow-xl space-y-8 relative overflow-hidden text-[#e4e4e7]">
+      <form onSubmit={handleSubmit} className="max-w-4xl mx-auto bg-[#121214] border border-[#27272a] rounded-3xl p-6 md:p-8 shadow-xl space-y-8 relative overflow-hidden text-[#e4e4e7]">
         
         {formSuccess && (
           <div className="absolute inset-0 bg-[#121214]/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-center animate-fade-in">

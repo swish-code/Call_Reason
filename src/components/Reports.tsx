@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { DailyReportData, MonthlyReportData, User } from "../types.js";
-import { FileText, Printer, Download, Sparkles, TrendingUp, Award, Clock, Calendar, CheckSquare, BarChart } from "lucide-react";
+import { FileText, Printer, Download, TrendingUp, Award, Clock, Calendar, CheckSquare, BarChart } from "lucide-react";
 import { downloadCSV, formatDate } from "../utils.js";
 import { apiFetch } from "../lib/api.ts";
 

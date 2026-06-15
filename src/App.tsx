@@ -18,9 +18,8 @@ import {
   Lock, 
   Building2, 
   HelpCircle, 
-  Menu, 
+  Menu,
   X,
-  Sparkles,
   ChevronLeft,
   ChevronRight,
   UserCheck,
@@ -108,7 +107,7 @@ export default function App() {
             
             <h1 className="text-lg font-extrabold text-white tracking-tight">Advanced CRM & Support System</h1>
             <p className="text-xs text-[#71717a] font-light max-w-sm mx-auto">
-              Portal for logging, managing communication interactions, and monitoring support tickets with AI classification.
+              Portal for logging, managing communication interactions, and monitoring support tickets.
             </p>
           </div>
 
