@@ -8,13 +8,32 @@ This contains everything you need to run your app locally.
 
 View your app in AI Studio: https://ai.studio/apps/9c53cf2d-7720-41d5-94ca-e09946ee7b98
 
+## Data storage
+
+The app persists all data (users, interactions, brands, categories, audit logs)
+in **PostgreSQL**. The database schema is created automatically on startup and
+seeded with demo data on first run.
+
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:**  Node.js, a PostgreSQL database
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Configure environment variables in `.env.local`:
+   - `DATABASE_URL` – PostgreSQL connection string (required)
+   - `GEMINI_API_KEY` – your Gemini API key (enables AI call classification)
+   - `JWT_SECRET` – secret used to sign auth tokens (recommended)
+   - `PGSSL=require` – set when connecting over SSL (e.g. a public proxy URL)
 3. Run the app:
    `npm run dev`
+
+## Deploy on Railway
+
+The app reads `process.env.PORT` and connects to the linked Postgres service.
+Set the following variables on the app service:
+
+- `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
+- `NODE_ENV` = `production`
+- `JWT_SECRET` = a long random string
+- `GEMINI_API_KEY` = your Gemini API key

@@ -11,7 +11,7 @@ import { Interaction } from "./src/types.js";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Increase request size limit for base64 file uploads
 app.use(express.json({ limit: "50mb" }));
@@ -68,16 +68,27 @@ const requireLeaderOrAdmin = (req: any, res: any, next: any) => {
   }
 };
 
+// Wrap async route handlers so rejected promises become 500s instead of
+// crashing the process with an unhandled rejection.
+const asyncHandler = (fn: (req: any, res: any) => Promise<any>) => (req: any, res: any) => {
+  Promise.resolve(fn(req, res)).catch((err) => {
+    console.error("[CRM Server] Unhandled route error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error. Please try again." });
+    }
+  });
+};
+
 // ----------------------------------------------------
 // Authentication API
 // ----------------------------------------------------
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", asyncHandler(async (req, res) => {
   const { email, password } = req.body; // Represents either email or username input
   if (!email || !password) {
     return res.status(400).json({ error: "Please enter your email/username and password." });
   }
 
-  const user = DB.getUserByUsernameOrEmail(email);
+  const user = await DB.getUserByUsernameOrEmail(email);
   if (!user) {
     return res.status(401).json({ error: "Invalid credentials. Please try again." });
   }
@@ -105,7 +116,7 @@ app.post("/api/auth/login", (req, res) => {
   );
 
   // Success login log
-  DB.addAuditLog({
+  await DB.addAuditLog({
     operator_id: user.id,
     operator_name: user.full_name,
     action: "User Login",
@@ -124,18 +135,18 @@ app.post("/api/auth/login", (req, res) => {
   };
 
   res.json(userData);
-});
+}));
 
 // ----------------------------------------------------
 // Users Management API (Requires Admin)
 // ----------------------------------------------------
-app.get("/api/users", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
+app.get("/api/users", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
   // Team leaders and admins can inspect users (e.g. view team)
-  const users = DB.getUsers().map(({ password_hash, ...u }) => u);
+  const users = (await DB.getUsers()).map(({ password_hash, ...u }) => u);
   res.json(users);
-});
+}));
 
-app.post("/api/users", authenticateJWT, requireAdmin, (req: any, res: any) => {
+app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { full_name, username, email, password, role, status } = req.body;
 
   if (!full_name || !username || !email || !password || !role || !status) {
@@ -143,8 +154,8 @@ app.post("/api/users", authenticateJWT, requireAdmin, (req: any, res: any) => {
   }
 
   // Conflict validation
-  const existingEmail = DB.getUserByEmail(email);
-  const existingUsername = DB.getUsers().find(
+  const existingEmail = await DB.getUserByEmail(email);
+  const existingUsername = (await DB.getUsers()).find(
     (u) => u.username.toLowerCase() === username.toLowerCase()
   );
 
@@ -159,7 +170,7 @@ app.post("/api/users", authenticateJWT, requireAdmin, (req: any, res: any) => {
   const password_hash = bcrypt.hashSync(password, saltRounds);
   const nowString = new Date().toISOString();
 
-  const newUser = DB.addUser({
+  const newUser = await DB.addUser({
     id: "user-" + Date.now(),
     full_name,
     name: full_name,
@@ -174,7 +185,7 @@ app.post("/api/users", authenticateJWT, requireAdmin, (req: any, res: any) => {
   });
 
   // Safe logging
-  DB.addAuditLog({
+  await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
     action: "Create User",
@@ -183,25 +194,25 @@ app.post("/api/users", authenticateJWT, requireAdmin, (req: any, res: any) => {
 
   const { password_hash: _, ...safeUser } = newUser;
   res.status(201).json(safeUser);
-});
+}));
 
-app.put("/api/users/:id", authenticateJWT, requireAdmin, (req: any, res: any) => {
+app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { full_name, username, email, role, status, password } = req.body;
 
-  const targetUser = DB.getUserById(id);
+  const targetUser = await DB.getUserById(id);
   if (!targetUser) {
     return res.status(404).json({ error: "The user requested for update does not exist in the system." });
   }
 
   // Match conflicts
   if (email && email !== targetUser.email) {
-    if (DB.getUserByEmail(email)) {
+    if (await DB.getUserByEmail(email)) {
       return res.status(400).json({ error: "The new email is already in use by another account." });
     }
   }
   if (username && username !== targetUser.username) {
-    const conflicts = DB.getUsers().find(
+    const conflicts = (await DB.getUsers()).find(
       (u) => u.username.toLowerCase() === username.toLowerCase()
     );
     if (conflicts) {
@@ -222,10 +233,10 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, (req: any, res: any) =>
     updates.password_hash = bcrypt.hashSync(password, 10);
   }
 
-  const updatedUser = DB.updateUser(id, updates);
+  const updatedUser = await DB.updateUser(id, updates);
 
   // Safe logging
-  DB.addAuditLog({
+  await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
     action: "Edit User",
@@ -234,24 +245,24 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, (req: any, res: any) =>
 
   const { password_hash: _, ...safeUser } = updatedUser!;
   res.json(safeUser);
-});
+}));
 
-app.delete("/api/users/:id", authenticateJWT, requireAdmin, (req: any, res: any) => {
+app.delete("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   if (id === req.user.id) {
     return res.status(400).json({ error: "You cannot delete your own logged-in account." });
   }
 
-  const targetUser = DB.getUserById(id);
+  const targetUser = await DB.getUserById(id);
   if (!targetUser) {
     return res.status(404).json({ error: "User not found for deletion." });
   }
 
-  DB.deleteUser(id);
+  await DB.deleteUser(id);
 
   // Safe logging
-  DB.addAuditLog({
+  await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
     action: "Delete User",
@@ -259,9 +270,9 @@ app.delete("/api/users/:id", authenticateJWT, requireAdmin, (req: any, res: any)
   });
 
   res.json({ message: "User account deleted successfully." });
-});
+}));
 
-app.put("/api/users/:id/reset-password", authenticateJWT, requireAdmin, (req: any, res: any) => {
+app.put("/api/users/:id/reset-password", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { password } = req.body;
 
@@ -269,16 +280,16 @@ app.put("/api/users/:id/reset-password", authenticateJWT, requireAdmin, (req: an
     return res.status(400).json({ error: "New password is required." });
   }
 
-  const targetUser = DB.getUserById(id);
+  const targetUser = await DB.getUserById(id);
   if (!targetUser) {
     return res.status(404).json({ error: "User not found for password reset." });
   }
 
   const password_hash = bcrypt.hashSync(password, 10);
-  DB.updateUser(id, { password_hash });
+  await DB.updateUser(id, { password_hash });
 
   // Safe logging
-  DB.addAuditLog({
+  await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
     action: "Password Reset",
@@ -286,78 +297,78 @@ app.put("/api/users/:id/reset-password", authenticateJWT, requireAdmin, (req: an
   });
 
   res.json({ message: "Password reset successfully." });
-});
+}));
 
 // Audit Logs list API
-app.get("/api/audit-logs", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
-  res.json(DB.getAuditLogs());
-});
+app.get("/api/audit-logs", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  res.json(await DB.getAuditLogs());
+}));
 
 // ----------------------------------------------------
 // Brands API (Protected)
 // ----------------------------------------------------
-app.get("/api/brands", authenticateJWT, (req: any, res: any) => {
-  res.json(DB.getBrands());
-});
+app.get("/api/brands", authenticateJWT, asyncHandler(async (req, res) => {
+  res.json(await DB.getBrands());
+}));
 
-app.post("/api/brands", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
+app.post("/api/brands", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
   const { name } = req.body;
   if (!name || name.trim() === "") {
     return res.status(400).json({ error: "Brand name is required" });
   }
-  const brand = DB.addBrand(name.trim());
+  const brand = await DB.addBrand(name.trim());
   res.status(201).json(brand);
-});
+}));
 
-app.delete("/api/brands/:id", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
-  const success = DB.deleteBrand(req.params.id);
+app.delete("/api/brands/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const success = await DB.deleteBrand(req.params.id);
   if (success) {
     res.json({ message: "Brand deleted successfully" });
   } else {
     res.status(404).json({ error: "Brand not found" });
   }
-});
+}));
 
 // ----------------------------------------------------
 // Categories API (Protected)
 // ----------------------------------------------------
-app.get("/api/categories", authenticateJWT, (req: any, res: any) => {
-  res.json(DB.getCategories());
-});
+app.get("/api/categories", authenticateJWT, asyncHandler(async (req, res) => {
+  res.json(await DB.getCategories());
+}));
 
-app.post("/api/categories", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
+app.post("/api/categories", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
   const { name } = req.body;
   if (!name || name.trim() === "") {
     return res.status(400).json({ error: "Category name is required" });
   }
-  const category = DB.addCategory(name.trim());
+  const category = await DB.addCategory(name.trim());
   res.status(201).json(category);
-});
+}));
 
-app.delete("/api/categories/:id", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
-  const success = DB.deleteCategory(req.params.id);
+app.delete("/api/categories/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const success = await DB.deleteCategory(req.params.id);
   if (success) {
     res.json({ message: "Category deleted successfully" });
   } else {
     res.status(404).json({ error: "Category not found" });
   }
-});
+}));
 
 // ----------------------------------------------------
 // Interactions API (Secure & Role-Filtered)
 // ----------------------------------------------------
-app.get("/api/interactions", authenticateJWT, (req: any, res: any) => {
-  const list = DB.getInteractions();
+app.get("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => {
+  const list = await DB.getInteractions();
   if (req.user.role === "agent") {
     // Agents only see tickets they created/assigned
     const filtered = list.filter((i) => i.agent_id === req.user.id);
     return res.json(filtered);
   }
   res.json(list);
-});
+}));
 
-app.get("/api/interactions/:id", authenticateJWT, (req: any, res: any) => {
-  const interaction = DB.getInteractionById(req.params.id);
+app.get("/api/interactions/:id", authenticateJWT, asyncHandler(async (req, res) => {
+  const interaction = await DB.getInteractionById(req.params.id);
   if (interaction) {
     if (req.user.role === "agent" && interaction.agent_id !== req.user.id) {
       return res.status(403).json({ error: "Sorry, you are not authorized to view other agents' logs." });
@@ -366,9 +377,9 @@ app.get("/api/interactions/:id", authenticateJWT, (req: any, res: any) => {
   } else {
     res.status(404).json({ error: "Interaction not found" });
   }
-});
+}));
 
-app.post("/api/interactions", authenticateJWT, (req: any, res: any) => {
+app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => {
   const {
     customer_name,
     customer_phone,
@@ -410,7 +421,7 @@ app.post("/api/interactions", authenticateJWT, (req: any, res: any) => {
   const dateStr = now.toISOString().split("T")[0];
   const timeStr = now.toTimeString().split(" ")[0].substring(0, 5); // HH:MM
 
-  const newInteraction = DB.addInteraction({
+  const newInteraction = await DB.addInteraction({
     interaction_date: dateStr,
     interaction_time: timeStr,
     agent_id,
@@ -434,10 +445,10 @@ app.post("/api/interactions", authenticateJWT, (req: any, res: any) => {
   });
 
   res.status(201).json(newInteraction);
-});
+}));
 
-app.put("/api/interactions/:id", authenticateJWT, (req: any, res: any) => {
-  const interaction = DB.getInteractionById(req.params.id);
+app.put("/api/interactions/:id", authenticateJWT, asyncHandler(async (req, res) => {
+  const interaction = await DB.getInteractionById(req.params.id);
   if (!interaction) {
     return res.status(404).json({ error: "Interaction not found for editing" });
   }
@@ -446,26 +457,26 @@ app.put("/api/interactions/:id", authenticateJWT, (req: any, res: any) => {
     return res.status(403).json({ error: "Sorry, you are not authorized to update other agents' logs." });
   }
 
-  const updated = DB.updateInteraction(req.params.id, req.body);
+  const updated = await DB.updateInteraction(req.params.id, req.body);
   res.json(updated);
-});
+}));
 
-app.delete("/api/interactions/:id", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
-  const success = DB.deleteInteraction(req.params.id);
+app.delete("/api/interactions/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const success = await DB.deleteInteraction(req.params.id);
   if (success) {
     res.json({ message: "Interaction deleted successfully" });
   } else {
     res.status(404).json({ error: "Interaction not found for deletion" });
   }
-});
+}));
 
 // ----------------------------------------------------
 // Dashboard & Analytics Stats API (Protected)
 // ----------------------------------------------------
-app.get("/api/dashboard/stats", authenticateJWT, (req: any, res: any) => {
-  let interactions = DB.getInteractions();
-  const brands = DB.getBrands();
-  const users = DB.getUsers();
+app.get("/api/dashboard/stats", authenticateJWT, asyncHandler(async (req, res) => {
+  let interactions = await DB.getInteractions();
+  const brands = await DB.getBrands();
+  const users = await DB.getUsers();
 
   const todayStr = new Date().toISOString().split("T")[0];
 
@@ -561,15 +572,15 @@ app.get("/api/dashboard/stats", authenticateJWT, (req: any, res: any) => {
     agentPerformance,
     dailyReports,
   });
-});
+}));
 
 // ----------------------------------------------------
 // Reports PDF/CSV Export Generation API (Protected to TL/Admin)
 // ----------------------------------------------------
-app.get("/api/reports/daily", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
-  const interactions = DB.getInteractions();
-  const users = DB.getUsers();
-  
+app.get("/api/reports/daily", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const interactions = await DB.getInteractions();
+  const users = await DB.getUsers();
+
   const targetDate = (req.query.date as string) || new Date().toISOString().split("T")[0];
   const dailyLogs = interactions.filter((i) => i.interaction_date === targetDate);
 
@@ -611,11 +622,11 @@ app.get("/api/reports/daily", authenticateJWT, requireLeaderOrAdmin, (req: any, 
     outboundCount,
     agentProductivity,
   });
-});
+}));
 
-app.get("/api/reports/monthly", authenticateJWT, requireLeaderOrAdmin, (req: any, res: any) => {
-  const interactions = DB.getInteractions();
-  const brands = DB.getBrands();
+app.get("/api/reports/monthly", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const interactions = await DB.getInteractions();
+  const brands = await DB.getBrands();
 
   const resolved = interactions.filter((i) => i.status === "Resolved" || i.status === "Closed").length;
   const resolutionRate = interactions.length ? Math.round((resolved / interactions.length) * 100) : 0;
@@ -652,14 +663,14 @@ app.get("/api/reports/monthly", authenticateJWT, requireLeaderOrAdmin, (req: any
     averageHandlingTime: "4m 12s",
     followUpRate,
   });
-});
+}));
 
 // ----------------------------------------------------
 // AI Auto-Classification API using Gemini SDK (Protected)
 // ----------------------------------------------------
-app.post("/api/ai/classify", authenticateJWT, async (req: any, res: any) => {
+app.post("/api/ai/classify", authenticateJWT, asyncHandler(async (req, res) => {
   const { notes } = req.body;
-  
+
   if (!notes || notes.trim() === "") {
     return res.status(400).json({ error: "Please enter call details for AI auto-classification." });
   }
@@ -670,8 +681,8 @@ app.post("/api/ai/classify", authenticateJWT, async (req: any, res: any) => {
     });
   }
 
-  const activeBrands = DB.getBrands().map((b) => b.brand_name);
-  const activeCategories = DB.getCategories().map((c) => c.category_name);
+  const activeBrands = (await DB.getBrands()).map((b) => b.brand_name);
+  const activeCategories = (await DB.getCategories()).map((c) => c.category_name);
 
   const systemInstruction = `You are a professional sales representative and an AI assistant for a CRM Call Logging and customer service system.
 Your task is to analyze the phone call notes (written in English or Arabic) and accurately extract the following fields in accordance with the system constraints.
@@ -773,12 +784,15 @@ You must respond strictly with valid JSON conforming to the schema specification
       details: error.message,
     });
   }
-});
+}));
 
 // ----------------------------------------------------
 // Mounting Vite Server Middleware
 // ----------------------------------------------------
 async function startServer() {
+  // Ensure database schema exists and is seeded before serving traffic
+  await DB.init();
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -799,4 +813,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("[CRM Server] Failed to start:", err);
+  process.exit(1);
+});
