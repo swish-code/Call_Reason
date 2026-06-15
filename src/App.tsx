@@ -52,21 +52,6 @@ export default function App() {
     }
   }, []);
 
-  // Quick action to auto-fill pre-seeded credentials for ease of testing
-  const handlePrefillCredentials = (roleType: "admin" | "leader" | "agent") => {
-    setLoginError("");
-    if (roleType === "admin") {
-      setEmail("admin");
-      setPassword("password");
-    } else if (roleType === "leader") {
-      setEmail("leader");
-      setPassword("password");
-    } else {
-      setEmail("agent1");
-      setPassword("password");
-    }
-  };
-
   // Submit log in authentication
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,36 +154,6 @@ export default function App() {
               {loginLoading ? "Verifying credentials..." : "Log In to System"}
             </button>
           </form>
-
-          {/* Quick Trial Profiles (Incredibly helpful for testing role-based features without tedious typing!) */}
-          <div className="pt-4 border-t border-[#27272a] space-y-2.5">
-            <span className="text-[10px] text-[#71717a] font-bold block uppercase tracking-wider text-center">
-              Quick Trial Profiles (Click to prefill):
-            </span>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => handlePrefillCredentials("agent")}
-                className="py-2.5 bg-[#1c1c1f] hover:bg-blue-500/10 text-zinc-300 hover:text-blue-400 border border-[#27272a] hover:border-blue-500/30 rounded-xl text-[11px] font-extrabold transition text-center active:scale-95"
-              >
-                 Support Agent
-              </button>
-              <button
-                type="button"
-                onClick={() => handlePrefillCredentials("leader")}
-                className="py-2.5 bg-[#1c1c1f] hover:bg-amber-500/10 text-zinc-300 hover:text-amber-400 border border-[#27272a] hover:border-amber-500/30 rounded-xl text-[11px] font-extrabold transition text-center active:scale-95"
-              >
-                 Team Leader
-              </button>
-              <button
-                type="button"
-                onClick={() => handlePrefillCredentials("admin")}
-                className="py-2.5 bg-[#1c1c1f] hover:bg-[#1c1c1f] text-zinc-300 hover:text-emerald-400 border border-[#27272a] hover:border-emerald-500/30 rounded-xl text-[11px] font-extrabold transition text-center active:scale-95"
-              >
-                 System Admin
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     );
