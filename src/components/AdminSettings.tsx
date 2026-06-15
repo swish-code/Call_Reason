@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, Brand, Category } from "../types.js";
+import { User, Brand, Category, Branch } from "../types.js";
 import { ShieldCheck, Plus, Trash, Lock, ShieldAlert, Check, RefreshCw, AlertCircle } from "lucide-react";
 import { apiFetch } from "../lib/api.ts";
 
@@ -13,6 +13,7 @@ export default function AdminSettings({ currentUser }: AdminSettingsProps) {
 
   const [brands, setBrands] = useState<Brand[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -25,25 +26,65 @@ export default function AdminSettings({ currentUser }: AdminSettingsProps) {
   const [addCatError, setAddCatError] = useState("");
   const [addCatSuccess, setAddCatSuccess] = useState(false);
 
+  const [newBranchName, setNewBranchName] = useState("");
+  const [addBranchError, setAddBranchError] = useState("");
+  const [addBranchSuccess, setAddBranchSuccess] = useState(false);
+
   const fetchSettings = async () => {
     try {
       setLoading(true);
       setError("");
-      const [resBrands, resCat] = await Promise.all([
+      const [resBrands, resCat, resBranch] = await Promise.all([
         apiFetch("/api/brands"),
-        apiFetch("/api/categories")
+        apiFetch("/api/categories"),
+        apiFetch("/api/branches")
       ]);
 
-      if (!resBrands.ok || !resCat.ok) throw new Error("Failed to retrieve CRM dictionary variables and configuration.");
+      if (!resBrands.ok || !resCat.ok || !resBranch.ok) throw new Error("Failed to retrieve CRM dictionary variables and configuration.");
 
-      const b = await resBrands.json();
-      const c = await resCat.json();
-      setBrands(b);
-      setCategories(c);
+      setBrands(await resBrands.json());
+      setCategories(await resCat.json());
+      setBranches(await resBranch.json());
     } catch (err: any) {
       setError(err.message || "Server connection failed.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Handle adding a branch (POST)
+  const handleAddBranch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBranchName.trim()) return;
+    try {
+      setAddBranchError("");
+      setAddBranchSuccess(false);
+      const res = await apiFetch("/api/branches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newBranchName.trim() })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to add branch");
+      }
+      setNewBranchName("");
+      setAddBranchSuccess(true);
+      fetchSettings();
+      setTimeout(() => setAddBranchSuccess(false), 2000);
+    } catch (err: any) {
+      setAddBranchError(err.message || "Connection failed");
+    }
+  };
+
+  const handleDeleteBranch = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete branch "${name}"?`)) return;
+    try {
+      const res = await apiFetch(`/api/branches/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete the branch.");
+      fetchSettings();
+    } catch (err: any) {
+      alert(err.message);
     }
   };
 
@@ -339,6 +380,70 @@ export default function AdminSettings({ currentUser }: AdminSettingsProps) {
           </div>
         </div>
 
+      </div>
+
+      {/* Branches management (shown for Complaint call reasons) */}
+      <div className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-3xl space-y-6">
+        <div>
+          <h3 className="text-sm font-extrabold text-white">3. Manage Complaint Branches</h3>
+          <p className="text-xs text-[#71717a] mt-1 font-light">Stores/branches an agent selects when logging a Complaint call reason.</p>
+        </div>
+
+        <form onSubmit={handleAddBranch} className="flex gap-2 max-w-md">
+          <input
+            type="text"
+            required
+            value={newBranchName}
+            onChange={(e) => setNewBranchName(e.target.value)}
+            placeholder="Branch (e.g. Cairo - Nasr City)"
+            className="flex-1 px-4 py-2 bg-[#0a0a0b] border border-[#27272a] rounded-2xl text-xs font-bold text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <button
+            type="submit"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-bold transition flex items-center gap-1 shrink-0 shadow shadow-blue-600/10 active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            Add
+          </button>
+        </form>
+
+        {addBranchError && (
+          <div className="text-[11px] text-rose-400 flex items-center gap-1 font-bold">
+            <AlertCircle className="w-3.5 h-3.5" />
+            {addBranchError}
+          </div>
+        )}
+        {addBranchSuccess && (
+          <div className="text-[11px] text-emerald-400 flex items-center gap-1 font-bold">
+            <Check className="w-3.5 h-3.5" />
+            Branch added successfully!
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {branches.map((b) => (
+            <div
+              key={b.id}
+              className="flex items-center justify-between p-3 bg-[#0a0a0b] border border-[#27272a]/70 rounded-2xl text-xs"
+            >
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                <span className="font-extrabold text-zinc-300">{b.branch_name}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDeleteBranch(b.id, b.branch_name)}
+                className="p-1 px-2.5 text-rose-400 hover:bg-rose-500/10 rounded-xl transition font-bold flex items-center gap-1"
+              >
+                <Trash className="w-3.5 h-3.5" />
+                Delete
+              </button>
+            </div>
+          ))}
+          {branches.length === 0 && !loading && (
+            <div className="text-center py-6 text-zinc-500 text-xs">No branches currently defined.</div>
+          )}
+        </div>
       </div>
 
     </div>

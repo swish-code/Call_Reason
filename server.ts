@@ -340,6 +340,31 @@ app.delete("/api/categories/:id", authenticateJWT, requireLeaderOrAdmin, asyncHa
 }));
 
 // ----------------------------------------------------
+// Branches API (stores shown for Complaint call reasons)
+// ----------------------------------------------------
+app.get("/api/branches", authenticateJWT, asyncHandler(async (req, res) => {
+  res.json(await DB.getBranches());
+}));
+
+app.post("/api/branches", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const { name } = req.body;
+  if (!name || name.trim() === "") {
+    return res.status(400).json({ error: "Branch name is required" });
+  }
+  const branch = await DB.addBranch(name.trim());
+  res.status(201).json(branch);
+}));
+
+app.delete("/api/branches/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const success = await DB.deleteBranch(req.params.id);
+  if (success) {
+    res.json({ message: "Branch deleted successfully" });
+  } else {
+    res.status(404).json({ error: "Branch not found" });
+  }
+}));
+
+// ----------------------------------------------------
 // Interactions API (Secure & Role-Filtered)
 // ----------------------------------------------------
 app.get("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => {
@@ -373,6 +398,9 @@ app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => 
     call_direction,
     brand,
     category,
+    call_reason,
+    branch,
+    team,
     priority,
     status,
     summary,
@@ -391,6 +419,10 @@ app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => 
   // Force secure session-based injection of Agent details
   const agent_id = req.user.id;
   const agent_name = req.user.full_name;
+
+  // Team defaults to the logged-in operator's own team when not provided
+  const operator = await DB.getUserById(agent_id);
+  const resolvedTeam = team || operator?.team || "Call Center";
 
   // Parse attachments
   const parsedAttachments = Array.isArray(attachments)
@@ -418,6 +450,9 @@ app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => 
     call_direction,
     brand: brand || "Talabat",
     category: category || "Other",
+    call_reason: call_reason || undefined,
+    branch: branch || undefined,
+    team: resolvedTeam,
     priority: priority || "Medium",
     status: status || "Open",
     summary: summary || "",

@@ -1,5 +1,9 @@
 export type UserRole = "agent" | "leader" | "admin";
 
+// Organizational team an employee belongs to (separate from the permission role)
+export type Team = "Complain Team" | "Call Center" | "Technical Team" | "Team Leader";
+export const TEAMS: Team[] = ["Complain Team", "Call Center", "Technical Team", "Team Leader"];
+
 export interface User {
   id: string;
   full_name: string;
@@ -7,11 +11,12 @@ export interface User {
   email: string;
   password_hash: string;
   role: UserRole;
+  team?: Team; // Organizational team for Agent Logs grouping
   status: "Active" | "Inactive";
   created_at: string;
   updated_at: string;
   created_by?: string | null;
-  
+
   // Backward compatibility compatibility fields
   name?: string;
   token?: string;
@@ -29,6 +34,10 @@ export interface AuditLog {
 
 export type InteractionType = "SR" | "Complaint" | "Inquiry" | "Escalation" | "Follow Up" | "Feedback";
 export type CommunicationType = "Call" | "Task";
+
+// Call Reason: the reason an agent selects first when a call comes in.
+export type CallReason = "New Order" | "Follow Up" | "Complaint" | "Inquiry";
+export const CALL_REASONS: CallReason[] = ["New Order", "Follow Up", "Complaint", "Inquiry"];
 export type CallDirection = "Inbound" | "Outbound";
 export type PriorityLevel = "Low" | "Medium" | "High" | "Critical";
 export type InteractionStatus = "Open" | "Pending" | "Resolved" | "Closed";
@@ -54,6 +63,9 @@ export interface Interaction {
   call_direction: CallDirection;
   brand: string;
   category: string;
+  call_reason?: CallReason | string; // Reason chosen at the start of the call
+  branch?: string; // Store/branch, shown for Complaint call reasons
+  team?: Team; // Team that handled the interaction (defaults to the agent's team)
   priority: PriorityLevel;
   status: InteractionStatus;
   summary: string;
@@ -73,6 +85,11 @@ export interface Brand {
 export interface Category {
   id: string;
   category_name: string;
+}
+
+export interface Branch {
+  id: string;
+  branch_name: string;
 }
 
 export interface DashboardStats {

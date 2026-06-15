@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User } from "../types.js";
+import { User, Team, TEAMS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { 
   User as UserIcon, 
@@ -34,6 +34,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "leader" | "agent">("agent");
+  const [team, setTeam] = useState<Team>("Call Center");
   const [status, setStatus] = useState<"Active" | "Inactive">("Active");
 
   // Reset password states
@@ -70,6 +71,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setEmail("");
     setPassword("");
     setRole("agent");
+    setTeam("Call Center");
     setStatus("Active");
     setError("");
     setIsModalOpen(true);
@@ -82,6 +84,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setEmail(user.email);
     setPassword(""); // don't fill password
     setRole(user.role);
+    setTeam(user.team || "Call Center");
     setStatus(user.status || "Active");
     setError("");
     setIsModalOpen(true);
@@ -104,6 +107,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       username,
       email,
       role,
+      team,
       status,
       ...(password && { password })
     };
@@ -283,6 +287,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${getRoleBadgeColor(user.role)}`}>
                         {getRoleLabel(user.role)}
                       </span>
+                      {user.team && <div className="text-[10px] text-zinc-500 mt-1">{user.team}</div>}
                     </td>
                     <td className="px-6 py-4 text-xs">
                       {user.status === "Inactive" ? (
@@ -438,6 +443,17 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                     <option value="Inactive">Inactive</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-zinc-400 block">Operational Team:</label>
+                <select
+                  value={team}
+                  onChange={(e) => setTeam(e.target.value as Team)}
+                  className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                >
+                  {TEAMS.map((t) => (<option key={t} value={t}>{t}</option>))}
+                </select>
               </div>
 
               <div className="pt-4 border-t border-[#27272a] flex items-center justify-end gap-2 text-xs">

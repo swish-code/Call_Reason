@@ -1,6 +1,6 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
-import { User, Interaction, Brand, Category, AuditLog } from "../src/types.js";
+import { User, Interaction, Brand, Category, Branch, AuditLog } from "../src/types.js";
 
 const { Pool } = pkg;
 
@@ -36,11 +36,11 @@ function getDateRelative(daysOffset: number): string {
 // Seed data (inserted only when tables are empty)
 // ----------------------------------------------------
 const SEED_USERS: User[] = [
-  { id: "u-admin", full_name: "Ahmed Kamal (System Admin)", name: "Ahmed Kamal (System Admin)", username: "admin", email: "admin@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "admin", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
-  { id: "u-leader", full_name: "Sarah Mahmoud (Team Leader)", name: "Sarah Mahmoud (Team Leader)", username: "leader", email: "leader@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "leader", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
-  { id: "u-agent1", full_name: "Mohamed Ali (Support Agent)", name: "Mohamed Ali (Support Agent)", username: "agent1", email: "agent1@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
-  { id: "u-agent2", full_name: "Mariam Hassan (Support Agent)", name: "Mariam Hassan (Support Agent)", username: "agent2", email: "agent2@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
-  { id: "u-agent3", full_name: "Omar Khaled (Support Agent)", name: "Omar Khaled (Support Agent)", username: "agent3", email: "agent3@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
+  { id: "u-admin", full_name: "Ahmed Kamal (System Admin)", name: "Ahmed Kamal (System Admin)", username: "admin", email: "admin@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "admin", team: "Team Leader", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
+  { id: "u-leader", full_name: "Sarah Mahmoud (Team Leader)", name: "Sarah Mahmoud (Team Leader)", username: "leader", email: "leader@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "leader", team: "Team Leader", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
+  { id: "u-agent1", full_name: "Mohamed Ali (Support Agent)", name: "Mohamed Ali (Support Agent)", username: "agent1", email: "agent1@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", team: "Call Center", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
+  { id: "u-agent2", full_name: "Mariam Hassan (Support Agent)", name: "Mariam Hassan (Support Agent)", username: "agent2", email: "agent2@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", team: "Complain Team", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
+  { id: "u-agent3", full_name: "Omar Khaled (Support Agent)", name: "Omar Khaled (Support Agent)", username: "agent3", email: "agent3@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", team: "Technical Team", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
 ];
 
 const SEED_BRANDS: Brand[] = [
@@ -48,6 +48,13 @@ const SEED_BRANDS: Brand[] = [
   { id: "b2", brand_name: "Noon" },
   { id: "b3", brand_name: "Amazon" },
   { id: "b4", brand_name: "Carrefour" },
+];
+
+const SEED_BRANCHES: Branch[] = [
+  { id: "br1", branch_name: "Cairo - Nasr City" },
+  { id: "br2", branch_name: "Cairo - Maadi" },
+  { id: "br3", branch_name: "Giza - Dokki" },
+  { id: "br4", branch_name: "Alexandria - Smouha" },
 ];
 
 const SEED_CATEGORIES: Category[] = [
@@ -62,18 +69,18 @@ const SEED_CATEGORIES: Category[] = [
 ];
 
 const SEED_INTERACTIONS: Interaction[] = [
-  { id: "int-1", interaction_date: getDateRelative(0), interaction_time: "09:15", agent_id: "u-agent1", agent_name: "Mohamed Ali (Support Agent)", customer_name: "Yasser Farag", customer_phone: "+201011223344", interaction_type: "SR", communication_type: "Call", call_direction: "Inbound", brand: "Talabat", category: "Order Issue", priority: "High", status: "Resolved", summary: "Customer is complaining that order #4432 has not arrived and is delayed by more than an hour, despite the money being deducted from the electronic account.", action_taken: "Called driver and updated delivery location. Delivered order successfully and provided a compensatory voucher worth 50 EGP.", follow_up_required: false, created_at: new Date().toISOString() },
-  { id: "int-2", interaction_date: getDateRelative(0), interaction_time: "10:30", agent_id: "u-agent2", agent_name: "Mariam Hassan (Support Agent)", customer_name: "Rana Ahmed", customer_phone: "+201288776655", interaction_type: "Complaint", communication_type: "Call", call_direction: "Inbound", brand: "Amazon", category: "Refund", priority: "Critical", status: "Pending", summary: "Customer complained about receiving a damaged product (broken phone screen), requesting an immediate refund.", action_taken: "Created refund request #RET-990 and updated shipment status to replacement. Awaiting courier pickup of damaged item tomorrow.", follow_up_required: true, follow_up_date: getDateRelative(1), follow_up_notes: "Follow up with courier to ensure pickup of the damaged item and issue cash refund to customer.", created_at: new Date().toISOString() },
-  { id: "int-3", interaction_date: getDateRelative(-1), interaction_time: "14:10", agent_id: "u-agent1", agent_name: "Mohamed Ali (Support Agent)", customer_name: "Khaled Saeed", customer_phone: "+201144556677", interaction_type: "Inquiry", communication_type: "Call", call_direction: "Inbound", brand: "Noon", category: "Account Issue", priority: "Low", status: "Closed", summary: "Customer asked about how to activate the e-wallet and use their refunded Noon balance.", action_taken: "Explained double-verification setup steps to fully activate the wallet and verified balance appeared successfully.", follow_up_required: false, created_at: new Date(new Date().setDate(new Date().getDate() - 1)).toISOString() },
-  { id: "int-4", interaction_date: getDateRelative(-2), interaction_time: "11:00", agent_id: "u-agent2", agent_name: "Mariam Hassan (Support Agent)", customer_name: "Hany Youssef", customer_phone: "+201555432101", interaction_type: "Escalation", communication_type: "Call", call_direction: "Outbound", brand: "Carrefour", category: "Delivery Delay", priority: "High", status: "Open", summary: "Customer requested escalation for delayed groceries order since morning and wants supermarket to call them immediately.", action_taken: "Assigned order to delivery team leader and escalated ticket to regional team.", follow_up_required: true, follow_up_date: getDateRelative(1), follow_up_notes: "Call customer to confirm courier arrival.", created_at: new Date(new Date().setDate(new Date().getDate() - 2)).toISOString() },
-  { id: "int-5", interaction_date: getDateRelative(-3), interaction_time: "16:45", agent_id: "u-agent3", agent_name: "Omar Khaled (Support Agent)", customer_name: "Dina Ali", customer_phone: "+201099887766", interaction_type: "SR", communication_type: "Task", call_direction: "Inbound", brand: "Amazon", category: "Technical Issue", priority: "Medium", status: "Resolved", summary: "Customer is facing technical issue with credit card declining during instant shipping payment.", action_taken: "Guided customer to update app, clear cache, and try alternative payment gateway; transaction completed successfully.", follow_up_required: false, created_at: new Date(new Date().setDate(new Date().getDate() - 3)).toISOString() },
-  { id: "int-6", interaction_date: getDateRelative(-4), interaction_time: "13:30", agent_id: "u-agent3", agent_name: "Omar Khaled (Support Agent)", customer_name: "Sherif Monir", customer_phone: "+201201928374", interaction_type: "Feedback", communication_type: "Call", call_direction: "Outbound", brand: "Talabat", category: "Other", priority: "Low", status: "Closed", summary: "Welcome call and customer satisfaction survey regarding drivers and speed in Tagamoa.", action_taken: "Customer expressed complete satisfaction, rated 5 stars, and requested more weekend offers.", follow_up_required: false, created_at: new Date(new Date().setDate(new Date().getDate() - 4)).toISOString() },
+  { id: "int-1", interaction_date: getDateRelative(0), interaction_time: "09:15", agent_id: "u-agent1", agent_name: "Mohamed Ali (Support Agent)", customer_name: "Yasser Farag", customer_phone: "+201011223344", interaction_type: "SR", communication_type: "Call", call_direction: "Inbound", brand: "Talabat", category: "Order Issue", call_reason: "Follow Up", team: "Call Center", priority: "High", status: "Resolved", summary: "Customer is complaining that order #4432 has not arrived and is delayed by more than an hour, despite the money being deducted from the electronic account.", action_taken: "Called driver and updated delivery location. Delivered order successfully and provided a compensatory voucher worth 50 EGP.", follow_up_required: false, created_at: new Date().toISOString() },
+  { id: "int-2", interaction_date: getDateRelative(0), interaction_time: "10:30", agent_id: "u-agent2", agent_name: "Mariam Hassan (Support Agent)", customer_name: "Rana Ahmed", customer_phone: "+201288776655", interaction_type: "Complaint", communication_type: "Call", call_direction: "Inbound", brand: "Amazon", category: "Refund", call_reason: "Complaint", branch: "Cairo - Nasr City", team: "Complain Team", priority: "Critical", status: "Pending", summary: "Customer complained about receiving a damaged product (broken phone screen), requesting an immediate refund.", action_taken: "Created refund request #RET-990 and updated shipment status to replacement. Awaiting courier pickup of damaged item tomorrow.", follow_up_required: true, follow_up_date: getDateRelative(1), follow_up_notes: "Follow up with courier to ensure pickup of the damaged item and issue cash refund to customer.", created_at: new Date().toISOString() },
+  { id: "int-3", interaction_date: getDateRelative(-1), interaction_time: "14:10", agent_id: "u-agent1", agent_name: "Mohamed Ali (Support Agent)", customer_name: "Khaled Saeed", customer_phone: "+201144556677", interaction_type: "Inquiry", communication_type: "Call", call_direction: "Inbound", brand: "Noon", category: "Account Issue", call_reason: "Inquiry", team: "Call Center", priority: "Low", status: "Closed", summary: "Customer asked about how to activate the e-wallet and use their refunded Noon balance.", action_taken: "Explained double-verification setup steps to fully activate the wallet and verified balance appeared successfully.", follow_up_required: false, created_at: new Date(new Date().setDate(new Date().getDate() - 1)).toISOString() },
+  { id: "int-4", interaction_date: getDateRelative(-2), interaction_time: "11:00", agent_id: "u-agent2", agent_name: "Mariam Hassan (Support Agent)", customer_name: "Hany Youssef", customer_phone: "+201555432101", interaction_type: "Escalation", communication_type: "Call", call_direction: "Outbound", brand: "Carrefour", category: "Delivery Delay", call_reason: "Complaint", branch: "Giza - Dokki", team: "Complain Team", priority: "High", status: "Open", summary: "Customer requested escalation for delayed groceries order since morning and wants supermarket to call them immediately.", action_taken: "Assigned order to delivery team leader and escalated ticket to regional team.", follow_up_required: true, follow_up_date: getDateRelative(1), follow_up_notes: "Call customer to confirm courier arrival.", created_at: new Date(new Date().setDate(new Date().getDate() - 2)).toISOString() },
+  { id: "int-5", interaction_date: getDateRelative(-3), interaction_time: "16:45", agent_id: "u-agent3", agent_name: "Omar Khaled (Support Agent)", customer_name: "Dina Ali", customer_phone: "+201099887766", interaction_type: "SR", communication_type: "Task", call_direction: "Inbound", brand: "Amazon", category: "Technical Issue", call_reason: "Follow Up", team: "Technical Team", priority: "Medium", status: "Resolved", summary: "Customer is facing technical issue with credit card declining during instant shipping payment.", action_taken: "Guided customer to update app, clear cache, and try alternative payment gateway; transaction completed successfully.", follow_up_required: false, created_at: new Date(new Date().setDate(new Date().getDate() - 3)).toISOString() },
+  { id: "int-6", interaction_date: getDateRelative(-4), interaction_time: "13:30", agent_id: "u-agent3", agent_name: "Omar Khaled (Support Agent)", customer_name: "Sherif Monir", customer_phone: "+201201928374", interaction_type: "Feedback", communication_type: "Call", call_direction: "Outbound", brand: "Talabat", category: "Other", call_reason: "Follow Up", team: "Technical Team", priority: "Low", status: "Closed", summary: "Welcome call and customer satisfaction survey regarding drivers and speed in Tagamoa.", action_taken: "Customer expressed complete satisfaction, rated 5 stars, and requested more weekend offers.", follow_up_required: false, created_at: new Date(new Date().setDate(new Date().getDate() - 4)).toISOString() },
 ];
 
 // Columns that may be updated through the API (whitelist guards against
 // arbitrary fields in request bodies being written to the table).
-const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "status", "created_by"] as const;
-const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
+const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "team", "status", "created_by"] as const;
+const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "branch", "team", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
 
 export class DB {
   // ----------------------------------------------------
@@ -89,6 +96,7 @@ export class DB {
         email TEXT NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL,
+        team TEXT,
         status TEXT NOT NULL,
         created_at TEXT,
         updated_at TEXT,
@@ -101,6 +109,10 @@ export class DB {
       CREATE TABLE IF NOT EXISTS categories (
         id TEXT PRIMARY KEY,
         category_name TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS branches (
+        id TEXT PRIMARY KEY,
+        branch_name TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS interactions (
         id TEXT PRIMARY KEY,
@@ -115,6 +127,9 @@ export class DB {
         call_direction TEXT,
         brand TEXT,
         category TEXT,
+        call_reason TEXT,
+        branch TEXT,
+        team TEXT,
         priority TEXT,
         status TEXT,
         summary TEXT,
@@ -136,6 +151,31 @@ export class DB {
       );
     `);
 
+    // Migrations for databases created before the Call Reason / Teams feature
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS team TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS call_reason TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS branch TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS team TEXT;
+    `);
+
+    // Backfill teams for rows created before the feature existed
+    await pool.query(
+      "UPDATE users SET team = CASE WHEN role IN ('admin','leader') THEN 'Team Leader' ELSE 'Call Center' END WHERE team IS NULL OR team = ''"
+    );
+    await pool.query(
+      "UPDATE interactions i SET team = u.team FROM users u WHERE i.agent_id = u.id AND (i.team IS NULL OR i.team = '')"
+    );
+    await pool.query("UPDATE interactions SET team = 'Call Center' WHERE team IS NULL OR team = ''");
+
+    // Seed branches independently (so existing databases also get them)
+    const branchCount = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM branches");
+    if (Number(branchCount.rows[0].count) === 0) {
+      for (const b of SEED_BRANCHES) {
+        await pool.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [b.id, b.branch_name]);
+      }
+    }
+
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM users");
     if (Number(rows[0].count) === 0) {
       await DB.seed();
@@ -149,9 +189,9 @@ export class DB {
 
       for (const u of SEED_USERS) {
         await client.query(
-          `INSERT INTO users (id, full_name, name, username, email, password_hash, role, status, created_at, updated_at, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (id) DO NOTHING`,
-          [u.id, u.full_name, u.name, u.username, u.email, u.password_hash, u.role, u.status, u.created_at, u.updated_at, u.created_by]
+          `INSERT INTO users (id, full_name, name, username, email, password_hash, role, team, status, created_at, updated_at, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO NOTHING`,
+          [u.id, u.full_name, u.name, u.username, u.email, u.password_hash, u.role, u.team ?? null, u.status, u.created_at, u.updated_at, u.created_by]
         );
       }
       for (const b of SEED_BRANDS) {
@@ -160,11 +200,14 @@ export class DB {
       for (const c of SEED_CATEGORIES) {
         await client.query("INSERT INTO categories (id, category_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [c.id, c.category_name]);
       }
+      for (const b of SEED_BRANCHES) {
+        await client.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [b.id, b.branch_name]);
+      }
       for (const i of SEED_INTERACTIONS) {
         await client.query(
-          `INSERT INTO interactions (id, interaction_date, interaction_time, agent_id, agent_name, customer_name, customer_phone, interaction_type, communication_type, call_direction, brand, category, priority, status, summary, action_taken, follow_up_required, follow_up_date, follow_up_notes, attachments, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) ON CONFLICT (id) DO NOTHING`,
-          [i.id, i.interaction_date, i.interaction_time, i.agent_id, i.agent_name, i.customer_name, i.customer_phone, i.interaction_type, i.communication_type, i.call_direction, i.brand, i.category, i.priority, i.status, i.summary, i.action_taken, i.follow_up_required, i.follow_up_date ?? null, i.follow_up_notes ?? null, JSON.stringify(i.attachments ?? []), i.created_at]
+          `INSERT INTO interactions (id, interaction_date, interaction_time, agent_id, agent_name, customer_name, customer_phone, interaction_type, communication_type, call_direction, brand, category, call_reason, branch, team, priority, status, summary, action_taken, follow_up_required, follow_up_date, follow_up_notes, attachments, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) ON CONFLICT (id) DO NOTHING`,
+          [i.id, i.interaction_date, i.interaction_time, i.agent_id, i.agent_name, i.customer_name, i.customer_phone, i.interaction_type, i.communication_type, i.call_direction, i.brand, i.category, i.call_reason ?? null, i.branch ?? null, i.team ?? null, i.priority, i.status, i.summary, i.action_taken, i.follow_up_required, i.follow_up_date ?? null, i.follow_up_notes ?? null, JSON.stringify(i.attachments ?? []), i.created_at]
         );
       }
 
@@ -206,9 +249,9 @@ export class DB {
 
   static async addUser(user: User): Promise<User> {
     const { rows } = await pool.query<User>(
-      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, status, created_at, updated_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.status, user.created_at, user.updated_at, user.created_by ?? null]
+      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, team, status, created_at, updated_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.team ?? "Call Center", user.status, user.created_at, user.updated_at, user.created_by ?? null]
     );
     return rows[0];
   }
@@ -306,6 +349,25 @@ export class DB {
   }
 
   // ----------------------------------------------------
+  // Branch methods (stores/branches shown for Complaint call reasons)
+  // ----------------------------------------------------
+  static async getBranches(): Promise<Branch[]> {
+    const { rows } = await pool.query<Branch>("SELECT * FROM branches ORDER BY branch_name ASC");
+    return rows;
+  }
+
+  static async addBranch(name: string): Promise<Branch> {
+    const newBranch: Branch = { id: "br-" + Date.now(), branch_name: name };
+    await pool.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2)", [newBranch.id, newBranch.branch_name]);
+    return newBranch;
+  }
+
+  static async deleteBranch(id: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM branches WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // ----------------------------------------------------
   // Interaction methods
   // ----------------------------------------------------
   static async getInteractions(): Promise<Interaction[]> {
@@ -321,9 +383,9 @@ export class DB {
   static async addInteraction(interaction: Omit<Interaction, "id"> & { id?: string }): Promise<Interaction> {
     const id = interaction.id || "int-" + Date.now();
     const { rows } = await pool.query<Interaction>(
-      `INSERT INTO interactions (id, interaction_date, interaction_time, agent_id, agent_name, customer_name, customer_phone, interaction_type, communication_type, call_direction, brand, category, priority, status, summary, action_taken, follow_up_required, follow_up_date, follow_up_notes, attachments, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
-      [id, interaction.interaction_date, interaction.interaction_time, interaction.agent_id, interaction.agent_name, interaction.customer_name, interaction.customer_phone, interaction.interaction_type, interaction.communication_type, interaction.call_direction, interaction.brand, interaction.category, interaction.priority, interaction.status, interaction.summary, interaction.action_taken, interaction.follow_up_required, interaction.follow_up_date ?? null, interaction.follow_up_notes ?? null, JSON.stringify(interaction.attachments ?? []), interaction.created_at]
+      `INSERT INTO interactions (id, interaction_date, interaction_time, agent_id, agent_name, customer_name, customer_phone, interaction_type, communication_type, call_direction, brand, category, call_reason, branch, team, priority, status, summary, action_taken, follow_up_required, follow_up_date, follow_up_notes, attachments, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING *`,
+      [id, interaction.interaction_date, interaction.interaction_time, interaction.agent_id, interaction.agent_name, interaction.customer_name, interaction.customer_phone, interaction.interaction_type, interaction.communication_type, interaction.call_direction, interaction.brand, interaction.category, interaction.call_reason ?? null, interaction.branch ?? null, interaction.team ?? null, interaction.priority, interaction.status, interaction.summary, interaction.action_taken, interaction.follow_up_required, interaction.follow_up_date ?? null, interaction.follow_up_notes ?? null, JSON.stringify(interaction.attachments ?? []), interaction.created_at]
     );
     return rows[0];
   }

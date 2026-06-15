@@ -6,18 +6,22 @@ import InteractionsList from "./components/InteractionsList.tsx";
 import Reports from "./components/Reports.tsx";
 import AdminSettings from "./components/AdminSettings.tsx";
 import UsersManagement from "./components/UsersManagement.tsx";
+import CallReason from "./components/CallReason.tsx";
+import AgentLogs from "./components/AgentLogs.tsx";
 import { apiFetch } from "./lib/api.ts";
-import { 
-  Phone, 
-  BarChart3, 
-  History, 
-  FileText, 
-  Settings, 
-  LogOut, 
-  User as UserIcon, 
-  Lock, 
-  Building2, 
-  HelpCircle, 
+import {
+  Phone,
+  PhoneCall,
+  ClipboardList,
+  BarChart3,
+  History,
+  FileText,
+  Settings,
+  LogOut,
+  User as UserIcon,
+  Lock,
+  Building2,
+  HelpCircle,
   Menu,
   X,
   ChevronLeft,
@@ -26,7 +30,7 @@ import {
   ShieldAlert
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users";
+type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -288,6 +292,36 @@ export default function App() {
                 {sidebarOpen && <span className="truncate text-amber-200">User Management</span>}
               </button>
             )}
+
+            {/* Call Reason: Admin only */}
+            {currentUser?.role === "admin" && (
+              <button
+                onClick={() => setActivePage("callreason")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "callreason"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                }`}
+              >
+                <PhoneCall className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Call Reason</span>}
+              </button>
+            )}
+
+            {/* Agent Logs: Admin only */}
+            {currentUser?.role === "admin" && (
+              <button
+                onClick={() => setActivePage("agentlogs")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "agentlogs"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                }`}
+              >
+                <ClipboardList className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Agent Logs</span>}
+              </button>
+            )}
           </nav>
         </div>
 
@@ -327,6 +361,8 @@ export default function App() {
               {activePage === "reports" && "Analytic Reports & Performance Export"}
               {activePage === "settings" && "Brand and Category Configuration"}
               {activePage === "users" && "User and Access Role Management"}
+              {activePage === "callreason" && "Call Reason — Log a Call"}
+              {activePage === "agentlogs" && "Agent Logs by Team"}
             </h1>
           </div>
 
@@ -366,6 +402,12 @@ export default function App() {
           )}
           {activePage === "users" && (
             <UsersManagement currentUser={currentUser} />
+          )}
+          {activePage === "callreason" && (
+            <CallReason currentUser={currentUser} onSuccess={() => setActivePage("agentlogs")} />
+          )}
+          {activePage === "agentlogs" && (
+            <AgentLogs currentUser={currentUser} />
           )}
         </main>
       </div>
