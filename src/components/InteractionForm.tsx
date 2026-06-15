@@ -454,7 +454,7 @@ export default function InteractionForm({ currentUser, onSuccess }: InteractionF
               >
                 <option value="SR">Service Request (SR)</option>
                 <option value="Complaint">Complaint</option>
-                <option value="Inquiry font-medium">Finance/General Inquiry</option>
+                <option value="Inquiry">Finance/General Inquiry</option>
                 <option value="Escalation">Urgent Escalation</option>
                 <option value="Follow Up">Previous Follow Up</option>
                 <option value="Feedback">Customer Experience Feedback</option>

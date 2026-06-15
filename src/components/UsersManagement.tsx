@@ -434,8 +434,8 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                     onChange={(e) => setStatus(e.target.value as any)}
                     className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   >
-                    <option value="Active font-bold">Active</option>
-                    <option value="Inactive font-bold">Inactive</option>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
                   </select>
                 </div>
               </div>
