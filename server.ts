@@ -629,6 +629,33 @@ app.get("/api/dashboard/stats", authenticateJWT, asyncHandler(async (req, res) =
     tasks: dailyGraph[d].tasks,
   }));
 
+  // ---- Extended metrics (call center spec) ----
+  const isComplaint = (i: any) => i.interaction_type === "Complaint" || i.call_reason === "Complaint";
+  const totalCalls = interactions.filter((i) => i.communication_type === "Call").length;
+  const complaints = interactions.filter(isComplaint);
+  const totalComplaints = complaints.length;
+  const solvedCases = complaints.filter((i) => i.fcr === "Solved").length;
+  const unsolvedCases = complaints.filter((i) => i.fcr === "Not Solved").length;
+  const fcrDenom = solvedCases + unsolvedCases;
+  const fcrRate = fcrDenom ? Math.round((solvedCases / fcrDenom) * 100) : 0;
+
+  const groupCount = (keyFn: (i: any) => string) => {
+    const m: Record<string, number> = {};
+    interactions.forEach((i) => { const k = keyFn(i) || "Unspecified"; m[k] = (m[k] || 0) + 1; });
+    return Object.keys(m).map((name) => ({ name, count: m[name] })).sort((a, b) => b.count - a.count);
+  };
+  const callsByType = groupCount((i) => i.call_reason || i.interaction_type);
+  const callsByBranch = groupCount((i) => i.branch);
+
+  // Complaint trends over the past 7 days
+  const trendMap: Record<string, number> = {};
+  for (let i = 6; i >= 0; i--) {
+    const dStr = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    trendMap[dStr] = 0;
+  }
+  complaints.forEach((i) => { if (trendMap[i.interaction_date] !== undefined) trendMap[i.interaction_date]++; });
+  const complaintTrends = Object.keys(trendMap).map((d) => ({ date: d, count: trendMap[d] }));
+
   res.json({
     totalCallsToday,
     totalSRs,
@@ -638,6 +665,15 @@ app.get("/api/dashboard/stats", authenticateJWT, asyncHandler(async (req, res) =
     brandPerformance,
     agentPerformance,
     dailyReports,
+    // extended
+    totalCalls,
+    totalComplaints,
+    solvedCases,
+    unsolvedCases,
+    fcrRate,
+    callsByType,
+    callsByBranch,
+    complaintTrends,
   });
 }));
 

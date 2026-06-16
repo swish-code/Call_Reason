@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { DailyReportData, MonthlyReportData, User } from "../types.js";
-import { FileText, Printer, Download, TrendingUp, Award, Clock, Calendar, CheckSquare, BarChart } from "lucide-react";
+import { DailyReportData, MonthlyReportData, User, Interaction, Brand, Branch, CALL_REASONS, COMPLAINT_REASONS, CUSTOMER_TYPES } from "../types.js";
+import { FileText, Printer, Download, TrendingUp, Award, Clock, Calendar, CheckSquare, BarChart, Filter } from "lucide-react";
 import { downloadCSV, formatDate } from "../utils.js";
 import { apiFetch } from "../lib/api.ts";
 
@@ -9,8 +9,23 @@ interface ReportsProps {
 }
 
 export default function Reports({ currentUser }: ReportsProps) {
-  const [activeTab, setActiveTab] = useState<"daily" | "monthly">("daily");
-  
+  const [activeTab, setActiveTab] = useState<"daily" | "monthly" | "custom">("daily");
+
+  // Custom report parameters
+  const [allInteractions, setAllInteractions] = useState<Interaction[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [customLoading, setCustomLoading] = useState(false);
+  const [fStart, setFStart] = useState("");
+  const [fEnd, setFEnd] = useState("");
+  const [fBrand, setFBrand] = useState("");
+  const [fBranch, setFBranch] = useState("");
+  const [fAgent, setFAgent] = useState("");
+  const [fCallType, setFCallType] = useState("");
+  const [fComplaintType, setFComplaintType] = useState("");
+  const [fCustomerType, setFCustomerType] = useState("");
+  const [fDirection, setFDirection] = useState("");
+
   // Daily parameters
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [dailyData, setDailyData] = useState<DailyReportData | null>(null);
@@ -52,13 +67,61 @@ export default function Reports({ currentUser }: ReportsProps) {
     }
   };
 
-  useEffect(() => {
-    if (activeTab === "daily") {
-      fetchDailyReport();
-    } else {
-      fetchMonthlyReport();
+  const fetchCustomData = async () => {
+    try {
+      setCustomLoading(true);
+      setError("");
+      const [ri, rb, rbr] = await Promise.all([
+        apiFetch("/api/interactions"),
+        apiFetch("/api/brands"),
+        apiFetch("/api/branches"),
+      ]);
+      if (ri.ok) setAllInteractions(await ri.json());
+      if (rb.ok) setBrands(await rb.json());
+      if (rbr.ok) setBranches(await rbr.json());
+    } catch (err: any) {
+      setError(err.message || "Failed to load report data.");
+    } finally {
+      setCustomLoading(false);
     }
+  };
+
+  useEffect(() => {
+    if (activeTab === "daily") fetchDailyReport();
+    else if (activeTab === "monthly") fetchMonthlyReport();
+    else fetchCustomData();
   }, [activeTab, selectedDate]);
+
+  // Apply all custom filters
+  const filteredReport = allInteractions.filter((i) => {
+    if (fStart && i.interaction_date < fStart) return false;
+    if (fEnd && i.interaction_date > fEnd) return false;
+    if (fBrand && i.brand !== fBrand) return false;
+    if (fBranch && i.branch !== fBranch) return false;
+    if (fAgent && i.agent_name !== fAgent) return false;
+    if (fCallType && (i.call_reason || i.interaction_type) !== fCallType) return false;
+    if (fComplaintType && i.complaint_reason !== fComplaintType) return false;
+    if (fCustomerType && i.customer_type !== fCustomerType) return false;
+    if (fDirection && i.call_direction !== fDirection) return false;
+    return true;
+  });
+
+  const agentNames = Array.from(new Set(allInteractions.map((i) => i.agent_name)));
+
+  const resetFilters = () => {
+    setFStart(""); setFEnd(""); setFBrand(""); setFBranch(""); setFAgent("");
+    setFCallType(""); setFComplaintType(""); setFCustomerType(""); setFDirection("");
+  };
+
+  const handleExportCustom = () => {
+    const headers = ["Date", "Time", "Order #", "Customer", "Phone", "Call Type", "Brand", "Branch", "Customer Type", "Direction", "Complaint Reason", "FCR", "Status", "Agent", "Team"];
+    const rows = filteredReport.map((i) => [
+      i.interaction_date, i.interaction_time, i.order_number || "", i.customer_name, i.customer_phone,
+      i.call_reason || i.interaction_type, i.brand, i.branch || "", i.customer_type || "",
+      i.call_direction, i.complaint_reason || "", i.fcr || "", i.status, i.agent_name, i.team || "",
+    ]);
+    downloadCSV(headers, rows, `Custom_Report_${new Date().toISOString().split("T")[0]}`);
+  };
 
   // Export Daily Report to CSV
   const handleExportDaily = () => {
@@ -145,6 +208,14 @@ export default function Reports({ currentUser }: ReportsProps) {
           }`}
         >
           Monthly Quality Analytics
+        </button>
+        <button
+          onClick={() => setActiveTab("custom")}
+          className={`px-5 py-2.5 rounded-xl text-xs font-bold transition ${
+            activeTab === "custom" ? "bg-blue-600 text-white shadow" : "text-zinc-400 hover:bg-[#0a0a0b]"
+          }`}
+        >
+          Custom Report &amp; Export
         </button>
       </div>
 
@@ -409,6 +480,79 @@ export default function Reports({ currentUser }: ReportsProps) {
               
             </div>
           ) : null}
+        </div>
+      )}
+
+      {/* Custom Report & Export Tab Panel */}
+      {activeTab === "custom" && (
+        <div className="space-y-6">
+          {/* Filters */}
+          <div className="bg-[#121214] p-5 border border-[#27272a] rounded-3xl shadow-sm space-y-4 print:hidden">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold text-white flex items-center gap-1.5"><Filter className="w-4 h-4 text-blue-400" /> Report Filters</h3>
+              <button onClick={resetFilters} className="px-3 py-1.5 text-[11px] font-bold text-rose-400 bg-rose-500/5 border border-rose-500/20 hover:bg-rose-500/10 rounded-xl transition">Reset</button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">From Date</label><input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold focus:ring-1 focus:ring-blue-500" /></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">To Date</label><input type="date" value={fEnd} onChange={(e) => setFEnd(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold focus:ring-1 focus:ring-blue-500" /></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Brand</label><select value={fBrand} onChange={(e) => setFBrand(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option>{brands.map((b) => (<option key={b.id} value={b.brand_name}>{b.brand_name}</option>))}</select></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Branch</label><select value={fBranch} onChange={(e) => setFBranch(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option>{branches.map((b) => (<option key={b.id} value={b.branch_name}>{b.branch_name}</option>))}</select></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Agent</label><select value={fAgent} onChange={(e) => setFAgent(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option>{agentNames.map((a) => (<option key={a} value={a}>{a}</option>))}</select></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Call Type</label><select value={fCallType} onChange={(e) => setFCallType(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option>{CALL_REASONS.map((c) => (<option key={c} value={c}>{c}</option>))}</select></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Complaint Type</label><select value={fComplaintType} onChange={(e) => setFComplaintType(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option>{COMPLAINT_REASONS.map((c) => (<option key={c} value={c}>{c}</option>))}</select></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Customer Type</label><select value={fCustomerType} onChange={(e) => setFCustomerType(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option>{CUSTOMER_TYPES.map((c) => (<option key={c} value={c}>{c}</option>))}</select></div>
+              <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Call Direction</label><select value={fDirection} onChange={(e) => setFDirection(e.target.value)} className="w-full px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold [&>option]:bg-[#121214]"><option value="">All</option><option value="Inbound">Inbound</option><option value="Outbound">Outbound</option></select></div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={handleExportCustom} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Download className="w-4 h-4" /> Export to Excel (CSV)</button>
+              <button onClick={handlePrint} className="px-4 py-2 bg-[#0a0a0b] hover:bg-zinc-800 text-zinc-300 border border-[#27272a] font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Printer className="w-4 h-4" /> Export to PDF</button>
+              <span className="text-xs text-[#71717a] font-bold ml-auto">{filteredReport.length} records</span>
+            </div>
+          </div>
+
+          {/* Print header */}
+          <div className="hidden print:block text-center space-y-1 border-b pb-4 mb-4 border-[#27272a]">
+            <h1 className="text-xl font-bold text-white">Call Center Custom Report</h1>
+            <p className="text-xs text-zinc-400">{filteredReport.length} records · generated {new Date().toISOString().split("T")[0]}</p>
+          </div>
+
+          {customLoading ? (
+            <div className="flex flex-col items-center justify-center p-12"><div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
+          ) : (
+            <div className="bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-sm print:border">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#0a0a0b] text-[#71717a] font-bold border-b border-[#27272a]">
+                    <tr>
+                      <th className="p-3">Date/Time</th>
+                      <th className="p-3">Order #</th>
+                      <th className="p-3">Customer</th>
+                      <th className="p-3">Call Type</th>
+                      <th className="p-3">Brand / Branch</th>
+                      <th className="p-3">Complaint / FCR</th>
+                      <th className="p-3">Agent</th>
+                      <th className="p-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#27272a]">
+                    {filteredReport.map((i) => (
+                      <tr key={i.id} className="hover:bg-[#1c1c1f]/40 transition">
+                        <td className="p-3 font-mono text-[10px] text-zinc-400 whitespace-nowrap">{i.interaction_date} {i.interaction_time}</td>
+                        <td className="p-3 font-mono text-zinc-400">{i.order_number || "—"}</td>
+                        <td className="p-3"><div className="font-bold text-white">{i.customer_name}</div><div className="font-mono text-[10px] text-zinc-500" dir="ltr">{i.customer_phone}</div></td>
+                        <td className="p-3 font-bold text-blue-400">{i.call_reason || i.interaction_type}</td>
+                        <td className="p-3"><div className="text-zinc-300 font-bold">{i.brand}</div>{i.branch && <div className="text-[10px] text-amber-400">{i.branch}</div>}</td>
+                        <td className="p-3">{i.complaint_reason ? (<div><div className="text-rose-400">{i.complaint_reason}</div>{i.fcr && <div className={`text-[10px] ${i.fcr === "Solved" ? "text-emerald-400" : "text-amber-400"}`}>{i.fcr}</div>}</div>) : "—"}</td>
+                        <td className="p-3 text-zinc-400">{i.agent_name}</td>
+                        <td className="p-3 text-zinc-300">{i.status}</td>
+                      </tr>
+                    ))}
+                    {filteredReport.length === 0 && (<tr><td colSpan={8} className="p-8 text-center text-zinc-500">No records match the selected filters.</td></tr>)}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

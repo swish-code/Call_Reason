@@ -187,9 +187,78 @@ export default function Dashboard({ onNavigateToForm }: DashboardProps) {
         </div>
       </div>
 
+      {/* Call-center KPI row */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {[
+          { label: "Total Calls", value: stats.totalCalls, tone: "text-white" },
+          { label: "Total Complaints", value: stats.totalComplaints, tone: "text-rose-400" },
+          { label: "Solved (FCR)", value: stats.solvedCases, tone: "text-emerald-400" },
+          { label: "Unsolved (FCR)", value: stats.unsolvedCases, tone: "text-amber-400" },
+          { label: "FCR Rate", value: `${stats.fcrRate}%`, tone: "text-blue-400" },
+        ].map((c) => (
+          <div key={c.label} className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-2xl">
+            <span className="text-[10px] text-[#71717a] font-bold block uppercase">{c.label}</span>
+            <p className={`text-2xl font-bold tracking-tight font-mono mt-1 ${c.tone}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Calls by Type / Calls by Branch */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {([
+          { title: "Calls by Type", data: stats.callsByType, color: "bg-blue-500" },
+          { title: "Calls by Branch", data: stats.callsByBranch, color: "bg-amber-500" },
+        ] as const).map((sec) => {
+          const total = sec.data.reduce((a, c) => a + c.count, 0) || 1;
+          return (
+            <div key={sec.title} className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-2xl">
+              <h2 className="text-md font-bold text-white mb-4">{sec.title}</h2>
+              <div className="space-y-3">
+                {sec.data.map((d) => {
+                  const pct = Math.round((d.count / total) * 100);
+                  return (
+                    <div key={d.name} className="space-y-1">
+                      <div className="flex justify-between items-center text-xs font-bold">
+                        <span className="text-white truncate pr-2">{d.name}</span>
+                        <span className="text-[#71717a] font-mono shrink-0">{d.count} ({pct}%)</span>
+                      </div>
+                      <div className="w-full bg-[#1c1c1f] border border-[#27272a]/60 h-2.5 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${sec.color}`} style={{ width: `${pct}%` }}></div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {sec.data.length === 0 && <div className="text-center py-6 text-[#71717a] text-xs">No data yet.</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Complaint Trends (last 7 days) */}
+      <div className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-2xl">
+        <h2 className="text-md font-bold text-white mb-4">Complaint Trends (last 7 days)</h2>
+        <div className="flex items-end justify-between gap-2 h-40">
+          {(() => {
+            const maxT = Math.max(...stats.complaintTrends.map((t) => t.count), 1);
+            return stats.complaintTrends.map((t) => {
+              const parts = t.date.split("-");
+              const label = parts[2] && parts[1] ? `${parts[2]}/${parts[1]}` : t.date;
+              return (
+                <div key={t.date} className="flex-1 flex flex-col items-center justify-end gap-2 h-full">
+                  <span className="text-[10px] font-mono text-rose-300">{t.count}</span>
+                  <div className="w-full bg-gradient-to-t from-rose-600 to-rose-400 rounded-t-lg transition-all" style={{ height: `${Math.max((t.count / maxT) * 100, 3)}%` }}></div>
+                  <span className="text-[9px] font-mono text-zinc-500">{label}</span>
+                </div>
+              );
+            });
+          })()}
+        </div>
+      </div>
+
       {/* Main Analytical Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
+
         {/* Daily Reports Trend Line Chart */}
         <div className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-2xl lg:col-span-8 flex flex-col justify-between">
           <div>

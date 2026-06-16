@@ -127,6 +127,15 @@ export interface DashboardStats {
   brandPerformance: { name: string; count: number }[];
   agentPerformance: { name: string; count: number }[];
   dailyReports: { date: string; calls: number; srs: number; tasks: number }[];
+  // extended call-center metrics
+  totalCalls: number;
+  totalComplaints: number;
+  solvedCases: number;
+  unsolvedCases: number;
+  fcrRate: number;
+  callsByType: { name: string; count: number }[];
+  callsByBranch: { name: string; count: number }[];
+  complaintTrends: { date: string; count: number }[];
 }
 
 export interface DailyReportData {
