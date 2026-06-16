@@ -80,7 +80,7 @@ const SEED_INTERACTIONS: Interaction[] = [
 // Columns that may be updated through the API (whitelist guards against
 // arbitrary fields in request bodies being written to the table).
 const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "team", "status", "created_by"] as const;
-const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "branch", "team", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
+const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "order_number", "branch", "team", "customer_type", "call_from", "aggregator_name", "comments", "complaint_reason", "fcr", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
 
 export class DB {
   // ----------------------------------------------------
@@ -128,8 +128,15 @@ export class DB {
         brand TEXT,
         category TEXT,
         call_reason TEXT,
+        order_number TEXT,
         branch TEXT,
         team TEXT,
+        customer_type TEXT,
+        call_from TEXT,
+        aggregator_name TEXT,
+        comments TEXT,
+        complaint_reason TEXT,
+        fcr TEXT,
         priority TEXT,
         status TEXT,
         summary TEXT,
@@ -145,18 +152,31 @@ export class DB {
         timestamp TEXT,
         operator_id TEXT,
         operator_name TEXT,
+        operator_role TEXT,
+        category TEXT,
         action TEXT,
         details TEXT,
+        related_ref TEXT,
         ip_address TEXT
       );
     `);
 
-    // Migrations for databases created before the Call Reason / Teams feature
+    // Migrations for databases created before newer features
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS team TEXT;
       ALTER TABLE interactions ADD COLUMN IF NOT EXISTS call_reason TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS order_number TEXT;
       ALTER TABLE interactions ADD COLUMN IF NOT EXISTS branch TEXT;
       ALTER TABLE interactions ADD COLUMN IF NOT EXISTS team TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS customer_type TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS call_from TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS aggregator_name TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS comments TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS complaint_reason TEXT;
+      ALTER TABLE interactions ADD COLUMN IF NOT EXISTS fcr TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS operator_role TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS category TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS related_ref TEXT;
     `);
 
     // Backfill teams for rows created before the feature existed
@@ -303,9 +323,9 @@ export class DB {
       timestamp: new Date().toISOString(),
     };
     await pool.query(
-      `INSERT INTO audit_logs (id, timestamp, operator_id, operator_name, action, details, ip_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [newLog.id, newLog.timestamp, newLog.operator_id, newLog.operator_name, newLog.action, newLog.details, newLog.ip_address ?? null]
+      `INSERT INTO audit_logs (id, timestamp, operator_id, operator_name, operator_role, category, action, details, related_ref, ip_address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [newLog.id, newLog.timestamp, newLog.operator_id, newLog.operator_name, newLog.operator_role ?? null, newLog.category ?? null, newLog.action, newLog.details, newLog.related_ref ?? null, newLog.ip_address ?? null]
     );
     return newLog;
   }
@@ -380,12 +400,33 @@ export class DB {
     return rows[0];
   }
 
+  // History lookup for the Call Reason screen (by customer phone and/or order number)
+  static async getInteractionHistory(opts: { phone?: string; order?: string }): Promise<Interaction[]> {
+    const clauses: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (opts.phone) {
+      clauses.push(`customer_phone = $${idx++}`);
+      values.push(opts.phone);
+    }
+    if (opts.order) {
+      clauses.push(`order_number = $${idx++}`);
+      values.push(opts.order);
+    }
+    if (clauses.length === 0) return [];
+    const { rows } = await pool.query<Interaction>(
+      `SELECT * FROM interactions WHERE ${clauses.join(" OR ")} ORDER BY created_at DESC LIMIT 50`,
+      values
+    );
+    return rows;
+  }
+
   static async addInteraction(interaction: Omit<Interaction, "id"> & { id?: string }): Promise<Interaction> {
     const id = interaction.id || "int-" + Date.now();
     const { rows } = await pool.query<Interaction>(
-      `INSERT INTO interactions (id, interaction_date, interaction_time, agent_id, agent_name, customer_name, customer_phone, interaction_type, communication_type, call_direction, brand, category, call_reason, branch, team, priority, status, summary, action_taken, follow_up_required, follow_up_date, follow_up_notes, attachments, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING *`,
-      [id, interaction.interaction_date, interaction.interaction_time, interaction.agent_id, interaction.agent_name, interaction.customer_name, interaction.customer_phone, interaction.interaction_type, interaction.communication_type, interaction.call_direction, interaction.brand, interaction.category, interaction.call_reason ?? null, interaction.branch ?? null, interaction.team ?? null, interaction.priority, interaction.status, interaction.summary, interaction.action_taken, interaction.follow_up_required, interaction.follow_up_date ?? null, interaction.follow_up_notes ?? null, JSON.stringify(interaction.attachments ?? []), interaction.created_at]
+      `INSERT INTO interactions (id, interaction_date, interaction_time, agent_id, agent_name, customer_name, customer_phone, interaction_type, communication_type, call_direction, brand, category, call_reason, order_number, branch, team, customer_type, call_from, aggregator_name, comments, complaint_reason, fcr, priority, status, summary, action_taken, follow_up_required, follow_up_date, follow_up_notes, attachments, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING *`,
+      [id, interaction.interaction_date, interaction.interaction_time, interaction.agent_id, interaction.agent_name, interaction.customer_name, interaction.customer_phone, interaction.interaction_type, interaction.communication_type, interaction.call_direction, interaction.brand, interaction.category, interaction.call_reason ?? null, interaction.order_number ?? null, interaction.branch ?? null, interaction.team ?? null, interaction.customer_type ?? null, interaction.call_from ?? null, interaction.aggregator_name ?? null, interaction.comments ?? null, interaction.complaint_reason ?? null, interaction.fcr ?? null, interaction.priority, interaction.status, interaction.summary, interaction.action_taken, interaction.follow_up_required, interaction.follow_up_date ?? null, interaction.follow_up_notes ?? null, JSON.stringify(interaction.attachments ?? []), interaction.created_at]
     );
     return rows[0];
   }

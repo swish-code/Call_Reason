@@ -104,6 +104,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
   await DB.addAuditLog({
     operator_id: user.id,
     operator_name: user.full_name,
+    operator_role: user.role,
+    category: user.team || "Call Center",
     action: "User Login",
     details: `User ${user.username} successfully logged in`
   });
@@ -173,6 +175,8 @@ app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, r
   await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
+    operator_role: req.user.role,
+    category: "Team Leader",
     action: "Create User",
     details: `A new user account was created: ${username} (${role})`
   });
@@ -224,6 +228,8 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req
   await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
+    operator_role: req.user.role,
+    category: "Team Leader",
     action: "Edit User",
     details: `User data updated: ${updates.username} (status: ${updates.status})`
   });
@@ -250,6 +256,8 @@ app.delete("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (
   await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
+    operator_role: req.user.role,
+    category: "Team Leader",
     action: "Delete User",
     details: `User account permanently deleted: ${targetUser.username}`
   });
@@ -277,6 +285,8 @@ app.put("/api/users/:id/reset-password", authenticateJWT, requireAdmin, asyncHan
   await DB.addAuditLog({
     operator_id: req.user.id,
     operator_name: req.user.full_name,
+    operator_role: req.user.role,
+    category: "Team Leader",
     action: "Password Reset",
     details: `A new password was successfully reset for user: ${targetUser.username}`
   });
@@ -377,6 +387,18 @@ app.get("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => {
   res.json(list);
 }));
 
+// Agent History lookup for the Call Reason screen (by customer phone and/or order number)
+app.get("/api/interactions/history", authenticateJWT, asyncHandler(async (req, res) => {
+  const phone = (req.query.phone as string) || "";
+  const order = (req.query.order as string) || "";
+  if (!phone && !order) return res.json([]);
+  let history = await DB.getInteractionHistory({ phone: phone || undefined, order: order || undefined });
+  if (req.user.role === "agent") {
+    history = history.filter((i) => i.agent_id === req.user.id);
+  }
+  res.json(history);
+}));
+
 app.get("/api/interactions/:id", authenticateJWT, asyncHandler(async (req, res) => {
   const interaction = await DB.getInteractionById(req.params.id);
   if (interaction) {
@@ -399,8 +421,15 @@ app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => 
     brand,
     category,
     call_reason,
+    order_number,
     branch,
     team,
+    customer_type,
+    call_from,
+    aggregator_name,
+    comments,
+    complaint_reason,
+    fcr,
     priority,
     status,
     summary,
@@ -451,8 +480,15 @@ app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => 
     brand: brand || "Talabat",
     category: category || "Other",
     call_reason: call_reason || undefined,
+    order_number: order_number || undefined,
     branch: branch || undefined,
     team: resolvedTeam,
+    customer_type: customer_type || undefined,
+    call_from: call_from || undefined,
+    aggregator_name: aggregator_name || undefined,
+    comments: comments || undefined,
+    complaint_reason: call_reason === "Complaint" ? (complaint_reason || undefined) : undefined,
+    fcr: call_reason === "Complaint" ? (fcr || undefined) : undefined,
     priority: priority || "Medium",
     status: status || "Open",
     summary: summary || "",
@@ -462,6 +498,17 @@ app.post("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => 
     follow_up_notes: follow_up_required ? follow_up_notes : undefined,
     attachments: parsedAttachments,
     created_at: now.toISOString(),
+  });
+
+  // Activity log for the Agent Logs module
+  await DB.addAuditLog({
+    operator_id: agent_id,
+    operator_name: agent_name,
+    operator_role: req.user.role,
+    category: resolvedTeam,
+    action: `Logged Call — ${call_reason || newInteraction.interaction_type}`,
+    details: `${newInteraction.brand}${newInteraction.branch ? " / " + newInteraction.branch : ""} · ${newInteraction.customer_phone}${newInteraction.complaint_reason ? " · " + newInteraction.complaint_reason : ""}${newInteraction.fcr ? " · FCR: " + newInteraction.fcr : ""}`,
+    related_ref: newInteraction.id,
   });
 
   res.status(201).json(newInteraction);

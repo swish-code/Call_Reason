@@ -27,17 +27,36 @@ export interface AuditLog {
   timestamp: string;
   operator_id: string;
   operator_name: string;
+  operator_role?: string; // Role at the time of the action
+  category?: string; // Team category for Agent Logs grouping
   action: string;
   details: string;
+  related_ref?: string; // Reference to a related record (e.g. interaction id)
   ip_address?: string;
 }
 
 export type InteractionType = "SR" | "Complaint" | "Inquiry" | "Escalation" | "Follow Up" | "Feedback";
 export type CommunicationType = "Call" | "Task";
 
-// Call Reason: the reason an agent selects first when a call comes in.
-export type CallReason = "New Order" | "Follow Up" | "Complaint" | "Inquiry";
-export const CALL_REASONS: CallReason[] = ["New Order", "Follow Up", "Complaint", "Inquiry"];
+// Call Reason / Call Type: the reason an agent selects first when a call comes in.
+export type CallReason = "New Order" | "Follow Up" | "Complaint" | "Inquiry" | "Additional Request";
+export const CALL_REASONS: CallReason[] = ["New Order", "Follow Up", "Complaint", "Inquiry", "Additional Request"];
+
+// Caller information classification
+export type CustomerType = "Customer" | "Aggregator" | "Driver";
+export const CUSTOMER_TYPES: CustomerType[] = ["Customer", "Aggregator", "Driver"];
+
+export type CallFrom = "Customer" | "Aggregator" | "Driver";
+export const CALL_FROM_OPTIONS: CallFrom[] = ["Customer", "Aggregator", "Driver"];
+
+export const AGGREGATORS: string[] = ["Talabat", "Keeta", "Other Aggregators"];
+
+// Complaint-specific fields
+export type ComplaintReason = "Late Delivery" | "Late Preparation" | "Missing Items" | "Wrong Order" | "Other";
+export const COMPLAINT_REASONS: ComplaintReason[] = ["Late Delivery", "Late Preparation", "Missing Items", "Wrong Order", "Other"];
+
+export type FCR = "Solved" | "Not Solved";
+export const FCR_OPTIONS: FCR[] = ["Solved", "Not Solved"];
 export type CallDirection = "Inbound" | "Outbound";
 export type PriorityLevel = "Low" | "Medium" | "High" | "Critical";
 export type InteractionStatus = "Open" | "Pending" | "Resolved" | "Closed";
@@ -63,9 +82,16 @@ export interface Interaction {
   call_direction: CallDirection;
   brand: string;
   category: string;
-  call_reason?: CallReason | string; // Reason chosen at the start of the call
+  call_reason?: CallReason | string; // Call Type chosen at the start of the call
+  order_number?: string;
   branch?: string; // Store/branch, shown for Complaint call reasons
   team?: Team; // Team that handled the interaction (defaults to the agent's team)
+  customer_type?: CustomerType | string;
+  call_from?: CallFrom | string;
+  aggregator_name?: string; // Talabat / Keeta / Other Aggregators
+  comments?: string; // Free-text call notes
+  complaint_reason?: ComplaintReason | string; // Set when call_reason is Complaint
+  fcr?: FCR | string; // First Call Resolution: Solved / Not Solved
   priority: PriorityLevel;
   status: InteractionStatus;
   summary: string;
