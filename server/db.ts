@@ -1,6 +1,6 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
-import { User, Interaction, Brand, Category, Branch, AuditLog } from "../src/types.js";
+import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption } from "../src/types.js";
 
 const { Pool } = pkg;
 
@@ -56,6 +56,21 @@ const SEED_BRANCHES: Branch[] = [
   { id: "br3", branch_name: "Giza - Dokki" },
   { id: "br4", branch_name: "Alexandria - Smouha" },
 ];
+
+// Default values for the admin-managed dropdown lists (Configuration page).
+// Each list is seeded once (only if it has no rows yet).
+const DEFAULT_OPTIONS: Record<string, string[]> = {
+  call_type: ["New Order", "Follow Up", "Complaint", "Inquiry", "Additional Request"],
+  customer_type: ["Customer", "Aggregator", "Driver"],
+  call_from: ["Customer", "Aggregator", "Driver"],
+  aggregator: ["Talabat", "Keeta", "Other Aggregators"],
+  complaint_reason: ["Late Delivery", "Late Preparation", "Missing Items", "Wrong Order", "Other"],
+  fcr: ["Solved", "Not Solved"],
+  priority: ["Low", "Medium", "High", "Critical"],
+  status: ["Open", "Pending", "Resolved", "Closed"],
+  team: ["Complain Team", "Call Center", "Technical Team", "Team Leader"],
+  call_direction: ["Inbound", "Outbound"],
+};
 
 const SEED_CATEGORIES: Category[] = [
   { id: "c1", category_name: "Refund" },
@@ -159,6 +174,13 @@ export class DB {
         related_ref TEXT,
         ip_address TEXT
       );
+      CREATE TABLE IF NOT EXISTS options (
+        id TEXT PRIMARY KEY,
+        list_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        active BOOLEAN DEFAULT true
+      );
     `);
 
     // Migrations for databases created before newer features
@@ -193,6 +215,20 @@ export class DB {
     if (Number(branchCount.rows[0].count) === 0) {
       for (const b of SEED_BRANCHES) {
         await pool.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [b.id, b.branch_name]);
+      }
+    }
+
+    // Seed each dropdown list once (idempotent per list_key, so new lists added
+    // in code get seeded on the next boot without touching existing edits)
+    for (const [key, labels] of Object.entries(DEFAULT_OPTIONS)) {
+      const c = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM options WHERE list_key = $1", [key]);
+      if (Number(c.rows[0].count) === 0) {
+        for (let idx = 0; idx < labels.length; idx++) {
+          await pool.query(
+            "INSERT INTO options (id, list_key, label, sort_order, active) VALUES ($1,$2,$3,$4,true) ON CONFLICT (id) DO NOTHING",
+            [`opt-${key}-${idx}`, key, labels[idx], idx]
+          );
+        }
       }
     }
 
@@ -385,6 +421,70 @@ export class DB {
   static async deleteBranch(id: string): Promise<boolean> {
     const res = await pool.query("DELETE FROM branches WHERE id = $1", [id]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // ----------------------------------------------------
+  // Dropdown options (Configuration page)
+  // ----------------------------------------------------
+  static async getAllOptions(): Promise<DropdownOption[]> {
+    const { rows } = await pool.query<DropdownOption>("SELECT * FROM options ORDER BY list_key ASC, sort_order ASC, label ASC");
+    return rows;
+  }
+
+  static async getOptionsByKey(listKey: string, activeOnly = true): Promise<DropdownOption[]> {
+    const { rows } = await pool.query<DropdownOption>(
+      `SELECT * FROM options WHERE list_key = $1 ${activeOnly ? "AND active = true" : ""} ORDER BY sort_order ASC, label ASC`,
+      [listKey]
+    );
+    return rows;
+  }
+
+  static async addOption(listKey: string, label: string): Promise<DropdownOption> {
+    const m = await pool.query<{ max: number | null }>("SELECT MAX(sort_order) AS max FROM options WHERE list_key = $1", [listKey]);
+    const nextOrder = (m.rows[0].max ?? -1) + 1;
+    const id = "opt-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+    const { rows } = await pool.query<DropdownOption>(
+      "INSERT INTO options (id, list_key, label, sort_order, active) VALUES ($1,$2,$3,$4,true) RETURNING *",
+      [id, listKey, label, nextOrder]
+    );
+    return rows[0];
+  }
+
+  static async updateOption(id: string, fields: Partial<Pick<DropdownOption, "label" | "active" | "sort_order">>): Promise<DropdownOption | undefined> {
+    const sets: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    (["label", "active", "sort_order"] as const).forEach((col) => {
+      if (col in fields && (fields as any)[col] !== undefined) {
+        sets.push(`${col} = $${idx++}`);
+        values.push((fields as any)[col]);
+      }
+    });
+    if (sets.length === 0) return undefined;
+    values.push(id);
+    const { rows } = await pool.query<DropdownOption>(`UPDATE options SET ${sets.join(", ")} WHERE id = $${idx} RETURNING *`, values);
+    return rows[0];
+  }
+
+  static async deleteOption(id: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM options WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  static async reorderOptions(listKey: string, orderedIds: string[]): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (let i = 0; i < orderedIds.length; i++) {
+        await client.query("UPDATE options SET sort_order = $1 WHERE id = $2 AND list_key = $3", [i, orderedIds[i], listKey]);
+      }
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   // ----------------------------------------------------

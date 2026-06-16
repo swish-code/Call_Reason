@@ -118,6 +118,29 @@ export interface Branch {
   branch_name: string;
 }
 
+// Generic, admin-managed dropdown option (Configuration page)
+export interface DropdownOption {
+  id: string;
+  list_key: string;
+  label: string;
+  sort_order: number;
+  active: boolean;
+}
+
+// Catalog of the dropdown lists managed from the Configuration page
+export const CONFIGURABLE_LISTS: { key: string; title: string; description: string }[] = [
+  { key: "call_type", title: "Call Types", description: "Call Reason form — Call Type" },
+  { key: "customer_type", title: "Customer Types", description: "Caller Information — Customer Type" },
+  { key: "call_from", title: "Call From", description: "Caller Information — Call From" },
+  { key: "aggregator", title: "Aggregators", description: "Aggregator names (Talabat, Keeta, …)" },
+  { key: "complaint_reason", title: "Complaint Reasons", description: "Shown when the call is a Complaint" },
+  { key: "fcr", title: "FCR Options", description: "First Call Resolution values" },
+  { key: "priority", title: "Priority Levels", description: "Ticket priority" },
+  { key: "status", title: "Statuses", description: "Ticket status" },
+  { key: "team", title: "Teams", description: "Operational teams (Agent Logs grouping)" },
+  { key: "call_direction", title: "Call Directions", description: "Inbound / Outbound" },
+];
+
 export interface DashboardStats {
   totalCallsToday: number;
   totalSRs: number;

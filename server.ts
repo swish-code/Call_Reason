@@ -375,6 +375,58 @@ app.delete("/api/branches/:id", authenticateJWT, requireLeaderOrAdmin, asyncHand
 }));
 
 // ----------------------------------------------------
+// Dropdown Options API (Configuration page)
+// ----------------------------------------------------
+// Full list (incl. inactive) for the Configuration screen
+app.get("/api/options", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  res.json(await DB.getAllOptions());
+}));
+
+// Reorder a list — defined before "/:id" routes (POST, distinct path)
+app.post("/api/options/reorder", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const { list_key, ids } = req.body;
+  if (!list_key || !Array.isArray(ids)) {
+    return res.status(400).json({ error: "list_key and ids[] are required." });
+  }
+  await DB.reorderOptions(list_key, ids);
+  res.json({ message: "Reordered successfully" });
+}));
+
+// Active options for one list — used by the forms (any authenticated user)
+app.get("/api/options/:key", authenticateJWT, asyncHandler(async (req, res) => {
+  res.json(await DB.getOptionsByKey(req.params.key, true));
+}));
+
+app.post("/api/options", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const { list_key, label } = req.body;
+  if (!list_key || !label || !label.trim()) {
+    return res.status(400).json({ error: "list_key and a non-empty label are required." });
+  }
+  const option = await DB.addOption(list_key, label.trim());
+  res.status(201).json(option);
+}));
+
+app.put("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const { label, active, sort_order } = req.body;
+  const updated = await DB.updateOption(req.params.id, {
+    ...(label !== undefined ? { label: String(label).trim() } : {}),
+    ...(active !== undefined ? { active: !!active } : {}),
+    ...(sort_order !== undefined ? { sort_order } : {}),
+  });
+  if (!updated) return res.status(404).json({ error: "Option not found or no changes provided." });
+  res.json(updated);
+}));
+
+app.delete("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+  const success = await DB.deleteOption(req.params.id);
+  if (success) {
+    res.json({ message: "Option deleted successfully" });
+  } else {
+    res.status(404).json({ error: "Option not found" });
+  }
+}));
+
+// ----------------------------------------------------
 // Interactions API (Secure & Role-Filtered)
 // ----------------------------------------------------
 app.get("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => {

@@ -8,11 +8,13 @@ import AdminSettings from "./components/AdminSettings.tsx";
 import UsersManagement from "./components/UsersManagement.tsx";
 import CallReason from "./components/CallReason.tsx";
 import AgentLogs from "./components/AgentLogs.tsx";
+import Configuration from "./components/Configuration.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
   PhoneCall,
   ClipboardList,
+  SlidersHorizontal,
   BarChart3,
   History,
   FileText,
@@ -30,7 +32,7 @@ import {
   ShieldAlert
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs";
+type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs" | "configuration";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -322,6 +324,21 @@ export default function App() {
                 {sidebarOpen && <span className="truncate">Agent Logs</span>}
               </button>
             )}
+
+            {/* Configuration: Admin only */}
+            {currentUser?.role === "admin" && (
+              <button
+                onClick={() => setActivePage("configuration")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "configuration"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                }`}
+              >
+                <SlidersHorizontal className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Configuration</span>}
+              </button>
+            )}
           </nav>
         </div>
 
@@ -363,6 +380,7 @@ export default function App() {
               {activePage === "users" && "User and Access Role Management"}
               {activePage === "callreason" && "Call Reason — Log a Call"}
               {activePage === "agentlogs" && "Agent Logs by Team"}
+              {activePage === "configuration" && "System Configuration"}
             </h1>
           </div>
 
@@ -408,6 +426,9 @@ export default function App() {
           )}
           {activePage === "agentlogs" && (
             <AgentLogs currentUser={currentUser} />
+          )}
+          {activePage === "configuration" && (
+            <Configuration currentUser={currentUser} />
           )}
         </main>
       </div>

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
 import {
-  Brand, Branch, User, CallReason as CallReasonType, CALL_REASONS,
-  Team, TEAMS, PriorityLevel, InteractionStatus, InteractionType,
-  CustomerType, CUSTOMER_TYPES, CallFrom, CALL_FROM_OPTIONS, AGGREGATORS,
-  ComplaintReason, COMPLAINT_REASONS, FCR, FCR_OPTIONS, Interaction,
+  Brand, Branch, User, CALL_REASONS,
+  TEAMS, InteractionType,
+  CUSTOMER_TYPES, CALL_FROM_OPTIONS, AGGREGATORS,
+  COMPLAINT_REASONS, FCR_OPTIONS, Interaction,
 } from "../types.js";
 import {
   Phone, PhoneIncoming, PhoneOutgoing, AlertCircle, Check, Loader2, Send,
@@ -17,7 +17,7 @@ interface CallReasonProps {
   onSuccess: () => void;
 }
 
-const REASON_TO_TYPE: Record<CallReasonType, InteractionType> = {
+const REASON_TO_TYPE: Record<string, InteractionType> = {
   "New Order": "SR",
   "Follow Up": "Follow Up",
   "Complaint": "Complaint",
@@ -25,45 +25,63 @@ const REASON_TO_TYPE: Record<CallReasonType, InteractionType> = {
   "Additional Request": "SR",
 };
 
-const REASON_META: Record<CallReasonType, { icon: any }> = {
-  "New Order": { icon: ShoppingCart },
-  "Follow Up": { icon: RefreshCw },
-  "Complaint": { icon: MessageSquareWarning },
-  "Inquiry": { icon: HelpCircle },
-  "Additional Request": { icon: PlusCircle },
+const REASON_ICONS: Record<string, any> = {
+  "New Order": ShoppingCart,
+  "Follow Up": RefreshCw,
+  "Complaint": MessageSquareWarning,
+  "Inquiry": HelpCircle,
+  "Additional Request": PlusCircle,
 };
+
+// Fetch a configurable list; fall back to the provided defaults if empty/unavailable
+async function loadList(key: string, fallback: string[]): Promise<string[]> {
+  try {
+    const res = await apiFetch(`/api/options/${key}`);
+    if (res.ok) {
+      const data = await res.json();
+      const labels = data.map((o: any) => o.label);
+      if (labels.length) return labels;
+    }
+  } catch (e) { /* ignore */ }
+  return fallback;
+}
 
 export default function CallReason({ currentUser, onSuccess }: CallReasonProps) {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
 
-  // Call classification
-  const [callReason, setCallReason] = useState<CallReasonType | "">("");
-  // Basic information
+  // Configurable lists (default to compiled-in values, overridden from Configuration)
+  const [callTypes, setCallTypes] = useState<string[]>(CALL_REASONS as string[]);
+  const [customerTypes, setCustomerTypes] = useState<string[]>(CUSTOMER_TYPES as string[]);
+  const [callFroms, setCallFroms] = useState<string[]>(CALL_FROM_OPTIONS as string[]);
+  const [aggregators, setAggregators] = useState<string[]>(AGGREGATORS);
+  const [complaintReasons, setComplaintReasons] = useState<string[]>(COMPLAINT_REASONS as string[]);
+  const [fcrOptions, setFcrOptions] = useState<string[]>(FCR_OPTIONS as string[]);
+  const [priorities, setPriorities] = useState<string[]>(["Low", "Medium", "High", "Critical"]);
+  const [statuses, setStatuses] = useState<string[]>(["Open", "Pending", "Resolved", "Closed"]);
+  const [teams, setTeams] = useState<string[]>(TEAMS as string[]);
+
+  // Form state
+  const [callReason, setCallReason] = useState<string>("");
   const [orderNumber, setOrderNumber] = useState("");
   const [brand, setBrand] = useState("");
   const [branch, setBranch] = useState("");
-  // Caller information
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [customerType, setCustomerType] = useState<CustomerType>("Customer");
-  const [callFrom, setCallFrom] = useState<CallFrom>("Customer");
+  const [customerType, setCustomerType] = useState("Customer");
+  const [callFrom, setCallFrom] = useState("Customer");
   const [aggregatorName, setAggregatorName] = useState(AGGREGATORS[0]);
   const [callDirection, setCallDirection] = useState<"Inbound" | "Outbound">("Inbound");
   const [comments, setComments] = useState("");
-  // Complaint details
-  const [complaintReason, setComplaintReason] = useState<ComplaintReason>("Late Delivery");
-  const [fcr, setFcr] = useState<FCR>("Solved");
-  // Handling
-  const [priority, setPriority] = useState<PriorityLevel>("Medium");
-  const [status, setStatus] = useState<InteractionStatus>("Open");
-  const [team, setTeam] = useState<Team>(currentUser.team || "Call Center");
+  const [complaintReason, setComplaintReason] = useState<string>("Late Delivery");
+  const [fcr, setFcr] = useState<string>("Solved");
+  const [priority, setPriority] = useState<string>("Medium");
+  const [status, setStatus] = useState<string>("Open");
+  const [team, setTeam] = useState<string>(currentUser.team || "Call Center");
   const [actionTaken, setActionTaken] = useState("");
 
-  // Agent history
   const [history, setHistory] = useState<Interaction[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -74,12 +92,34 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
         const [rb, rbr] = await Promise.all([apiFetch("/api/brands"), apiFetch("/api/branches")]);
         if (rb.ok) { const b = await rb.json(); setBrands(b); if (b.length) setBrand(b[0].brand_name); }
         if (rbr.ok) { const br = await rbr.json(); setBranches(br); if (br.length) setBranch(br[0].branch_name); }
+
+        const [ct, cust, cfrom, agg, comp, fc, prio, stat, tm] = await Promise.all([
+          loadList("call_type", CALL_REASONS as string[]),
+          loadList("customer_type", CUSTOMER_TYPES as string[]),
+          loadList("call_from", CALL_FROM_OPTIONS as string[]),
+          loadList("aggregator", AGGREGATORS),
+          loadList("complaint_reason", COMPLAINT_REASONS as string[]),
+          loadList("fcr", FCR_OPTIONS as string[]),
+          loadList("priority", ["Low", "Medium", "High", "Critical"]),
+          loadList("status", ["Open", "Pending", "Resolved", "Closed"]),
+          loadList("team", TEAMS as string[]),
+        ]);
+        setCallTypes(ct); setCustomerTypes(cust); setCallFroms(cfrom); setAggregators(agg);
+        setComplaintReasons(comp); setFcrOptions(fc); setPriorities(prio); setStatuses(stat); setTeams(tm);
+        // sensible defaults from the (possibly customized) lists
+        if (cust[0]) setCustomerType(cust[0]);
+        if (cfrom[0]) setCallFrom(cfrom[0]);
+        if (agg[0]) setAggregatorName(agg[0]);
+        if (comp[0]) setComplaintReason(comp[0]);
+        if (fc[0]) setFcr(fc[0]);
+        if (prio.includes("Medium")) setPriority("Medium"); else if (prio[0]) setPriority(prio[0]);
+        if (stat.includes("Open")) setStatus("Open"); else if (stat[0]) setStatus(stat[0]);
+        if (!(currentUser.team && tm.includes(currentUser.team)) && tm[0]) setTeam(tm[0]);
       } catch (e) { console.error(e); }
     };
     load();
   }, []);
 
-  // Auto-fetch agent history when phone or order number is provided
   useEffect(() => {
     const phone = customerPhone.trim();
     const order = orderNumber.trim();
@@ -112,7 +152,7 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
       const payload = {
         customer_name: customerName.trim() || "Walk-In / Guest Customer",
         customer_phone: customerPhone.trim(),
-        interaction_type: REASON_TO_TYPE[callReason],
+        interaction_type: REASON_TO_TYPE[callReason] || "SR",
         communication_type: "Call",
         call_direction: callDirection,
         brand,
@@ -133,7 +173,6 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
         action_taken: actionTaken,
         follow_up_required: false,
       };
-
       const res = await apiFetch("/api/interactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -158,7 +197,6 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-fade-in text-[#e4e4e7]">
-      {/* MAIN FORM */}
       <form onSubmit={handleSubmit} className="lg:col-span-8 bg-[#121214] border border-[#27272a] rounded-3xl p-6 md:p-8 shadow-xl space-y-8 relative overflow-hidden">
         {success && (
           <div className="absolute inset-0 bg-[#121214]/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-center">
@@ -178,12 +216,12 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
           </div>
         )}
 
-        {/* CALL CLASSIFICATION */}
+        {/* CALL TYPE */}
         <div className="space-y-3">
           <h3 className="text-xs font-bold text-[#71717a] uppercase tracking-wider">Call Type</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
-            {CALL_REASONS.map((r) => {
-              const Icon = REASON_META[r].icon;
+            {callTypes.map((r) => {
+              const Icon = REASON_ICONS[r] || PlusCircle;
               const active = callReason === r;
               return (
                 <button type="button" key={r} onClick={() => setCallReason(r)}
@@ -220,7 +258,7 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
               <div className="relative">
                 <MapPin className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3.5" />
                 <select value={branch} onChange={(e) => setBranch(e.target.value)} className={selectCls + " pl-10"}>
-                  {branches.length === 0 && <option value="">No branches — add in Settings</option>}
+                  {branches.length === 0 && <option value="">No branches — add in Configuration</option>}
                   {branches.map((b) => (<option key={b.id} value={b.branch_name}>{b.branch_name}</option>))}
                 </select>
               </div>
@@ -246,21 +284,21 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-zinc-300">Customer Type:</label>
-              <select value={customerType} onChange={(e) => setCustomerType(e.target.value as CustomerType)} className={selectCls}>
-                {CUSTOMER_TYPES.map((c) => (<option key={c} value={c}>{c}</option>))}
+              <select value={customerType} onChange={(e) => setCustomerType(e.target.value)} className={selectCls}>
+                {customerTypes.map((c) => (<option key={c} value={c}>{c}</option>))}
               </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-zinc-300">Call From:</label>
-              <select value={callFrom} onChange={(e) => setCallFrom(e.target.value as CallFrom)} className={selectCls}>
-                {CALL_FROM_OPTIONS.map((c) => (<option key={c} value={c}>{c}</option>))}
+              <select value={callFrom} onChange={(e) => setCallFrom(e.target.value)} className={selectCls}>
+                {callFroms.map((c) => (<option key={c} value={c}>{c}</option>))}
               </select>
             </div>
             {showAggregator && (
               <div className="space-y-1.5 animate-fade-in">
                 <label className="text-xs font-bold text-zinc-300">Aggregator Name:</label>
                 <select value={aggregatorName} onChange={(e) => setAggregatorName(e.target.value)} className={selectCls}>
-                  {AGGREGATORS.map((a) => (<option key={a} value={a}>{a}</option>))}
+                  {aggregators.map((a) => (<option key={a} value={a}>{a}</option>))}
                 </select>
               </div>
             )}
@@ -285,14 +323,14 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-zinc-300">Complaint Reason:</label>
-                <select value={complaintReason} onChange={(e) => setComplaintReason(e.target.value as ComplaintReason)} className={selectCls}>
-                  {COMPLAINT_REASONS.map((c) => (<option key={c} value={c}>{c}</option>))}
+                <select value={complaintReason} onChange={(e) => setComplaintReason(e.target.value)} className={selectCls}>
+                  {complaintReasons.map((c) => (<option key={c} value={c}>{c}</option>))}
                 </select>
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-zinc-300">FCR (First Call Resolution):</label>
-                <select value={fcr} onChange={(e) => setFcr(e.target.value as FCR)} className={selectCls}>
-                  {FCR_OPTIONS.map((f) => (<option key={f} value={f}>{f}</option>))}
+                <select value={fcr} onChange={(e) => setFcr(e.target.value)} className={selectCls}>
+                  {fcrOptions.map((f) => (<option key={f} value={f}>{f}</option>))}
                 </select>
               </div>
             </div>
@@ -305,19 +343,15 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-zinc-300 block">Team:</label>
-              <select value={team} onChange={(e) => setTeam(e.target.value as Team)} className={selectCls}>{TEAMS.map((t) => (<option key={t} value={t}>{t}</option>))}</select>
+              <select value={team} onChange={(e) => setTeam(e.target.value)} className={selectCls}>{teams.map((t) => (<option key={t} value={t}>{t}</option>))}</select>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-zinc-300 block">Priority:</label>
-              <select value={priority} onChange={(e) => setPriority(e.target.value as PriorityLevel)} className={selectCls}>
-                <option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Critical">Critical</option>
-              </select>
+              <select value={priority} onChange={(e) => setPriority(e.target.value)} className={selectCls}>{priorities.map((p) => (<option key={p} value={p}>{p}</option>))}</select>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-zinc-300 block">Status:</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value as InteractionStatus)} className={selectCls}>
-                <option value="Open">Open</option><option value="Pending">Pending</option><option value="Resolved">Resolved</option><option value="Closed">Closed</option>
-              </select>
+              <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectCls}>{statuses.map((s) => (<option key={s} value={s}>{s}</option>))}</select>
             </div>
           </div>
           <div className="space-y-1.5">
@@ -339,13 +373,8 @@ export default function CallReason({ currentUser, onSuccess }: CallReasonProps) 
         </div>
         <p className="text-[11px] text-[#71717a] font-light leading-relaxed">Previous interactions for this customer phone or order number appear here automatically.</p>
 
-        {historyLoading && (
-          <div className="flex items-center gap-2 text-xs text-[#71717a]"><Loader2 className="w-4 h-4 animate-spin" /> Searching history...</div>
-        )}
-
-        {!historyLoading && history.length === 0 && (
-          <div className="text-center py-8 text-[#71717a] text-xs border border-dashed border-[#27272a] rounded-2xl">No previous records found.</div>
-        )}
+        {historyLoading && (<div className="flex items-center gap-2 text-xs text-[#71717a]"><Loader2 className="w-4 h-4 animate-spin" /> Searching history...</div>)}
+        {!historyLoading && history.length === 0 && (<div className="text-center py-8 text-[#71717a] text-xs border border-dashed border-[#27272a] rounded-2xl">No previous records found.</div>)}
 
         <div className="space-y-2.5 max-h-[60vh] overflow-y-auto">
           {history.map((h) => (
