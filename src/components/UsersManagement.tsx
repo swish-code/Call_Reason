@@ -31,7 +31,6 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "leader" | "agent">("agent");
   const [team, setTeam] = useState<Team>("Call Center");
@@ -69,7 +68,6 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setEditingUser(null);
     setFullName("");
     setUsername("");
-    setEmail("");
     setPassword("");
     setRole("agent");
     setTeam("Call Center");
@@ -83,7 +81,6 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setEditingUser(user);
     setFullName(user.full_name || user.name || "");
     setUsername(user.username);
-    setEmail(user.email);
     setPassword(""); // don't fill password
     setRole(user.role);
     setTeam(user.team || "Call Center");
@@ -108,7 +105,6 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     const payload = {
       full_name: fullName,
       username,
-      email,
       role,
       team,
       department,
@@ -379,32 +375,17 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Username:</label>
-                  <input
-                    type="text"
-                    required
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="sales_agent"
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono text-left"
-                    dir="ltr"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Email Address:</label>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="agent@company.com"
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono text-left"
-                    dir="ltr"
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-zinc-400 block">Username:</label>
+                <input
+                  type="text"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="sales_agent"
+                  className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono text-left"
+                  dir="ltr"
+                />
               </div>
 
               {!editingUser && (

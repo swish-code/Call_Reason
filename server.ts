@@ -138,11 +138,14 @@ app.get("/api/users", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async 
 }));
 
 app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
-  const { full_name, username, email, password, role, status, team, department } = req.body;
+  const { full_name, username, password, role, status, team, department } = req.body;
 
-  if (!full_name || !username || !email || !password || !role || !status) {
+  if (!full_name || !username || !password || !role || !status) {
     return res.status(400).json({ error: "Please fill in all required fields to create the account." });
   }
+
+  // Email is optional now — derive a stable internal address from the username
+  const email = (req.body.email && String(req.body.email).trim()) ? String(req.body.email).trim() : `${username}@local`;
 
   // Conflict validation
   const existingEmail = await DB.getUserByEmail(email);
