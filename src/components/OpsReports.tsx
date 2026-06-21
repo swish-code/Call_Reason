@@ -58,9 +58,9 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
   const reset = () => { setFStart(""); setFEnd(""); setFDept(""); setFType(""); setFAgent(""); setFBranch(""); setFBrand(""); setFStatus(""); setFActivity(""); };
 
   const exportCsv = () => {
-    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
+    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
     const rows = filtered.map((l) => [
-      (l.created_at || "").replace("T", " ").slice(0, 16), LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type, l.department || "", l.activity_type || "", l.status || "",
+      (l.created_at || "").replace("T", " ").slice(0, 16), LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type, l.department || "", l.activity_type || "", l.status || "", dur(l),
       l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", (l.notes || l.action_taken || "").replace(/\n/g, " "),
     ]);
     downloadCSV(headers, rows, `Operations_Report_${new Date().toISOString().split("T")[0]}`);
@@ -68,6 +68,13 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
 
   const selCls = "px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[#121214]";
   const fmt = (ts?: string) => (ts ? ts.replace("T", " ").slice(0, 16) : "");
+  const dur = (l: OpsLog) => {
+    let s = Number(l.duration_seconds || 0);
+    if (l.running_since) s += Math.max(0, Math.round((Date.now() - new Date(l.running_since).getTime()) / 1000));
+    if (!s) return "—";
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
 
   return (
     <div className="space-y-6 animate-fade-in text-[#e4e4e7] print:text-black">
@@ -122,7 +129,7 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
               <thead className="bg-[#0a0a0b] text-[#71717a] font-bold border-b border-[#27272a]">
                 <tr>
                   <th className="p-3">Date</th><th className="p-3">Type</th><th className="p-3">Dept</th><th className="p-3">Activity</th>
-                  <th className="p-3">Agent</th><th className="p-3">Branch/Brand</th><th className="p-3">Order/Customer</th><th className="p-3">Status</th>
+                  <th className="p-3">Agent</th><th className="p-3">Branch/Brand</th><th className="p-3">Order/Customer</th><th className="p-3">Status</th><th className="p-3">Time</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#27272a]">
@@ -136,9 +143,10 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
                     <td className="p-3 text-zinc-300">{l.branch || "—"}{l.brand ? " / " + l.brand : ""}</td>
                     <td className="p-3 text-zinc-300">{l.order_number ? "#" + l.order_number : ""}{l.customer_name ? " " + l.customer_name : ""}{!l.order_number && !l.customer_name ? "—" : ""}</td>
                     <td className="p-3 text-zinc-300">{l.status || "—"}</td>
+                    <td className="p-3 font-mono text-[11px] text-zinc-300">{dur(l)}</td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-zinc-500">No records match the filters.</td></tr>}
+                {filtered.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-zinc-500">No records match the filters.</td></tr>}
               </tbody>
             </table>
           </div>

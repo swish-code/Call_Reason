@@ -224,6 +224,9 @@ export class DB {
         resolution_notes TEXT,
         action_plan TEXT,
         follow_up_date TEXT,
+        started_at TEXT,
+        duration_seconds INTEGER DEFAULT 0,
+        running_since TEXT,
         created_at TEXT,
         updated_at TEXT,
         created_by TEXT
@@ -251,6 +254,9 @@ export class DB {
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS category TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS related_ref TEXT;
       ALTER TABLE branches ADD COLUMN IF NOT EXISTS brand TEXT;
+      ALTER TABLE logs ADD COLUMN IF NOT EXISTS started_at TEXT;
+      ALTER TABLE logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
+      ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
     `);
 
     // Backfill teams for rows created before the feature existed
@@ -609,6 +615,42 @@ export class DB {
   static async deleteLog(id: string): Promise<boolean> {
     const res = await pool.query("DELETE FROM logs WHERE id = $1", [id]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // Live task timer: start / pause / complete (accumulates active seconds)
+  static async controlTimer(id: string, action: "start" | "pause" | "complete", completeStatus: string): Promise<OpsLog | undefined> {
+    const log = await DB.getLogById(id);
+    if (!log) return undefined;
+    const now = new Date();
+    const nowIso = now.toISOString();
+    let duration = Number((log as any).duration_seconds || 0);
+    let running_since: string | null = (log as any).running_since || null;
+    let started_at: string | null = (log as any).started_at || null;
+    let status = log.status;
+
+    const flush = () => {
+      if (running_since) {
+        duration += Math.max(0, Math.round((now.getTime() - new Date(running_since).getTime()) / 1000));
+        running_since = null;
+      }
+    };
+
+    if (action === "start") {
+      if (!running_since) running_since = nowIso;
+      if (!started_at) started_at = nowIso;
+      if (!["Completed", "Solved", "Closed"].includes(status || "")) status = "In Progress";
+    } else if (action === "pause") {
+      flush();
+    } else if (action === "complete") {
+      flush();
+      status = completeStatus;
+    }
+
+    const { rows } = await pool.query<OpsLog>(
+      "UPDATE logs SET duration_seconds = $1, running_since = $2, started_at = $3, status = $4, updated_at = $5 WHERE id = $6 RETURNING *",
+      [duration, running_since, started_at, status, nowIso, id]
+    );
+    return rows[0];
   }
 
   // ----------------------------------------------------

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { User, OpsLog, LogType, LOG_TYPE_CONFIG } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { downloadCSV } from "../utils.js";
-import { ClipboardList, RefreshCw, Download, Search, Pencil, Trash2, X, AlertCircle, Plus } from "lucide-react";
+import { ClipboardList, RefreshCw, Download, Search, Pencil, Trash2, X, AlertCircle, Play, Pause, Square, Timer } from "lucide-react";
 import OpsLogForm from "./OpsLogForm.tsx";
 
 interface OpsLogsListProps {
@@ -17,8 +17,33 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [editLog, setEditLog] = useState<OpsLog | null>(null);
+  const [, setTick] = useState(0); // 1s ticker so running timers update live
 
   const isAgent = currentUser.role === "agent";
+
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const elapsedSeconds = (l: OpsLog) => {
+    let s = Number(l.duration_seconds || 0);
+    if (l.running_since) s += Math.max(0, Math.round((Date.now() - new Date(l.running_since).getTime()) / 1000));
+    return s;
+  };
+  const fmtDur = (s: number) => {
+    if (!s) return "—";
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
+  const isDone = (l: OpsLog) => ["Completed", "Solved", "Closed"].includes(l.status || "");
+
+  const timer = async (l: OpsLog, action: "start" | "pause" | "complete") => {
+    const res = await apiFetch(`/api/logs/${l.id}/timer`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+    });
+    if (res.ok) fetchLogs(); else alert("Timer action failed.");
+  };
 
   const fetchLogs = async () => {
     try {
@@ -55,9 +80,9 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   };
 
   const exportCsv = () => {
-    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
+    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
     const rows = filtered.map((l) => [
-      (l.created_at || "").replace("T", " ").slice(0, 16), l.log_type, l.department || "", l.activity_type || "", l.status || "",
+      (l.created_at || "").replace("T", " ").slice(0, 16), l.log_type, l.department || "", l.activity_type || "", l.status || "", fmtDur(elapsedSeconds(l)),
       l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", l.notes || l.action_taken || "",
     ]);
     downloadCSV(headers, rows, `Logs_${new Date().toISOString().split("T")[0]}`);
@@ -122,6 +147,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                   <th className="p-4">Details</th>
                   <th className="p-4">Agent</th>
                   <th className="p-4">Status</th>
+                  <th className="p-4">Time</th>
                   <th className="p-4 text-center">Actions</th>
                 </tr>
               </thead>
@@ -145,6 +171,23 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                     <td className="p-4 text-zinc-400">{l.agent_name}</td>
                     <td className="p-4">{l.status ? <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold ${statusBadge(l.status)}`}>{l.status}</span> : <span className="text-zinc-600">—</span>}</td>
                     <td className="p-4">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-mono text-[11px] font-bold flex items-center gap-1 ${l.running_since ? "text-emerald-400" : "text-zinc-300"}`}>
+                          <Timer className="w-3.5 h-3.5" />{fmtDur(elapsedSeconds(l))}
+                        </span>
+                        {canModify(l) && !isDone(l) && (
+                          <div className="flex items-center gap-1">
+                            {!l.running_since ? (
+                              <button onClick={() => timer(l, "start")} className="p-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg hover:bg-emerald-500/20 transition" title="Start"><Play className="w-3 h-3" /></button>
+                            ) : (
+                              <button onClick={() => timer(l, "pause")} className="p-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-lg hover:bg-amber-500/20 transition" title="Pause"><Pause className="w-3 h-3" /></button>
+                            )}
+                            <button onClick={() => timer(l, "complete")} className="p-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg hover:bg-blue-500/20 transition" title="Complete"><Square className="w-3 h-3" /></button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-4">
                       <div className="flex items-center justify-center gap-1.5">
                         {canModify(l) && <button onClick={() => setEditLog(l)} className="p-1.5 bg-zinc-800 hover:bg-blue-500/10 hover:text-blue-400 text-zinc-300 border border-zinc-700 rounded-lg transition" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
                         {canModify(l) && <button onClick={() => remove(l)} className="p-1.5 bg-zinc-800 hover:bg-rose-500/10 hover:text-rose-400 text-zinc-300 border border-zinc-700 rounded-lg transition" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
@@ -152,7 +195,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                     </td>
                   </tr>
                 ))}
-                {filtered.length === 0 && (<tr><td colSpan={7} className="p-8 text-center text-zinc-500">No logs found.</td></tr>)}
+                {filtered.length === 0 && (<tr><td colSpan={8} className="p-8 text-center text-zinc-500">No logs found.</td></tr>)}
               </tbody>
             </table>
           </div>

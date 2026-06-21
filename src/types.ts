@@ -31,6 +31,10 @@ export interface OpsLog {
   resolution_notes?: string;
   action_plan?: string;
   follow_up_date?: string;
+  // Task time tracking (live timer)
+  started_at?: string;
+  duration_seconds?: number;
+  running_since?: string | null;
   created_at: string;
   updated_at?: string;
   created_by?: string;

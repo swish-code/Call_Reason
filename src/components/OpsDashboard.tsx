@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer } from "lucide-react";
 
 interface OpsDashboardProps {
   currentUser: User;
@@ -11,6 +11,8 @@ interface DashData {
   role: string;
   department: string | null;
   totalLogs: number;
+  avgHandlingSeconds: number;
+  totalHandlingSeconds: number;
   open: number;
   pending: number;
   completed: number;
@@ -47,6 +49,11 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   if (!d) return null;
 
   const isAgent = currentUser.role === "agent";
+  const fmtDur = (s: number) => {
+    if (!s) return "0m";
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${s}s`;
+  };
   const Card = ({ label, value, icon: Icon, tone }: { label: string; value: any; icon: any; tone: string }) => (
     <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-2xl flex items-center gap-4">
       <div className={`p-3 rounded-xl bg-opacity-10 ${tone} bg-current/10`}><Icon className={`w-6 h-6 ${tone}`} /></div>
@@ -120,6 +127,10 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
             <Card label="Weekly Activities" value={d.weekly} icon={CalendarDays} tone="text-purple-400" />
             <Card label="Monthly Activities" value={d.monthly} icon={CalendarDays} tone="text-sky-400" />
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+            <Card label="Avg Time / Task" value={fmtDur(d.avgHandlingSeconds)} icon={Timer} tone="text-emerald-400" />
+            <Card label="Total Time Logged" value={fmtDur(d.totalHandlingSeconds)} icon={Clock} tone="text-sky-400" />
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <Trend />
             <BarList title="My Activities by Type" data={d.byActivity} color="bg-blue-500" icon={ClipboardList} />
@@ -134,6 +145,10 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
             <Card label="Closed Tasks" value={d.completed} icon={CheckCircle2} tone="text-emerald-400" />
             <Card label="Complaint Resolution" value={`${d.complaintResolutionRate}%`} icon={MessageSquareWarning} tone="text-rose-400" />
             <Card label="Coaching Sessions" value={d.coachingSessions} icon={GraduationCap} tone="text-purple-400" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+            <Card label="Avg Handling Time / Task" value={fmtDur(d.avgHandlingSeconds)} icon={Timer} tone="text-emerald-400" />
+            <Card label="Total Time Logged" value={fmtDur(d.totalHandlingSeconds)} icon={Clock} tone="text-sky-400" />
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <BarList title="Agent Productivity" data={d.agentProductivity} color="bg-blue-500" icon={Users} />

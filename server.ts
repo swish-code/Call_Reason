@@ -503,10 +503,17 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     return Object.keys(m).map((name) => ({ name, count: m[name] }));
   })();
 
+  // Handling time metrics (from the live task timer)
+  const timed = logs.filter((l) => Number((l as any).duration_seconds) > 0);
+  const totalHandlingSeconds = timed.reduce((a, l) => a + Number((l as any).duration_seconds || 0), 0);
+  const avgHandlingSeconds = timed.length ? Math.round(totalHandlingSeconds / timed.length) : 0;
+
   res.json({
     role,
     department: department || null,
     totalLogs: logs.length,
+    totalHandlingSeconds,
+    avgHandlingSeconds,
     open: logs.filter((l) => inSet(l.status, OPEN)).length,
     pending: logs.filter((l) => inSet(l.status, PENDING)).length,
     completed: logs.filter((l) => inSet(l.status, DONE)).length,
@@ -607,6 +614,28 @@ app.delete("/api/logs/:id", authenticateJWT, asyncHandler(async (req: any, res: 
     details: `${log.log_type} · ${log.activity_type}`, previous_value: JSON.stringify({ activity_type: log.activity_type, status: log.status }),
   });
   res.json({ message: "Log deleted successfully" });
+}));
+
+// Task timer — start / pause / complete (accumulates active handling time)
+app.post("/api/logs/:id/timer", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const log = await DB.getLogById(req.params.id);
+  if (!log) return res.status(404).json({ error: "Log not found." });
+  if (req.user.role !== "admin" && log.agent_id !== req.user.id) {
+    return res.status(403).json({ error: "You can only time your own tasks." });
+  }
+  const action = req.body.action;
+  if (!["start", "pause", "complete"].includes(action)) {
+    return res.status(400).json({ error: "action must be start, pause or complete." });
+  }
+  const completeStatus = log.log_type === "complaint" ? "Solved" : "Completed";
+  const updated = await DB.controlTimer(req.params.id, action, completeStatus);
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+    category: log.department, department: log.department, action: `Timer ${action}`, related_ref: log.id,
+    details: `${log.log_type} · ${log.activity_type}`,
+    new_value: JSON.stringify({ duration_seconds: (updated as any)?.duration_seconds ?? 0 }),
+  });
+  res.json(updated);
 }));
 
 // ----------------------------------------------------
