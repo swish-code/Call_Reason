@@ -1,13 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User, UserRole } from "./types.js";
-import Dashboard from "./components/Dashboard.tsx";
-import InteractionForm from "./components/InteractionForm.tsx";
-import InteractionsList from "./components/InteractionsList.tsx";
-import Reports from "./components/Reports.tsx";
-import AdminSettings from "./components/AdminSettings.tsx";
 import UsersManagement from "./components/UsersManagement.tsx";
-import CallReason from "./components/CallReason.tsx";
-import AgentLogs from "./components/AgentLogs.tsx";
 import Configuration from "./components/Configuration.tsx";
 import OpsLogForm from "./components/OpsLogForm.tsx";
 import OpsLogsList from "./components/OpsLogsList.tsx";
@@ -38,7 +31,7 @@ import {
   ShieldAlert
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs" | "configuration" | "newlog" | "logs" | "history";
+type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -349,13 +342,8 @@ export default function App() {
 
             <h1 className="text-xs md:text-sm font-extrabold text-[#e4e4e7]">
               {activePage === "dashboard" && "Dashboard Overview"}
-              {activePage === "form" && "Interaction Logging Form"}
-              {activePage === "list" && "Interactions Log Directory"}
-              {activePage === "reports" && "Analytic Reports & Performance Export"}
-              {activePage === "settings" && "Brand and Category Configuration"}
+              {activePage === "reports" && "Reports & Export"}
               {activePage === "users" && "User and Access Role Management"}
-              {activePage === "callreason" && "Call Reason — Log a Call"}
-              {activePage === "agentlogs" && "Agent Logs by Team"}
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
@@ -385,29 +373,14 @@ export default function App() {
           {activePage === "dashboard" && (
             <OpsDashboard currentUser={currentUser} />
           )}
-          {activePage === "form" && (
-            <InteractionForm currentUser={currentUser} onSuccess={() => setActivePage("list")} />
-          )}
-          {activePage === "list" && (
-            <InteractionsList currentUser={currentUser} />
-          )}
           {activePage === "reports" && (
             <OpsReports currentUser={currentUser} />
           )}
           {activePage === "history" && (
             <HistoryLogs currentUser={currentUser} />
           )}
-          {activePage === "settings" && (
-            <AdminSettings currentUser={currentUser} />
-          )}
           {activePage === "users" && (
             <UsersManagement currentUser={currentUser} />
-          )}
-          {activePage === "callreason" && (
-            <CallReason currentUser={currentUser} onSuccess={() => setActivePage("agentlogs")} />
-          )}
-          {activePage === "agentlogs" && (
-            <AgentLogs currentUser={currentUser} />
           )}
           {activePage === "configuration" && (
             <Configuration currentUser={currentUser} />
