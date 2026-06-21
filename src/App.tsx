@@ -12,6 +12,8 @@ import Configuration from "./components/Configuration.tsx";
 import OpsLogForm from "./components/OpsLogForm.tsx";
 import OpsLogsList from "./components/OpsLogsList.tsx";
 import OpsDashboard from "./components/OpsDashboard.tsx";
+import OpsReports from "./components/OpsReports.tsx";
+import HistoryLogs from "./components/HistoryLogs.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -36,7 +38,7 @@ import {
   ShieldAlert
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs" | "configuration" | "newlog" | "logs";
+type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs" | "configuration" | "newlog" | "logs" | "history";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -265,7 +267,22 @@ export default function App() {
                 }`}
               >
                 <FileText className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Reports & CSV Export</span>}
+                {sidebarOpen && <span className="truncate">Reports & Export</span>}
+              </button>
+            )}
+
+            {/* History Logs (audit) limited to Admin & TL */}
+            {currentUser?.role !== "agent" && (
+              <button
+                onClick={() => setActivePage("history")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "history"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                }`}
+              >
+                <History className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">History Logs</span>}
               </button>
             )}
 
@@ -342,6 +359,7 @@ export default function App() {
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
+              {activePage === "history" && "History Logs — Audit Trail"}
             </h1>
           </div>
 
@@ -374,7 +392,10 @@ export default function App() {
             <InteractionsList currentUser={currentUser} />
           )}
           {activePage === "reports" && (
-            <Reports currentUser={currentUser} />
+            <OpsReports currentUser={currentUser} />
+          )}
+          {activePage === "history" && (
+            <HistoryLogs currentUser={currentUser} />
           )}
           {activePage === "settings" && (
             <AdminSettings currentUser={currentUser} />

@@ -1,0 +1,149 @@
+import { useState, useEffect } from "react";
+import { User, OpsLog, Brand, Branch, LogType, LOG_TYPE_CONFIG, DEPARTMENTS } from "../types.js";
+import { apiFetch } from "../lib/api.ts";
+import { downloadCSV } from "../utils.js";
+import { FileText, Filter, Download, Printer, AlertCircle } from "lucide-react";
+
+interface OpsReportsProps {
+  currentUser: User;
+}
+
+export default function OpsReports({ currentUser }: OpsReportsProps) {
+  const [logs, setLogs] = useState<OpsLog[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [fStart, setFStart] = useState("");
+  const [fEnd, setFEnd] = useState("");
+  const [fDept, setFDept] = useState("");
+  const [fType, setFType] = useState("");
+  const [fAgent, setFAgent] = useState("");
+  const [fBranch, setFBranch] = useState("");
+  const [fBrand, setFBrand] = useState("");
+  const [fStatus, setFStatus] = useState("");
+  const [fActivity, setFActivity] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true); setError("");
+        const [rl, rb, rbr] = await Promise.all([apiFetch("/api/logs"), apiFetch("/api/brands"), apiFetch("/api/branches")]);
+        if (!rl.ok) throw new Error("Failed to load logs.");
+        setLogs(await rl.json());
+        if (rb.ok) setBrands(await rb.json());
+        if (rbr.ok) setBranches(await rbr.json());
+      } catch (err: any) { setError(err.message); } finally { setLoading(false); }
+    })();
+  }, []);
+
+  const dateOf = (l: OpsLog) => (l.created_at || "").split("T")[0];
+  const filtered = logs.filter((l) => {
+    if (fStart && dateOf(l) < fStart) return false;
+    if (fEnd && dateOf(l) > fEnd) return false;
+    if (fDept && l.department !== fDept) return false;
+    if (fType && l.log_type !== fType) return false;
+    if (fAgent && l.agent_name !== fAgent) return false;
+    if (fBranch && l.branch !== fBranch) return false;
+    if (fBrand && l.brand !== fBrand) return false;
+    if (fStatus && l.status !== fStatus) return false;
+    if (fActivity && l.activity_type !== fActivity) return false;
+    return true;
+  });
+
+  const agents = Array.from(new Set(logs.map((l) => l.agent_name).filter(Boolean)));
+  const activities = Array.from(new Set(logs.map((l) => l.activity_type).filter(Boolean)));
+
+  const reset = () => { setFStart(""); setFEnd(""); setFDept(""); setFType(""); setFAgent(""); setFBranch(""); setFBrand(""); setFStatus(""); setFActivity(""); };
+
+  const exportCsv = () => {
+    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
+    const rows = filtered.map((l) => [
+      (l.created_at || "").replace("T", " ").slice(0, 16), LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type, l.department || "", l.activity_type || "", l.status || "",
+      l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", (l.notes || l.action_taken || "").replace(/\n/g, " "),
+    ]);
+    downloadCSV(headers, rows, `Operations_Report_${new Date().toISOString().split("T")[0]}`);
+  };
+
+  const selCls = "px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[#121214]";
+  const fmt = (ts?: string) => (ts ? ts.replace("T", " ").slice(0, 16) : "");
+
+  return (
+    <div className="space-y-6 animate-fade-in text-[#e4e4e7] print:text-black">
+      <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl"><FileText className="w-6 h-6" /></div>
+          <div>
+            <h2 className="text-md font-extrabold text-white">Reports &amp; Export</h2>
+            <p className="text-xs text-[#71717a] font-light mt-0.5">Filter operations logs and export to Excel or PDF.</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={exportCsv} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Download className="w-4 h-4" /> Export to Excel (CSV)</button>
+          <button onClick={() => window.print()} className="px-4 py-2.5 bg-[#0a0a0b] hover:bg-zinc-800 text-zinc-300 border border-[#27272a] font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Printer className="w-4 h-4" /> Export to PDF</button>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-[#121214] p-5 border border-[#27272a] rounded-3xl shadow-sm space-y-3 print:hidden">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-extrabold text-white flex items-center gap-1.5"><Filter className="w-4 h-4 text-blue-400" /> Filters</h3>
+          <button onClick={reset} className="px-3 py-1.5 text-[11px] font-bold text-rose-400 bg-rose-500/5 border border-rose-500/20 hover:bg-rose-500/10 rounded-xl">Reset</button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">From</label><input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className={selCls + " w-full"} /></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">To</label><input type="date" value={fEnd} onChange={(e) => setFEnd(e.target.value)} className={selCls + " w-full"} /></div>
+          {currentUser.role === "admin" && <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Department</label><select value={fDept} onChange={(e) => setFDept(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>}
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Log Type</label><select value={fType} onChange={(e) => setFType(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Agent</label><select value={fAgent} onChange={(e) => setFAgent(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{agents.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Branch</label><select value={fBranch} onChange={(e) => setFBranch(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{branches.map((b) => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Brand</label><select value={fBrand} onChange={(e) => setFBrand(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{brands.map((b) => <option key={b.id} value={b.brand_name}>{b.brand_name}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Status</label><select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{["Open", "In Progress", "Completed", "Solved", "Not Solved", "Waiting Feedback"].map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Activity</label><select value={fActivity} onChange={(e) => setFActivity(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{activities.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>
+        </div>
+      </div>
+
+      {/* Print header */}
+      <div className="hidden print:block text-center space-y-1 border-b pb-4 mb-4">
+        <h1 className="text-xl font-bold">Operations Logs Report</h1>
+        <p className="text-xs">{filtered.length} records · generated {new Date().toISOString().split("T")[0]}</p>
+      </div>
+
+      {error && <div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-3xl text-sm text-rose-400 flex items-center gap-2 print:hidden"><AlertCircle className="w-5 h-5" /> {error}</div>}
+
+      {loading ? (
+        <div className="flex flex-col items-center justify-center min-h-[200px]"><div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
+      ) : (
+        <div className="bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-sm print:border print:bg-white">
+          <div className="p-4 bg-[#0a0a0b] border-b border-[#27272a] text-xs font-bold text-zinc-400 print:hidden">{filtered.length} record(s)</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[#0a0a0b] text-[#71717a] font-bold border-b border-[#27272a]">
+                <tr>
+                  <th className="p-3">Date</th><th className="p-3">Type</th><th className="p-3">Dept</th><th className="p-3">Activity</th>
+                  <th className="p-3">Agent</th><th className="p-3">Branch/Brand</th><th className="p-3">Order/Customer</th><th className="p-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#27272a]">
+                {filtered.map((l) => (
+                  <tr key={l.id} className="hover:bg-[#1c1c1f]/40 transition">
+                    <td className="p-3 font-mono text-[10px] text-zinc-400 whitespace-nowrap">{fmt(l.created_at)}</td>
+                    <td className="p-3 text-zinc-400">{LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type}</td>
+                    <td className="p-3 text-zinc-400">{l.department}</td>
+                    <td className="p-3 font-bold text-blue-400">{l.activity_type}</td>
+                    <td className="p-3 text-zinc-300">{l.agent_name}</td>
+                    <td className="p-3 text-zinc-300">{l.branch || "—"}{l.brand ? " / " + l.brand : ""}</td>
+                    <td className="p-3 text-zinc-300">{l.order_number ? "#" + l.order_number : ""}{l.customer_name ? " " + l.customer_name : ""}{!l.order_number && !l.customer_name ? "—" : ""}</td>
+                    <td className="p-3 text-zinc-300">{l.status || "—"}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-zinc-500">No records match the filters.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
