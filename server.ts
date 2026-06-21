@@ -459,6 +459,67 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   res.json(logs);
 }));
 
+// Role-aware dashboard metrics (computed from the scoped logs)
+app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const { role, id, department } = req.user;
+  let logs;
+  if (role === "admin") logs = await DB.getLogs({});
+  else if (role === "leader") logs = await DB.getLogs({ department });
+  else logs = await DB.getLogs({ agent_id: id });
+
+  const OPEN = ["Open"];
+  const PENDING = ["In Progress", "Waiting Feedback", "Not Solved"];
+  const DONE = ["Completed", "Solved"];
+  const inSet = (s: string | undefined, set: string[]) => !!s && set.includes(s);
+
+  const now = Date.now();
+  const since = (days: number) => now - days * 24 * 60 * 60 * 1000;
+  const ts = (l: any) => new Date(l.created_at).getTime();
+
+  const group = (keyFn: (l: any) => string | undefined) => {
+    const m: Record<string, number> = {};
+    logs.forEach((l) => { const k = keyFn(l); if (k) m[k] = (m[k] || 0) + 1; });
+    return Object.keys(m).map((name) => ({ name, count: m[name] })).sort((a, b) => b.count - a.count);
+  };
+
+  // 7-day trend
+  const trendMap: Record<string, number> = {};
+  for (let i = 6; i >= 0; i--) trendMap[new Date(now - i * 864e5).toISOString().split("T")[0]] = 0;
+  logs.forEach((l) => { const d = (l.created_at || "").split("T")[0]; if (trendMap[d] !== undefined) trendMap[d]++; });
+  const trend = Object.keys(trendMap).map((d) => ({ date: d, count: trendMap[d] }));
+
+  const complaintLogs = logs.filter((l) => l.log_type === "complaint");
+  const solved = complaintLogs.filter((l) => l.status === "Solved").length;
+  const notSolved = complaintLogs.filter((l) => l.status === "Not Solved").length;
+  const complaintResolutionRate = solved + notSolved ? Math.round((solved / (solved + notSolved)) * 100) : 0;
+
+  const technicalLogs = logs.filter((l) => l.log_type === "technical");
+  const technicalStatus = (() => {
+    const m: Record<string, number> = {};
+    technicalLogs.forEach((l) => { const k = l.status || "—"; m[k] = (m[k] || 0) + 1; });
+    return Object.keys(m).map((name) => ({ name, count: m[name] }));
+  })();
+
+  res.json({
+    role,
+    department: department || null,
+    totalLogs: logs.length,
+    open: logs.filter((l) => inSet(l.status, OPEN)).length,
+    pending: logs.filter((l) => inSet(l.status, PENDING)).length,
+    completed: logs.filter((l) => inSet(l.status, DONE)).length,
+    daily: logs.filter((l) => ts(l) >= since(1)).length,
+    weekly: logs.filter((l) => ts(l) >= since(7)).length,
+    monthly: logs.filter((l) => ts(l) >= since(30)).length,
+    byActivity: group((l) => l.activity_type).slice(0, 12),
+    byDepartment: group((l) => l.department),
+    agentProductivity: group((l) => l.agent_name).slice(0, 15),
+    complaintResolutionRate,
+    technicalStatus,
+    coachingSessions: logs.filter((l) => l.log_type === "team_leader").length,
+    trend,
+  });
+}));
+
 // History / audit trail (Team Leaders + Admin)
 app.get("/api/logs/history", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
   let logs = await DB.getAuditLogs();

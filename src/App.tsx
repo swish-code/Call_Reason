@@ -11,6 +11,7 @@ import AgentLogs from "./components/AgentLogs.tsx";
 import Configuration from "./components/Configuration.tsx";
 import OpsLogForm from "./components/OpsLogForm.tsx";
 import OpsLogsList from "./components/OpsLogsList.tsx";
+import OpsDashboard from "./components/OpsDashboard.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -364,7 +365,7 @@ export default function App() {
         {/* Dynamic Main view switcher */}
         <main className="p-4 md:p-8 flex-1 max-w-7xl mx-auto w-full">
           {activePage === "dashboard" && (
-            <Dashboard onNavigateToForm={() => setActivePage("form")} />
+            <OpsDashboard currentUser={currentUser} />
           )}
           {activePage === "form" && (
             <InteractionForm currentUser={currentUser} onSuccess={() => setActivePage("list")} />
