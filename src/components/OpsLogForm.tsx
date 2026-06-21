@@ -96,7 +96,8 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     load();
   }, []);
 
-  const setVal = (k: string, v: string) => setValues((p) => ({ ...p, [k]: v }));
+  const setVal = (k: string, v: string) =>
+    setValues((p) => (k === "brand" ? { ...p, brand: v, branch: "" } : { ...p, [k]: v }));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,7 +138,16 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     if (meta.type === "textarea") control = <textarea {...common} rows={f === "notes" ? 3 : 2} className={inputCls + " leading-relaxed"} placeholder={meta.label + "..."} />;
     else if (meta.type === "date") control = <input type="date" {...common} className={inputCls} />;
     else if (meta.type === "brand") control = <select {...common} className={selectCls}><option value="">— Select —</option>{brands.map((b) => <option key={b.id} value={b.brand_name}>{b.brand_name}</option>)}</select>;
-    else if (meta.type === "branch") control = <select {...common} className={selectCls}><option value="">— Select —</option>{branches.map((b) => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}</select>;
+    else if (meta.type === "branch") {
+      const brandSel = values["brand"];
+      const branchOpts = brandSel ? branches.filter((b) => b.brand === brandSel) : (cfg.fields.includes("brand") ? [] : branches);
+      control = (
+        <select {...common} className={selectCls}>
+          <option value="">{cfg.fields.includes("brand") && !brandSel ? "— Select a brand first —" : "— Select —"}</option>
+          {branchOpts.map((b) => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}
+        </select>
+      );
+    }
     else if (meta.type === "aggregator") control = <select {...common} className={selectCls}><option value="">— Select —</option>{["Talabat", "Keeta", "Other Aggregators"].map((a) => <option key={a} value={a}>{a}</option>)}</select>;
     else if (meta.type === "agent") control = <select {...common} className={selectCls}><option value="">— Select agent —</option>{agents.map((a) => <option key={a} value={a}>{a}</option>)}</select>;
     else control = <input type="text" {...common} className={inputCls} placeholder={meta.label} />;

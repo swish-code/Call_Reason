@@ -43,19 +43,31 @@ const SEED_USERS: User[] = [
   { id: "u-agent3", full_name: "Omar Khaled (Support Agent)", name: "Omar Khaled (Support Agent)", username: "agent3", email: "agent3@crm.com", password_hash: bcrypt.hashSync("password", 10), role: "agent", team: "Technical Team", status: "Active", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: "system" },
 ];
 
-const SEED_BRANDS: Brand[] = [
-  { id: "b1", brand_name: "Talabat" },
-  { id: "b2", brand_name: "Noon" },
-  { id: "b3", brand_name: "Amazon" },
-  { id: "b4", brand_name: "Carrefour" },
-];
+// Company brands and the branches that belong to each (branches are per-brand)
+const BRAND_BRANCHES: Record<string, string[]> = {
+  "Yelo": ["Adaliya", "Khairan", "Jaber Al Ahmed", "Sabah Al Salem", "Vibes", "Qortuba", "Abdullah Al Salem (Dahiya)", "Fahaheel", "Jleeb Al Shuyoukh", "Egaila", "Salmiya", "Jabriya", "Ishbiliya", "Sabah Al Ahmed", "Ardhiya", "Maidan Hawally", "Yard", "Jahra", "Salwa", "Zahra", "Saad Al Abdullah", "Qurain", "Andalous"],
+  "Shakir": ["Rai", "Qurain", "Salmiya", "Kuwait City", "Jahra", "Ardhiya", "Egaila", "Hawally", "Sabah Al Ahmed", "Bayan"],
+  "BBT": ["Shamiya", "Hilltop", "West Mishref", "Yard", "Salmiya", "Ardhiya", "Jahra", "Adaliya", "Shuhada", "Mangaf", "Saad Al Abdullah", "Sabah Al Ahmed", "Bayan", "Khairan", "Um Al Hyman"],
+  "Slice": ["Mishref", "Kuwait City", "Yard", "Adaliya", "Jabriya", "Ardhiya", "Jahra", "Salmiya"],
+  "Pattie": ["Adaliya", "Mishref", "Ardhiya", "Jahra", "Salmiya", "Yard", "Hawally"],
+  "Just C": ["Qortuba", "Yard"],
+  "Chili": ["Qortuba", "Yard", "Hawally"],
+  "Mishmash": ["Ardhiya", "Kaifan", "Mahboula", "Jabriya", "Sabah Al Salem", "Saad Al Abdullah", "Salmiya", "Khaithan", "Mangaf", "West Abdullah Al Mubarak", "Salwa", "Qadsiya", "Qurain", "Khairan"],
+  "Table": ["Ardhiya", "Qortuba", "Hawally", "Sabah Al Salem", "Salmiya", "Bneid Al Qar", "Mahboula", "Jahra", "Ahmadi", "Khairan"],
+  "FM": ["Yard", "Kuwait City", "Hawally", "Khaithan"],
+};
 
-const SEED_BRANCHES: Branch[] = [
-  { id: "br1", branch_name: "Cairo - Nasr City" },
-  { id: "br2", branch_name: "Cairo - Maadi" },
-  { id: "br3", branch_name: "Giza - Dokki" },
-  { id: "br4", branch_name: "Alexandria - Smouha" },
-];
+const SEED_BRANDS: Brand[] = Object.keys(BRAND_BRANCHES).map((name, i) => ({ id: `b-${i + 1}`, brand_name: name }));
+
+// Flattened per-brand branches with deterministic ids (idempotent re-seed)
+const SEED_BRANCHES: Branch[] = (() => {
+  const out: Branch[] = [];
+  let i = 0;
+  for (const [brand, list] of Object.entries(BRAND_BRANCHES)) {
+    for (const bn of list) out.push({ id: `br-${++i}`, branch_name: bn, brand });
+  }
+  return out;
+})();
 
 // Default values for the admin-managed dropdown lists (Configuration page).
 // Each list is seeded once (only if it has no rows yet).
@@ -137,7 +149,8 @@ export class DB {
       );
       CREATE TABLE IF NOT EXISTS branches (
         id TEXT PRIMARY KEY,
-        branch_name TEXT NOT NULL
+        branch_name TEXT NOT NULL,
+        brand TEXT
       );
       CREATE TABLE IF NOT EXISTS interactions (
         id TEXT PRIMARY KEY,
@@ -237,6 +250,7 @@ export class DB {
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS operator_role TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS category TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS related_ref TEXT;
+      ALTER TABLE branches ADD COLUMN IF NOT EXISTS brand TEXT;
     `);
 
     // Backfill teams for rows created before the feature existed
@@ -258,11 +272,18 @@ export class DB {
       WHERE department IS NULL OR department = ''
     `);
 
-    // Seed branches independently (so existing databases also get them)
-    const branchCount = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM branches");
-    if (Number(branchCount.rows[0].count) === 0) {
-      for (const b of SEED_BRANCHES) {
-        await pool.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [b.id, b.branch_name]);
+    // One-time: install the real company brands + per-brand branches.
+    // Runs once (guarded by the presence of any branded branch), and replaces
+    // the earlier demo brands/branches on existing databases.
+    const branded = await pool.query("SELECT 1 FROM branches WHERE brand IS NOT NULL LIMIT 1");
+    if (branded.rowCount === 0) {
+      await pool.query("DELETE FROM brands WHERE brand_name IN ('Talabat','Noon','Amazon','Carrefour')");
+      await pool.query("DELETE FROM branches WHERE brand IS NULL");
+      for (const b of SEED_BRANDS) {
+        await pool.query("INSERT INTO brands (id, brand_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [b.id, b.brand_name]);
+      }
+      for (const br of SEED_BRANCHES) {
+        await pool.query("INSERT INTO branches (id, branch_name, brand) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING", [br.id, br.branch_name, br.brand ?? null]);
       }
     }
 
@@ -305,7 +326,7 @@ export class DB {
         await client.query("INSERT INTO categories (id, category_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [c.id, c.category_name]);
       }
       for (const b of SEED_BRANCHES) {
-        await client.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING", [b.id, b.branch_name]);
+        await client.query("INSERT INTO branches (id, branch_name, brand) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING", [b.id, b.branch_name, b.brand ?? null]);
       }
       for (const i of SEED_INTERACTIONS) {
         await client.query(
