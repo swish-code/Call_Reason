@@ -43,6 +43,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
 
   const [activity, setActivity] = useState(editLog?.activity_type || "");
   const [status, setStatus] = useState(editLog?.status || "");
+  const [durationMin, setDurationMin] = useState(editLog?.duration_seconds ? String(Math.round(editLog.duration_seconds / 60)) : "");
   const [values, setValues] = useState<Record<string, string>>(() => {
     const v: Record<string, string> = {};
     if (editLog) Object.keys(FIELD_META).forEach((k) => { v[k] = (editLog as any)[k] || ""; });
@@ -107,6 +108,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
 
     const payload: any = { activity_type: activity };
     if (cfg.statusKey) payload.status = status;
+    payload.duration_seconds = durationMin ? Math.max(0, Math.round(Number(durationMin) * 60)) : 0;
     cfg.fields.forEach((f) => { if (values[f]) payload[f] = values[f]; });
     if (isAdmin) { payload.log_type = logType; payload.department = cfg.department || currentUser.department; }
 
@@ -203,6 +205,18 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
             </select>
           </div>
         )}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-zinc-300">Time Spent (minutes):</label>
+          <input type="number" min={0} value={durationMin} onChange={(e) => setDurationMin(e.target.value)} placeholder="e.g. 15" className={inputCls} />
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {[5, 10, 15, 30, 45, 60].map((m) => (
+              <button type="button" key={m} onClick={() => setDurationMin(String(m))}
+                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition ${durationMin === String(m) ? "bg-blue-600 text-white border-blue-600" : "bg-[#0a0a0b] text-zinc-400 border-[#27272a] hover:text-white hover:border-blue-500/40"}`}>
+                {m}m
+              </button>
+            ))}
+          </div>
+        </div>
         {cfg.fields.map(renderField)}
       </div>
 
