@@ -94,6 +94,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
       username: user.username,
       email: user.email,
       role: user.role,
+      team: user.team,
+      department: user.department,
       full_name: user.full_name
     },
     JWT_SECRET,
@@ -117,6 +119,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     username: user.username,
     email: user.email,
     role: user.role,
+    team: user.team,
+    department: user.department,
     status: user.status,
     token
   };
@@ -134,7 +138,7 @@ app.get("/api/users", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async 
 }));
 
 app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
-  const { full_name, username, email, password, role, status } = req.body;
+  const { full_name, username, email, password, role, status, team, department } = req.body;
 
   if (!full_name || !username || !email || !password || !role || !status) {
     return res.status(400).json({ error: "Please fill in all required fields to create the account." });
@@ -165,6 +169,8 @@ app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, r
     email,
     password_hash,
     role,
+    team,
+    department: department || "Call Center",
     status,
     created_at: nowString,
     updated_at: nowString,
@@ -187,7 +193,7 @@ app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, r
 
 app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { full_name, username, email, role, status, password } = req.body;
+  const { full_name, username, email, role, status, password, team, department } = req.body;
 
   const targetUser = await DB.getUserById(id);
   if (!targetUser) {
@@ -215,6 +221,8 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req
     username: username || targetUser.username,
     email: email || targetUser.email,
     role: role || targetUser.role,
+    team: team || targetUser.team,
+    department: department || targetUser.department,
     status: status || targetUser.status,
   };
 
@@ -424,6 +432,117 @@ app.delete("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandl
   } else {
     res.status(404).json({ error: "Option not found" });
   }
+}));
+
+// ----------------------------------------------------
+// Operations & Logs API (Agent / Team Leader, department-scoped)
+// ----------------------------------------------------
+const DEPT_TO_LOGTYPE: Record<string, string> = {
+  "Call Center": "call_center",
+  "Technical": "technical",
+  "Complaints": "complaint",
+};
+const LOG_FIELDS = ["department", "activity_type", "status", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date"];
+
+// List logs (scoped by role/department)
+app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const { role, id, department } = req.user;
+  const typeFilter = (req.query.type as string) || undefined;
+  let logs;
+  if (role === "admin") {
+    logs = await DB.getLogs({ log_type: typeFilter, department: (req.query.department as string) || undefined });
+  } else if (role === "leader") {
+    logs = await DB.getLogs({ department, log_type: typeFilter });
+  } else {
+    logs = await DB.getLogs({ agent_id: id, log_type: typeFilter });
+  }
+  res.json(logs);
+}));
+
+// History / audit trail (Team Leaders + Admin)
+app.get("/api/logs/history", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+  let logs = await DB.getAuditLogs();
+  if (req.user.role === "leader") {
+    logs = logs.filter((l) => !l.department || l.department === req.user.department);
+  }
+  res.json(logs);
+}));
+
+app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const { role, id, full_name, department } = req.user;
+  const body = req.body;
+  if (!body.activity_type) return res.status(400).json({ error: "Activity type is required." });
+
+  let log_type: string, dept: string, agent_id: string, agent_name: string;
+  if (role === "agent") {
+    log_type = DEPT_TO_LOGTYPE[department];
+    if (!log_type) return res.status(400).json({ error: "Your account is not assigned to a valid department." });
+    dept = department; agent_id = id; agent_name = full_name;
+  } else if (role === "leader") {
+    log_type = "team_leader"; dept = department || "Call Center"; agent_id = id; agent_name = full_name;
+  } else {
+    log_type = body.log_type || "call_center";
+    dept = body.department || department || "Call Center";
+    agent_id = body.agent_id || id; agent_name = body.agent_name || full_name;
+  }
+
+  const now = new Date().toISOString();
+  const newLog = await DB.addLog({
+    log_type: log_type as any, department: dept, activity_type: body.activity_type, status: body.status,
+    agent_id, agent_name,
+    branch: body.branch, brand: body.brand, order_number: body.order_number, aggregator: body.aggregator,
+    customer_name: body.customer_name, complaint_id: body.complaint_id, target_agent_name: body.target_agent_name,
+    notes: body.notes, action_taken: body.action_taken, resolution_notes: body.resolution_notes,
+    action_plan: body.action_plan, follow_up_date: body.follow_up_date,
+    created_at: now, updated_at: now, created_by: id,
+  });
+
+  await DB.addAuditLog({
+    operator_id: id, operator_name: full_name, operator_role: role, category: dept, department: dept,
+    action: "Create Log", related_ref: newLog.id,
+    details: `${log_type} · ${body.activity_type}${body.branch ? " · " + body.branch : ""}`,
+    new_value: JSON.stringify({ activity_type: body.activity_type, status: body.status ?? null }),
+  });
+  res.status(201).json(newLog);
+}));
+
+app.put("/api/logs/:id", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const log = await DB.getLogById(req.params.id);
+  if (!log) return res.status(404).json({ error: "Log not found." });
+  const isOwner = log.agent_id === req.user.id;
+  if (req.user.role !== "admin" && !isOwner) {
+    return res.status(403).json({ error: "You can only edit your own logs." });
+  }
+
+  // Diff changed fields for the audit trail
+  const prev: any = {}, next: any = {};
+  for (const f of LOG_FIELDS) {
+    if (f in req.body && req.body[f] !== (log as any)[f]) { prev[f] = (log as any)[f] ?? null; next[f] = req.body[f]; }
+  }
+  const updated = await DB.updateLog(req.params.id, req.body);
+
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+    category: log.department, department: log.department, action: "Edit Log", related_ref: log.id,
+    details: `${log.log_type} · ${log.activity_type}`,
+    previous_value: JSON.stringify(prev), new_value: JSON.stringify(next),
+  });
+  res.json(updated);
+}));
+
+app.delete("/api/logs/:id", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const log = await DB.getLogById(req.params.id);
+  if (!log) return res.status(404).json({ error: "Log not found." });
+  if (req.user.role !== "admin" && log.agent_id !== req.user.id) {
+    return res.status(403).json({ error: "You can only delete your own logs." });
+  }
+  await DB.deleteLog(req.params.id);
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+    category: log.department, department: log.department, action: "Delete Log", related_ref: log.id,
+    details: `${log.log_type} · ${log.activity_type}`, previous_value: JSON.stringify({ activity_type: log.activity_type, status: log.status }),
+  });
+  res.json({ message: "Log deleted successfully" });
 }));
 
 // ----------------------------------------------------

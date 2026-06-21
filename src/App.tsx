@@ -9,11 +9,14 @@ import UsersManagement from "./components/UsersManagement.tsx";
 import CallReason from "./components/CallReason.tsx";
 import AgentLogs from "./components/AgentLogs.tsx";
 import Configuration from "./components/Configuration.tsx";
+import OpsLogForm from "./components/OpsLogForm.tsx";
+import OpsLogsList from "./components/OpsLogsList.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
   PhoneCall,
   ClipboardList,
+  FilePlus2,
   SlidersHorizontal,
   BarChart3,
   History,
@@ -32,7 +35,7 @@ import {
   ShieldAlert
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs" | "configuration";
+type ActivePage = "dashboard" | "form" | "list" | "reports" | "settings" | "users" | "callreason" | "agentlogs" | "configuration" | "newlog" | "logs";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -227,27 +230,27 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setActivePage("form")}
+              onClick={() => setActivePage("newlog")}
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "form"
+                activePage === "newlog"
                   ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
                   : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
               }`}
             >
-              <Phone className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">Log New Interaction</span>}
+              <FilePlus2 className="w-4 h-4 shrink-0" />
+              {sidebarOpen && <span className="truncate">New Log</span>}
             </button>
 
             <button
-              onClick={() => setActivePage("list")}
+              onClick={() => setActivePage("logs")}
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "list"
+                activePage === "logs"
                   ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
                   : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
               }`}
             >
-              <History className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">Interaction Ledger</span>}
+              <ClipboardList className="w-4 h-4 shrink-0" />
+              {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "leader" ? "Department Logs" : "All Logs"}</span>}
             </button>
 
             {/* Reports limited to Admin & TL */}
@@ -265,21 +268,6 @@ export default function App() {
               </button>
             )}
 
-            {/* Options limited to Admin & TL */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => setActivePage("settings")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "settings"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
-                }`}
-              >
-                <Settings className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Settings & Brands</span>}
-              </button>
-            )}
-
             {/* Users Management: Strictly LIMITED to Admin */}
             {currentUser?.role === "admin" && (
               <button
@@ -292,36 +280,6 @@ export default function App() {
               >
                 <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
                 {sidebarOpen && <span className="truncate text-amber-200">User Management</span>}
-              </button>
-            )}
-
-            {/* Call Reason: Admin only */}
-            {currentUser?.role === "admin" && (
-              <button
-                onClick={() => setActivePage("callreason")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "callreason"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
-                }`}
-              >
-                <PhoneCall className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Call Reason</span>}
-              </button>
-            )}
-
-            {/* Agent Logs: Admin only */}
-            {currentUser?.role === "admin" && (
-              <button
-                onClick={() => setActivePage("agentlogs")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "agentlogs"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
-                }`}
-              >
-                <ClipboardList className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Agent Logs</span>}
               </button>
             )}
 
@@ -381,6 +339,8 @@ export default function App() {
               {activePage === "callreason" && "Call Reason — Log a Call"}
               {activePage === "agentlogs" && "Agent Logs by Team"}
               {activePage === "configuration" && "System Configuration"}
+              {activePage === "newlog" && "New Log"}
+              {activePage === "logs" && "Operations Logs"}
             </h1>
           </div>
 
@@ -429,6 +389,12 @@ export default function App() {
           )}
           {activePage === "configuration" && (
             <Configuration currentUser={currentUser} />
+          )}
+          {activePage === "newlog" && (
+            <OpsLogForm currentUser={currentUser} onDone={() => setActivePage("logs")} />
+          )}
+          {activePage === "logs" && (
+            <OpsLogsList currentUser={currentUser} />
           )}
         </main>
       </div>

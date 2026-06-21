@@ -1,6 +1,6 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
-import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption } from "../src/types.js";
+import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog } from "../src/types.js";
 
 const { Pool } = pkg;
 
@@ -70,6 +70,13 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   status: ["Open", "Pending", "Resolved", "Closed"],
   team: ["Complain Team", "Call Center", "Technical Team", "Team Leader"],
   call_direction: ["Inbound", "Outbound"],
+  department: ["Call Center", "Technical", "Complaints"],
+  cc_activity: ["Survey", "Review", "Follow-up CST", "Handle Customer Issue", "Handle Complaint", "Follow-up Orders", "Open Branch", "Close Branch", "Floor Tasks", "Previous Tasks Follow-up", "Other"],
+  tech_activity: ["Delayed Orders Follow-up", "Aggregator Follow-up", "Missing Item Cases", "Wrong Dispatch Cases", "Big Order Confirmation", "Order Assignment", "Aggregator Comments", "Punch Orders", "Open Branch", "Busy Branch", "Close Branch", "Hide Item", "Unhide Item", "Follow-up Groups", "Cancellation Request", "Foodics / POS Issues", "Other"],
+  complaint_activity: ["Validation", "Escalation", "Coupon Request", "Email Complaint", "Social Media Complaint", "Agent Inquiry", "Customer Review", "Survey Result", "Follow-up Store", "Other"],
+  tl_activity: ["Agent Coaching", "One-to-One Session", "Monthly Meeting", "Floor Task", "Validation Quality Review", "Agent Mistake Review", "Performance Feedback", "Other"],
+  cc_status: ["Open", "In Progress", "Completed"],
+  complaint_status: ["Solved", "Not Solved", "Waiting Feedback"],
 };
 
 const SEED_CATEGORIES: Category[] = [
@@ -94,8 +101,11 @@ const SEED_INTERACTIONS: Interaction[] = [
 
 // Columns that may be updated through the API (whitelist guards against
 // arbitrary fields in request bodies being written to the table).
-const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "team", "status", "created_by"] as const;
+const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "team", "department", "status", "created_by"] as const;
 const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "order_number", "branch", "team", "customer_type", "call_from", "aggregator_name", "comments", "complaint_reason", "fcr", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
+
+const LOG_COLS = ["log_type", "department", "activity_type", "status", "agent_id", "agent_name", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "created_at", "updated_at", "created_by"] as const;
+const LOG_UPDATE_COLS = ["department", "activity_type", "status", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date"] as const;
 
 export class DB {
   // ----------------------------------------------------
@@ -181,11 +191,39 @@ export class DB {
         sort_order INTEGER DEFAULT 0,
         active BOOLEAN DEFAULT true
       );
+      CREATE TABLE IF NOT EXISTS logs (
+        id TEXT PRIMARY KEY,
+        log_type TEXT NOT NULL,
+        department TEXT,
+        activity_type TEXT,
+        status TEXT,
+        agent_id TEXT,
+        agent_name TEXT,
+        branch TEXT,
+        brand TEXT,
+        order_number TEXT,
+        aggregator TEXT,
+        customer_name TEXT,
+        complaint_id TEXT,
+        target_agent_name TEXT,
+        notes TEXT,
+        action_taken TEXT,
+        resolution_notes TEXT,
+        action_plan TEXT,
+        follow_up_date TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        created_by TEXT
+      );
     `);
 
     // Migrations for databases created before newer features
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS team TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS department TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS previous_value TEXT;
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS new_value TEXT;
       ALTER TABLE interactions ADD COLUMN IF NOT EXISTS call_reason TEXT;
       ALTER TABLE interactions ADD COLUMN IF NOT EXISTS order_number TEXT;
       ALTER TABLE interactions ADD COLUMN IF NOT EXISTS branch TEXT;
@@ -209,6 +247,16 @@ export class DB {
       "UPDATE interactions i SET team = u.team FROM users u WHERE i.agent_id = u.id AND (i.team IS NULL OR i.team = '')"
     );
     await pool.query("UPDATE interactions SET team = 'Call Center' WHERE team IS NULL OR team = ''");
+
+    // Backfill department from the legacy team value
+    await pool.query(`
+      UPDATE users SET department = CASE
+        WHEN team = 'Complain Team' THEN 'Complaints'
+        WHEN team = 'Technical Team' THEN 'Technical'
+        WHEN team = 'Call Center' THEN 'Call Center'
+        ELSE 'Call Center' END
+      WHERE department IS NULL OR department = ''
+    `);
 
     // Seed branches independently (so existing databases also get them)
     const branchCount = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM branches");
@@ -305,9 +353,9 @@ export class DB {
 
   static async addUser(user: User): Promise<User> {
     const { rows } = await pool.query<User>(
-      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, team, status, created_at, updated_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.team ?? "Call Center", user.status, user.created_at, user.updated_at, user.created_by ?? null]
+      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, team, department, status, created_at, updated_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.team ?? "Call Center", user.department ?? "Call Center", user.status, user.created_at, user.updated_at, user.created_by ?? null]
     );
     return rows[0];
   }
@@ -359,9 +407,9 @@ export class DB {
       timestamp: new Date().toISOString(),
     };
     await pool.query(
-      `INSERT INTO audit_logs (id, timestamp, operator_id, operator_name, operator_role, category, action, details, related_ref, ip_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [newLog.id, newLog.timestamp, newLog.operator_id, newLog.operator_name, newLog.operator_role ?? null, newLog.category ?? null, newLog.action, newLog.details, newLog.related_ref ?? null, newLog.ip_address ?? null]
+      `INSERT INTO audit_logs (id, timestamp, operator_id, operator_name, operator_role, category, action, details, related_ref, ip_address, department, previous_value, new_value)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [newLog.id, newLog.timestamp, newLog.operator_id, newLog.operator_name, newLog.operator_role ?? null, newLog.category ?? null, newLog.action, newLog.details, newLog.related_ref ?? null, newLog.ip_address ?? null, (newLog as any).department ?? null, (newLog as any).previous_value ?? null, (newLog as any).new_value ?? null]
     );
     return newLog;
   }
@@ -485,6 +533,61 @@ export class DB {
     } finally {
       client.release();
     }
+  }
+
+  // ----------------------------------------------------
+  // Operations & Logs (Agent / Team Leader logs)
+  // ----------------------------------------------------
+  static async getLogs(filter: { log_type?: string; department?: string; agent_id?: string } = {}): Promise<OpsLog[]> {
+    const clauses: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (filter.log_type) { clauses.push(`log_type = $${idx++}`); values.push(filter.log_type); }
+    if (filter.department) { clauses.push(`department = $${idx++}`); values.push(filter.department); }
+    if (filter.agent_id) { clauses.push(`agent_id = $${idx++}`); values.push(filter.agent_id); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { rows } = await pool.query<OpsLog>(`SELECT * FROM logs ${where} ORDER BY created_at DESC`, values);
+    return rows;
+  }
+
+  static async getLogById(id: string): Promise<OpsLog | undefined> {
+    const { rows } = await pool.query<OpsLog>("SELECT * FROM logs WHERE id = $1 LIMIT 1", [id]);
+    return rows[0];
+  }
+
+  static async addLog(log: Omit<OpsLog, "id"> & { id?: string }): Promise<OpsLog> {
+    const id = log.id || "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+    const cols = ["id", ...LOG_COLS];
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(",");
+    const values = [id, ...LOG_COLS.map((c) => (log as any)[c] ?? null)];
+    const { rows } = await pool.query<OpsLog>(
+      `INSERT INTO logs (${cols.join(",")}) VALUES (${placeholders}) RETURNING *`,
+      values
+    );
+    return rows[0];
+  }
+
+  static async updateLog(id: string, fields: Partial<OpsLog>): Promise<OpsLog | undefined> {
+    const sets: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    for (const col of LOG_UPDATE_COLS) {
+      if (col in fields && (fields as any)[col] !== undefined) {
+        sets.push(`${col} = $${idx++}`);
+        values.push((fields as any)[col]);
+      }
+    }
+    sets.push(`updated_at = $${idx++}`);
+    values.push(new Date().toISOString());
+    if (sets.length === 1) return DB.getLogById(id); // only updated_at → nothing to change
+    values.push(id);
+    const { rows } = await pool.query<OpsLog>(`UPDATE logs SET ${sets.join(", ")} WHERE id = $${idx} RETURNING *`, values);
+    return rows[0];
+  }
+
+  static async deleteLog(id: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM logs WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
   }
 
   // ----------------------------------------------------

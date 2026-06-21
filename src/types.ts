@@ -4,6 +4,54 @@ export type UserRole = "agent" | "leader" | "admin";
 export type Team = "Complain Team" | "Call Center" | "Technical Team" | "Team Leader";
 export const TEAMS: Team[] = ["Complain Team", "Call Center", "Technical Team", "Team Leader"];
 
+// Department an Agent / Team Leader belongs to (Operations & Logs system)
+export type Department = "Call Center" | "Technical" | "Complaints";
+export const DEPARTMENTS: Department[] = ["Call Center", "Technical", "Complaints"];
+
+// The four log modules
+export type LogType = "call_center" | "technical" | "complaint" | "team_leader";
+
+export interface OpsLog {
+  id: string;
+  log_type: LogType;
+  department: string;
+  activity_type: string;
+  status?: string;
+  agent_id: string;       // creator/owner (the Team Leader for team_leader logs)
+  agent_name: string;
+  branch?: string;
+  brand?: string;
+  order_number?: string;
+  aggregator?: string;
+  customer_name?: string;
+  complaint_id?: string;
+  target_agent_name?: string; // agent being coached (team_leader logs)
+  notes?: string;
+  action_taken?: string;
+  resolution_notes?: string;
+  action_plan?: string;
+  follow_up_date?: string;
+  created_at: string;
+  updated_at?: string;
+  created_by?: string;
+}
+
+// Drives the generic log form & list per type. activityKey/statusKey reference
+// option lists managed from the Configuration page.
+export const LOG_TYPE_CONFIG: Record<LogType, {
+  title: string;
+  department: Department | null; // null = Team Leader module (not department-bound)
+  activityLabel: string;
+  activityKey: string;
+  statusKey?: string;
+  fields: string[];
+}> = {
+  call_center: { title: "Call Center Log", department: "Call Center", activityLabel: "Activity Type", activityKey: "cc_activity", statusKey: "cc_status", fields: ["branch", "brand", "order_number", "notes"] },
+  technical: { title: "Technical Log", department: "Technical", activityLabel: "Technical Task Type", activityKey: "tech_activity", statusKey: "cc_status", fields: ["branch", "order_number", "aggregator", "notes"] },
+  complaint: { title: "Complaint Log", department: "Complaints", activityLabel: "Complaint Type", activityKey: "complaint_activity", statusKey: "complaint_status", fields: ["complaint_id", "order_number", "customer_name", "action_taken", "resolution_notes"] },
+  team_leader: { title: "Team Leader Log", department: null, activityLabel: "Activity Type", activityKey: "tl_activity", fields: ["target_agent_name", "notes", "action_plan", "follow_up_date"] },
+};
+
 export interface User {
   id: string;
   full_name: string;
@@ -11,7 +59,8 @@ export interface User {
   email: string;
   password_hash: string;
   role: UserRole;
-  team?: Team; // Organizational team for Agent Logs grouping
+  team?: Team; // Legacy team field (kept for backward compatibility)
+  department?: Department; // Department for the Operations & Logs system
   status: "Active" | "Inactive";
   created_at: string;
   updated_at: string;
@@ -32,6 +81,9 @@ export interface AuditLog {
   action: string;
   details: string;
   related_ref?: string; // Reference to a related record (e.g. interaction id)
+  department?: string;
+  previous_value?: string;
+  new_value?: string;
   ip_address?: string;
 }
 
@@ -137,8 +189,15 @@ export const CONFIGURABLE_LISTS: { key: string; title: string; description: stri
   { key: "fcr", title: "FCR Options", description: "First Call Resolution values" },
   { key: "priority", title: "Priority Levels", description: "Ticket priority" },
   { key: "status", title: "Statuses", description: "Ticket status" },
-  { key: "team", title: "Teams", description: "Operational teams (Agent Logs grouping)" },
+  { key: "team", title: "Teams", description: "Operational teams (legacy)" },
   { key: "call_direction", title: "Call Directions", description: "Inbound / Outbound" },
+  { key: "department", title: "Departments", description: "User departments (Call Center / Technical / Complaints)" },
+  { key: "cc_activity", title: "Call Center — Activities", description: "Call Center log activity types" },
+  { key: "tech_activity", title: "Technical — Task Types", description: "Technical log task types" },
+  { key: "complaint_activity", title: "Complaints — Types", description: "Complaint log types" },
+  { key: "tl_activity", title: "Team Leader — Activities", description: "Team Leader log activity types" },
+  { key: "cc_status", title: "Log Status (CC/Technical)", description: "Open / In Progress / Completed" },
+  { key: "complaint_status", title: "Complaint Status", description: "Solved / Not Solved / Waiting Feedback" },
 ];
 
 export interface DashboardStats {
