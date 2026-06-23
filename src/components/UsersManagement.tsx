@@ -8,16 +8,17 @@ const USER_TYPES: { label: string; role: "agent" | "leader" | "admin"; departmen
   { label: "Call Center Team Leader", role: "leader", department: "Call Center" },
   { label: "Technical Agent", role: "agent", department: "Technical" },
   { label: "Complaint Team Agent", role: "agent", department: "Complaints" },
+  { label: "System Admin", role: "admin", department: "Call Center" },
 ];
 
 const userTypeLabel = (u: User): string => {
-  if (u.role === "admin") return "Administrator";
+  if (u.role === "admin") return "System Admin";
   const m = USER_TYPES.find((t) => t.role === u.role && t.department === (u.department || ""));
   return m ? m.label : "Call Center Agent";
 };
 
 const resolveUserType = (label: string, existing?: User | null): { role: "agent" | "leader" | "admin"; department: string; team: string } => {
-  if (label === "Administrator") return { role: "admin", department: existing?.department || "Call Center", team: "Team Leader" };
+  if (label === "System Admin") return { role: "admin", department: existing?.department || "Call Center", team: "Team Leader" };
   const t = USER_TYPES.find((x) => x.label === label) || USER_TYPES[0];
   const team = t.role === "leader" ? "Team Leader" : t.department === "Complaints" ? "Complain Team" : t.department === "Technical" ? "Technical Team" : "Call Center";
   return { role: t.role, department: t.department, team };
@@ -426,7 +427,6 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                   onChange={(e) => setUserType(e.target.value)}
                   className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 >
-                  {editingUser?.role === "admin" && <option value="Administrator">Administrator</option>}
                   {USER_TYPES.map((t) => (<option key={t.label} value={t.label}>{t.label}</option>))}
                 </select>
               </div>
