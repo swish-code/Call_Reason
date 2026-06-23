@@ -1,6 +1,27 @@
 import React, { useState, useEffect } from "react";
-import { User, Team, TEAMS, Department, DEPARTMENTS } from "../types.js";
+import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+
+// A single "User Type" encodes role + department for account creation
+const USER_TYPES: { label: string; role: "agent" | "leader" | "admin"; department: string }[] = [
+  { label: "Call Center Agent", role: "agent", department: "Call Center" },
+  { label: "Call Center Team Leader", role: "leader", department: "Call Center" },
+  { label: "Technical Agent", role: "agent", department: "Technical" },
+  { label: "Complaint Team Agent", role: "agent", department: "Complaints" },
+];
+
+const userTypeLabel = (u: User): string => {
+  if (u.role === "admin") return "Administrator";
+  const m = USER_TYPES.find((t) => t.role === u.role && t.department === (u.department || ""));
+  return m ? m.label : "Call Center Agent";
+};
+
+const resolveUserType = (label: string, existing?: User | null): { role: "agent" | "leader" | "admin"; department: string; team: string } => {
+  if (label === "Administrator") return { role: "admin", department: existing?.department || "Call Center", team: "Team Leader" };
+  const t = USER_TYPES.find((x) => x.label === label) || USER_TYPES[0];
+  const team = t.role === "leader" ? "Team Leader" : t.department === "Complaints" ? "Complain Team" : t.department === "Technical" ? "Technical Team" : "Call Center";
+  return { role: t.role, department: t.department, team };
+};
 import { 
   User as UserIcon, 
   Plus, 
@@ -32,9 +53,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"admin" | "leader" | "agent">("agent");
-  const [team, setTeam] = useState<Team>("Call Center");
-  const [department, setDepartment] = useState<Department>("Call Center");
+  const [userType, setUserType] = useState<string>("Call Center Agent");
   const [status, setStatus] = useState<"Active" | "Inactive">("Active");
 
   // Reset password states
@@ -69,9 +88,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setFullName("");
     setUsername("");
     setPassword("");
-    setRole("agent");
-    setTeam("Call Center");
-    setDepartment("Call Center");
+    setUserType("Call Center Agent");
     setStatus("Active");
     setError("");
     setIsModalOpen(true);
@@ -82,9 +99,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setFullName(user.full_name || user.name || "");
     setUsername(user.username);
     setPassword(""); // don't fill password
-    setRole(user.role);
-    setTeam(user.team || "Call Center");
-    setDepartment(user.department || "Call Center");
+    setUserType(userTypeLabel(user));
     setStatus(user.status || "Active");
     setError("");
     setIsModalOpen(true);
@@ -102,6 +117,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setError("");
     setSuccessMsg("");
 
+    const { role, department, team } = resolveUserType(userType, editingUser);
     const payload = {
       full_name: fullName,
       username,
@@ -403,54 +419,16 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Privilege Clearance Level:</label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                  >
-                    <option value="agent">Support Agent (agent)</option>
-                    <option value="leader">Team Leader (leader)</option>
-                    <option value="admin">System Administrator (admin)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Personal Record Status:</label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Department:</label>
-                  <select
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value as Department)}
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                  >
-                    {DEPARTMENTS.map((d) => (<option key={d} value={d}>{d}</option>))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Team (legacy):</label>
-                  <select
-                    value={team}
-                    onChange={(e) => setTeam(e.target.value as Team)}
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                  >
-                    {TEAMS.map((t) => (<option key={t} value={t}>{t}</option>))}
-                  </select>
-                </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-zinc-400 block">User Type:</label>
+                <select
+                  value={userType}
+                  onChange={(e) => setUserType(e.target.value)}
+                  className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                >
+                  {editingUser?.role === "admin" && <option value="Administrator">Administrator</option>}
+                  {USER_TYPES.map((t) => (<option key={t.label} value={t.label}>{t.label}</option>))}
+                </select>
               </div>
 
               <div className="pt-4 border-t border-[#27272a] flex items-center justify-end gap-2 text-xs">
