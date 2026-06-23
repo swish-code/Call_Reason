@@ -53,7 +53,8 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
     return true;
   });
 
-  const canModify = (l: OpsLog) => currentUser.role === "admin" || l.agent_id === currentUser.id;
+  // Editing/deleting logs is restricted to Admin only
+  const canModify = (_l: OpsLog) => currentUser.role === "admin";
 
   const remove = async (l: OpsLog) => {
     if (!confirm(`Delete this ${LOG_TYPE_CONFIG[l.log_type as LogType]?.title || "log"}?`)) return;
