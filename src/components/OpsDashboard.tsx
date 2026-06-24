@@ -30,6 +30,7 @@ interface DashData {
   technicalStatus: { name: string; count: number }[];
   coachingSessions: number;
   trend: { date: string; count: number }[];
+  shiftByAgent: { name: string; today: number; week: number }[];
 }
 
 export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
@@ -212,6 +213,35 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
             <BarList title="Technical Tasks Status" data={d.technicalStatus} color="bg-amber-500" icon={Wrench} />
           </div>
           <BarList title="Logs by Activity Type" data={d.byActivity} color="bg-purple-500" icon={ClipboardList} />
+
+          {/* Shift hours per agent (today / this week) */}
+          <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+            <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Clock className="w-5 h-5 text-blue-400" /> Shift Hours per Agent</h2>
+            {(!d.shiftByAgent || d.shiftByAgent.length === 0) ? (
+              <div className="text-center py-6 text-[var(--muted)] text-xs">No shift activity yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[10px] uppercase text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                      <th className="text-left py-2 px-2">Agent</th>
+                      <th className="text-right py-2 px-2">Today</th>
+                      <th className="text-right py-2 px-2">This Week</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.shiftByAgent.map((a) => (
+                      <tr key={a.name} className="border-b border-[var(--border)]/50 last:border-0">
+                        <td className="py-2.5 px-2 font-bold text-[var(--heading)] truncate">{a.name}</td>
+                        <td className="py-2.5 px-2 text-right font-mono text-emerald-400 font-bold">{fmtDur(a.today)}</td>
+                        <td className="py-2.5 px-2 text-right font-mono text-blue-400 font-bold">{fmtDur(a.week)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

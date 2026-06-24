@@ -582,7 +582,31 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const todaySeconds = todayLogs.reduce((a, l) => a + dur(l), 0);
   const weekSeconds = weekLogs.reduce((a, l) => a + dur(l), 0);
 
+  // Per-agent shift hours (today / this week) from logged shift sessions
+  let shiftByAgent: { name: string; today: number; week: number }[] = [];
+  if (role !== "agent") {
+    const sessions = role === "admin" ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department });
+    const kwTodayStr = kuwaitToday().date;
+    const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
+    const eff = (s: any) => {
+      const start = new Date(s.started_at).getTime();
+      const end = s.ended_at ? new Date(s.ended_at).getTime() : now;
+      return Math.max(0, Math.round((end - start) / 1000));
+    };
+    const map: Record<string, { name: string; today: number; week: number }> = {};
+    sessions.forEach((s: any) => {
+      if (!s.started_at) return;
+      const name = s.user_name || "—";
+      if (!map[name]) map[name] = { name, today: 0, week: 0 };
+      const e = eff(s);
+      if (kwDate(s.started_at) === kwTodayStr) map[name].today += e;
+      if (new Date(s.started_at).getTime() >= since(7)) map[name].week += e;
+    });
+    shiftByAgent = Object.values(map).sort((a, b) => b.week - a.week);
+  }
+
   res.json({
+    shiftByAgent,
     role,
     department: department || null,
     totalLogs: logs.length,
