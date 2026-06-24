@@ -527,6 +527,12 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   else if (role === "leader" || role === "supervisor") logs = await DB.getLogs({ department });
   else logs = await DB.getLogs({ agent_id: id });
 
+  // Optional date-range filter (YYYY-MM-DD, inclusive)
+  const from = typeof req.query.from === "string" ? req.query.from : "";
+  const to = typeof req.query.to === "string" ? req.query.to : "";
+  if (from) logs = logs.filter((l) => (l.created_at || "").slice(0, 10) >= from);
+  if (to) logs = logs.filter((l) => (l.created_at || "").slice(0, 10) <= to);
+
   const OPEN = ["Open"];
   const PENDING = ["In Progress", "Waiting Feedback", "Not Solved"];
   const DONE = ["Completed", "Solved"];

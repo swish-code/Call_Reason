@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer, Filter, X } from "lucide-react";
 
 interface OpsDashboardProps {
   currentUser: User;
@@ -36,19 +36,26 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   const [d, setD] = useState<DashData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true); setError("");
-        const res = await apiFetch("/api/logs/dashboard");
-        if (!res.ok) throw new Error("Failed to load dashboard.");
-        setD(await res.json());
-      } catch (err: any) { setError(err.message); } finally { setLoading(false); }
-    })();
-  }, []);
+  const load = async (f = from, t = to) => {
+    try {
+      setLoading(true); setError("");
+      const qs = new URLSearchParams();
+      if (f) qs.set("from", f);
+      if (t) qs.set("to", t);
+      const res = await apiFetch(`/api/logs/dashboard${qs.toString() ? `?${qs}` : ""}`);
+      if (!res.ok) throw new Error("Failed to load dashboard.");
+      setD(await res.json());
+    } catch (err: any) { setError(err.message); } finally { setLoading(false); }
+  };
 
-  if (loading) return <div className="flex flex-col items-center justify-center min-h-[400px]"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div><p className="mt-4 text-[var(--muted)]">Loading dashboard...</p></div>;
+  useEffect(() => { load("", ""); }, []);
+
+  const clearFilter = () => { setFrom(""); setTo(""); load("", ""); };
+
+  if (loading && !d) return <div className="flex flex-col items-center justify-center min-h-[400px]"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div><p className="mt-4 text-[var(--muted)]">Loading dashboard...</p></div>;
   if (error) return <div className="p-6 bg-rose-950/20 border border-rose-500/30 rounded-2xl text-center text-rose-300"><AlertCircle className="w-10 h-10 mx-auto text-rose-500" /><p className="mt-2 text-sm">{error}</p></div>;
   if (!d) return null;
 
@@ -168,6 +175,22 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
         </>
       ) : (
         <>
+          {/* Date-range filter */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-lg flex flex-wrap items-end gap-3">
+            <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Filter className="w-4 h-4 text-blue-400" /> Filter by date</div>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">From</label>
+              <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">To</label>
+              <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+            </div>
+            <button onClick={() => load()} disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Filter className="w-3.5 h-3.5" /> Apply</button>
+            {(from || to) && <button onClick={clearFilter} className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><X className="w-3.5 h-3.5" /> Clear</button>}
+            {(from || to) && <span className="text-[11px] text-[var(--muted)] font-medium ml-auto">Showing {from || "start"} → {to || "today"}</span>}
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <Card label="Total Logs" value={d.totalLogs} icon={ClipboardList} tone="text-[var(--heading)]" />
             <Card label="Open Tasks" value={d.open} icon={FolderOpen} tone="text-blue-400" />
