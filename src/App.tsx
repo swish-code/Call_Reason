@@ -128,7 +128,7 @@ export default function App() {
               <div className="w-14 h-14 bg-white/15 backdrop-blur rounded-2xl flex items-center justify-center border border-white/20 shadow-lg">
                 <Building2 className="w-7 h-7 text-white stroke-[2.2]" />
               </div>
-              <h2 className="text-3xl font-black text-white mt-8 leading-tight tracking-tight">Operations &amp;<br />Logs Management</h2>
+              <h2 className="text-3xl font-black text-white mt-8 leading-tight tracking-tight">Swish Tasks</h2>
               <p className="text-blue-100/80 text-sm mt-4 font-light leading-relaxed max-w-xs">
                 One workspace for your call center, technical and complaints teams — log activities, track performance, and stay in control.
               </p>
@@ -147,7 +147,7 @@ export default function App() {
               ))}
             </div>
 
-            <div className="relative z-10 text-[11px] text-blue-100/50 font-medium mt-10">© {new Date().getFullYear()} CRM Portal · Secure Access</div>
+            <div className="relative z-10 text-[11px] text-blue-100/50 font-medium mt-10">© {new Date().getFullYear()} Swish Tasks · Secure Access</div>
           </div>
 
           {/* Right — login form */}
@@ -157,7 +157,7 @@ export default function App() {
               <div className="w-12 h-12 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30">
                 <Building2 className="w-6 h-6 text-white stroke-[2.2]" />
               </div>
-              <span className="text-lg font-black text-white tracking-tight">CRM Portal</span>
+              <span className="text-lg font-black text-white tracking-tight">Swish Tasks</span>
             </div>
 
             <div className="mb-8">
@@ -257,8 +257,8 @@ export default function App() {
             </div>
             {sidebarOpen && (
               <div className="truncate">
-                <h2 className="text-xs font-extrabold text-white leading-tight truncate">CRM Portal</h2>
-                <span className="text-[10px] text-blue-400 font-bold block mt-0.5 leading-none">Local Edition</span>
+                <h2 className="text-xs font-extrabold text-white leading-tight truncate">Swish Tasks</h2>
+                <span className="text-[10px] text-blue-400 font-bold block mt-0.5 leading-none">Operations & Logs</span>
               </div>
             )}
           </div>
