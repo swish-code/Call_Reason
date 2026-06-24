@@ -173,6 +173,7 @@ export interface AssignedTask {
   due_date?: string; // YYYY-MM-DDTHH:mm
   status: string; // New | In Progress | Completed
   seen?: boolean;
+  duration_seconds?: number;
   created_at: string;
   updated_at?: string;
   completed_at?: string;

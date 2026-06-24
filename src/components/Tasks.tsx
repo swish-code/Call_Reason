@@ -58,10 +58,23 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
     else { const d = await res.json(); setFormMsg(d.error || "Failed to assign task."); }
   };
 
+  const [timeInputs, setTimeInputs] = useState<Record<string, string>>({});
+  const canUpdate = (t: AssignedTask) => (currentUser.role === "agent" && t.assigned_to === currentUser.id) || currentUser.role !== "agent";
+
   const setStatus = async (t: AssignedTask, status: string) => {
     const res = await apiFetch(`/api/tasks/${t.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
     if (res.ok) fetchTasks();
   };
+  const complete = async (t: AssignedTask) => {
+    const m = timeInputs[t.id];
+    if (!m || Number(m) <= 0) { alert("Please enter the time spent (minutes) before completing the task."); return; }
+    const res = await apiFetch(`/api/tasks/${t.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "Completed", duration_seconds: Math.round(Number(m) * 60) }),
+    });
+    if (res.ok) fetchTasks(); else { const d = await res.json(); alert(d.error || "Failed."); }
+  };
+  const fmtDur = (s?: number) => { const x = Number(s || 0); if (!x) return "—"; const h = Math.floor(x / 3600), m = Math.round((x % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
   const remove = async (t: AssignedTask) => {
     if (!confirm(`Delete task "${t.title}"?`)) return;
     const res = await apiFetch(`/api/tasks/${t.id}`, { method: "DELETE" });
@@ -154,15 +167,19 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
                 <span className={`font-bold ${prioBadge(t.priority)}`}>{t.priority}</span>
                 <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {fmt(t.created_at)}</span>
               </div>
-              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]/60">
-                <div className="flex items-center gap-1.5">
-                  {/* Status update: agent owner or manager */}
-                  {t.status !== "Completed" && (
-                    <select value={t.status} onChange={(e) => setStatus(t, e.target.value)} className="px-2.5 py-1.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-lg text-[11px] font-bold [&>option]:bg-[var(--surface)]">
-                      {TASK_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
+              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]/60 gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {t.status !== "Completed" && canUpdate(t) && (
+                    <>
+                      <select value={t.status} onChange={(e) => e.target.value !== "Completed" && setStatus(t, e.target.value)} className="px-2.5 py-1.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-lg text-[11px] font-bold [&>option]:bg-[var(--surface)]">
+                        <option value="New">New</option>
+                        <option value="In Progress">In Progress</option>
+                      </select>
+                      <input type="number" min={1} value={timeInputs[t.id] || ""} onChange={(e) => setTimeInputs((p) => ({ ...p, [t.id]: e.target.value }))} placeholder="min" className="w-16 px-2 py-1.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-lg text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500" title="Time spent (minutes)" />
+                      <button onClick={() => complete(t)} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 active:scale-95"><Check className="w-3.5 h-3.5" /> Complete</button>
+                    </>
                   )}
-                  {t.status === "Completed" && <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1"><Check className="w-3.5 h-3.5" /> Done</span>}
+                  {t.status === "Completed" && <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1"><Check className="w-3.5 h-3.5" /> Done · {fmtDur(t.duration_seconds)}</span>}
                 </div>
                 {(currentUser.role === "admin" || t.assigned_by === currentUser.id) && (
                   <button onClick={() => remove(t)} className="p-1.5 text-[var(--muted)] hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>

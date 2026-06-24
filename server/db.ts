@@ -217,6 +217,7 @@ export class DB {
         due_date TEXT,
         status TEXT DEFAULT 'New',
         seen BOOLEAN DEFAULT false,
+        duration_seconds INTEGER DEFAULT 0,
         created_at TEXT,
         updated_at TEXT,
         completed_at TEXT
@@ -274,6 +275,7 @@ export class DB {
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS started_at TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
+      ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
     `);
 
     // Backfill teams for rows created before the feature existed
@@ -699,7 +701,7 @@ export class DB {
   }
 
   static async updateAssignedTask(id: string, fields: Partial<AssignedTask>): Promise<AssignedTask | undefined> {
-    const cols = ["title", "description", "priority", "due_date", "status", "seen", "completed_at", "assigned_to", "assigned_to_name"] as const;
+    const cols = ["title", "description", "priority", "due_date", "status", "seen", "completed_at", "assigned_to", "assigned_to_name", "duration_seconds"] as const;
     const sets: string[] = [];
     const values: any[] = [];
     let idx = 1;

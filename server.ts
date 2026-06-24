@@ -770,8 +770,14 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
 
   const fields: any = {};
   if (req.body.status !== undefined) fields.status = req.body.status;
+  if (req.body.duration_seconds !== undefined) fields.duration_seconds = Math.max(0, Math.round(Number(req.body.duration_seconds) || 0));
   if (isManager) {
     ["title", "description", "priority", "due_date"].forEach((k) => { if (req.body[k] !== undefined) fields[k] = req.body[k]; });
+  }
+  // Completing a task requires the time spent (can't be edited afterwards)
+  const finalDuration = fields.duration_seconds ?? task.duration_seconds ?? 0;
+  if (fields.status === "Completed" && Number(finalDuration) <= 0) {
+    return res.status(400).json({ error: "Time spent is required to complete the task." });
   }
   if (fields.status === "Completed" && !task.completed_at) fields.completed_at = new Date().toISOString();
   const updated = await DB.updateAssignedTask(req.params.id, fields);

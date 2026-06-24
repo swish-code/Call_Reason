@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { User, UserRole } from "./types.js";
 import UsersManagement from "./components/UsersManagement.tsx";
 import Configuration from "./components/Configuration.tsx";
@@ -61,15 +61,55 @@ export default function App() {
   }, [theme]);
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
-  // Assigned-task notifications (agent)
+  // Assigned-task notifications (agent): badge + sound + browser/in-app alert
   const [unseenTasks, setUnseenTasks] = useState(0);
+  const [taskToast, setTaskToast] = useState("");
+  const prevUnseenRef = useRef(0);
+
+  const playBeep = () => {
+    try {
+      const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = "sine"; o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
+      o.start(); o.stop(ctx.currentTime + 0.46);
+    } catch (e) { /* ignore */ }
+  };
+
   useEffect(() => {
-    if (!currentUser || currentUser.role !== "agent") return;
-    const load = () => apiFetch("/api/tasks/unseen-count").then((r) => (r.ok ? r.json() : { count: 0 })).then((d) => setUnseenTasks(d.count || 0)).catch(() => {});
+    if (!currentUser || currentUser.role !== "agent") { prevUnseenRef.current = 0; return; }
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+    const load = async () => {
+      try {
+        const r = await apiFetch("/api/tasks/unseen-count");
+        if (!r.ok) return;
+        const { count } = await r.json();
+        const c = count || 0;
+        if (c > prevUnseenRef.current) {
+          playBeep();
+          setTaskToast("🔔 You have a new task assigned");
+          setTimeout(() => setTaskToast(""), 6000);
+          if ("Notification" in window && Notification.permission === "granted") {
+            try { new Notification("Swish Tasks", { body: "You have a new task assigned to you." }); } catch (e) {}
+          }
+        }
+        prevUnseenRef.current = c;
+        setUnseenTasks(c);
+      } catch (e) { /* ignore */ }
+    };
     load();
-    const t = setInterval(load, 30000);
+    const t = setInterval(load, 20000);
     return () => clearInterval(t);
   }, [currentUser]);
+
+  const openTasks = () => { setActivePage("tasks"); if (currentUser?.role === "agent") { setUnseenTasks(0); prevUnseenRef.current = 0; } };
 
   // Login inputs
   const [email, setEmail] = useState("");
@@ -274,6 +314,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[var(--bg)] flex flex-col md:flex-row relative font-sans text-[var(--text)]">
+      {taskToast && (
+        <div onClick={openTasks} className="fixed top-5 right-5 z-[100] bg-blue-600 text-white px-5 py-3 rounded-2xl shadow-2xl shadow-blue-900/40 text-sm font-bold cursor-pointer animate-fade-in flex items-center gap-2">
+          <Bell className="w-4 h-4" /> {taskToast}
+        </div>
+      )}
       
       {/* ----------------------------------------------------
           Sidebar Menu navigation
@@ -354,7 +399,7 @@ export default function App() {
 
             {/* Tasks: My Tasks (agent) / Assign Task (managers) */}
             <button
-              onClick={() => { setActivePage("tasks"); if (currentUser.role === "agent") setUnseenTasks(0); }}
+              onClick={openTasks}
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                 activePage === "tasks"
                   ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
@@ -479,7 +524,7 @@ export default function App() {
 
             {currentUser.role === "agent" && (
               <button
-                onClick={() => { setActivePage("tasks"); setUnseenTasks(0); }}
+                onClick={openTasks}
                 className="relative p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
                 title="My Tasks"
               >
