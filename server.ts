@@ -509,10 +509,11 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const totalHandlingSeconds = timed.reduce((a, l) => a + dur(l), 0);
   const avgHandlingSeconds = timed.length ? Math.round(totalHandlingSeconds / timed.length) : 0;
 
-  // Productivity windows (today = calendar day, week = last 7 days)
+  // Productivity windows — COMPLETED tasks only (open / in-progress don't count
+  // toward performance until the agent completes them)
   const todayStr = new Date(now).toISOString().split("T")[0];
-  const todayLogs = logs.filter((l) => (l.created_at || "").split("T")[0] === todayStr);
-  const weekLogs = logs.filter((l) => ts(l) >= since(7));
+  const todayLogs = logs.filter((l) => (l.created_at || "").split("T")[0] === todayStr && inSet(l.status, DONE));
+  const weekLogs = logs.filter((l) => ts(l) >= since(7) && inSet(l.status, DONE));
   const todayTasks = todayLogs.length;
   const weekTasks = weekLogs.length;
   const todaySeconds = todayLogs.reduce((a, l) => a + dur(l), 0);
