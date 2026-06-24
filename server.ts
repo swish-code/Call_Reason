@@ -769,11 +769,23 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
   if (!isOwnerAgent && !isManager) return res.status(403).json({ error: "Not authorized to update this task." });
 
   const fields: any = {};
-  if (req.body.status !== undefined) fields.status = req.body.status;
-  if (req.body.duration_seconds !== undefined) fields.duration_seconds = Math.max(0, Math.round(Number(req.body.duration_seconds) || 0));
-  if (isManager) {
+
+  if (isOwnerAgent) {
+    // Agent: progress the task (status / time / note). Only the agent completes.
+    if (req.body.status !== undefined) fields.status = req.body.status;
+    if (req.body.duration_seconds !== undefined) fields.duration_seconds = Math.max(0, Math.round(Number(req.body.duration_seconds) || 0));
+    if (req.body.note !== undefined) fields.note = req.body.note;
+  } else if (isManager) {
+    // Manager: edit details + reassign (NOT complete)
     ["title", "description", "priority", "due_date"].forEach((k) => { if (req.body[k] !== undefined) fields[k] = req.body[k]; });
+    if (req.body.assigned_to !== undefined && req.body.assigned_to !== task.assigned_to) {
+      const target = await DB.getUserById(req.body.assigned_to);
+      if (!target || target.role !== "agent") return res.status(400).json({ error: "Selected user is not a valid agent." });
+      if (role !== "admin" && target.department !== department) return res.status(403).json({ error: "You can only reassign within your department." });
+      fields.assigned_to = target.id; fields.assigned_to_name = target.full_name; fields.department = target.department; fields.seen = false;
+    }
   }
+
   // Completing a task requires the time spent (can't be edited afterwards)
   const finalDuration = fields.duration_seconds ?? task.duration_seconds ?? 0;
   if (fields.status === "Completed" && Number(finalDuration) <= 0) {
@@ -787,11 +799,12 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
   if (newlyCompleted) {
     const logType = DEPT_TO_LOGTYPE[task.department || ""] || "call_center";
     const now = new Date().toISOString();
+    const note = fields.note ?? task.note;
     await DB.addLog({
       log_type: logType as any, department: task.department, activity_type: task.title,
       status: logType === "complaint" ? "Solved" : "Completed",
       agent_id: task.assigned_to, agent_name: task.assigned_to_name,
-      notes: task.description ? `[Assigned task] ${task.description}` : "[Assigned task]",
+      notes: `[Assigned task] ${task.title}${task.description ? " — " + task.description : ""}${note ? " | Note: " + note : ""}`,
       duration_seconds: Number(finalDuration), created_at: now, updated_at: now, created_by: id,
     });
   }

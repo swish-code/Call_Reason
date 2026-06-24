@@ -43,7 +43,7 @@ import {
   ClipboardCheck
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks";
+type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -412,6 +412,21 @@ export default function App() {
               </span>}
             </button>
 
+            {/* Task Tracker — managers only */}
+            {currentUser?.role !== "agent" && (
+              <button
+                onClick={() => setActivePage("tracker")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "tracker"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <ClipboardList className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Task Tracker</span>}
+              </button>
+            )}
+
             {/* Reports limited to Admin & TL */}
             {currentUser?.role !== "agent" && (
               <button
@@ -512,6 +527,7 @@ export default function App() {
               {activePage === "logs" && "Operations Logs"}
               {activePage === "history" && "History Logs — Audit Trail"}
               {activePage === "tasks" && (currentUser.role === "agent" ? "My Tasks" : "Assign Tasks")}
+              {activePage === "tracker" && "Task Tracker"}
             </h1>
           </div>
 
@@ -563,7 +579,10 @@ export default function App() {
             <HistoryLogs currentUser={currentUser} />
           )}
           {activePage === "tasks" && (
-            <Tasks currentUser={currentUser} onSeen={() => setUnseenTasks(0)} />
+            <Tasks currentUser={currentUser} mode="assign" onSeen={() => setUnseenTasks(0)} />
+          )}
+          {activePage === "tracker" && currentUser.role !== "agent" && (
+            <Tasks currentUser={currentUser} mode="tracker" />
           )}
           {activePage === "users" && (
             <UsersManagement currentUser={currentUser} />
