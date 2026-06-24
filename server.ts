@@ -617,6 +617,33 @@ app.delete("/api/logs/:id", authenticateJWT, asyncHandler(async (req: any, res: 
   res.json({ message: "Log deleted successfully" });
 }));
 
+// Owner progress update — change status + time spent on an Open/In Progress task
+app.put("/api/logs/:id/progress", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const log = await DB.getLogById(req.params.id);
+  if (!log) return res.status(404).json({ error: "Log not found." });
+  const isOwner = log.agent_id === req.user.id;
+  if (req.user.role !== "admin" && !isOwner) {
+    return res.status(403).json({ error: "You can only update your own tasks." });
+  }
+  if (req.user.role !== "admin" && !["Open", "In Progress"].includes(log.status || "")) {
+    return res.status(403).json({ error: "This task is already closed and can no longer be updated." });
+  }
+  const fields: any = {};
+  if (req.body.status !== undefined) fields.status = req.body.status;
+  if (req.body.duration_seconds !== undefined) fields.duration_seconds = Math.max(0, Math.round(Number(req.body.duration_seconds) || 0));
+  if (Object.keys(fields).length === 0) return res.status(400).json({ error: "Nothing to update." });
+
+  const updated = await DB.updateLog(req.params.id, fields);
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+    category: log.department, department: log.department, action: "Update Task Progress", related_ref: log.id,
+    details: `${log.log_type} · ${log.activity_type}`,
+    previous_value: JSON.stringify({ status: log.status, duration_seconds: log.duration_seconds ?? 0 }),
+    new_value: JSON.stringify(fields),
+  });
+  res.json(updated);
+}));
+
 // Task timer — start / pause / complete (accumulates active handling time)
 app.post("/api/logs/:id/timer", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const log = await DB.getLogById(req.params.id);

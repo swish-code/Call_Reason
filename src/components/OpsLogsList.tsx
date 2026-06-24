@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { User, OpsLog, LogType, LOG_TYPE_CONFIG } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { downloadCSV } from "../utils.js";
-import { ClipboardList, RefreshCw, Download, Search, Pencil, Trash2, X, AlertCircle, Timer } from "lucide-react";
+import { ClipboardList, RefreshCw, Download, Search, Pencil, Trash2, X, AlertCircle, Timer, CheckCircle2 } from "lucide-react";
 import OpsLogForm from "./OpsLogForm.tsx";
 
 interface OpsLogsListProps {
@@ -17,8 +17,30 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [editLog, setEditLog] = useState<OpsLog | null>(null);
+  // Owner progress update (status + time) for Open/In Progress tasks
+  const [progressLog, setProgressLog] = useState<OpsLog | null>(null);
+  const [pStatus, setPStatus] = useState("");
+  const [pMinutes, setPMinutes] = useState("");
+  const [pSaving, setPSaving] = useState(false);
 
   const isAgent = currentUser.role === "agent";
+
+  const canProgress = (l: OpsLog) => l.agent_id === currentUser.id && ["Open", "In Progress"].includes(l.status || "");
+  const openProgress = (l: OpsLog) => {
+    setProgressLog(l);
+    setPStatus(l.status || "Open");
+    setPMinutes(l.duration_seconds ? String(Math.round(l.duration_seconds / 60)) : "");
+  };
+  const saveProgress = async () => {
+    if (!progressLog) return;
+    setPSaving(true);
+    const res = await apiFetch(`/api/logs/${progressLog.id}/progress`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: pStatus, duration_seconds: pMinutes ? Math.max(0, Math.round(Number(pMinutes) * 60)) : 0 }),
+    });
+    setPSaving(false);
+    if (res.ok) { setProgressLog(null); fetchLogs(); } else { const d = await res.json(); alert(d.error || "Update failed."); }
+  };
 
   const elapsedSeconds = (l: OpsLog) => Number(l.duration_seconds || 0);
   const fmtDur = (s: number) => {
@@ -160,8 +182,10 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                     </td>
                     <td className="p-4">
                       <div className="flex items-center justify-center gap-1.5">
+                        {!canModify(l) && canProgress(l) && <button onClick={() => openProgress(l)} className="px-2.5 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-lg transition text-[11px] font-bold flex items-center gap-1" title="Update status & time"><CheckCircle2 className="w-3.5 h-3.5" /> Update</button>}
                         {canModify(l) && <button onClick={() => setEditLog(l)} className="p-1.5 bg-[var(--surface-2)] hover:bg-blue-500/10 hover:text-blue-400 text-[var(--text)] border border-[var(--border)] rounded-lg transition" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
                         {canModify(l) && <button onClick={() => remove(l)} className="p-1.5 bg-[var(--surface-2)] hover:bg-rose-500/10 hover:text-rose-400 text-[var(--text)] border border-[var(--border)] rounded-lg transition" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                        {!canModify(l) && !canProgress(l) && <span className="text-[var(--muted)] text-[10px]">—</span>}
                       </div>
                     </td>
                   </tr>
@@ -179,6 +203,33 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
           <div className="w-full max-w-2xl my-8 relative">
             <button onClick={() => setEditLog(null)} className="absolute -top-2 -right-2 z-10 p-2 bg-[var(--surface-2)] text-[var(--text)] hover:text-[var(--heading)] border border-[var(--border)] rounded-full"><X className="w-4 h-4" /></button>
             <OpsLogForm currentUser={currentUser} editLog={editLog} onDone={() => { setEditLog(null); fetchLogs(); }} />
+          </div>
+        </div>
+      )}
+
+      {/* Progress update modal (owner, Open/In Progress tasks) */}
+      {progressLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-sm font-bold text-[var(--heading)] flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-blue-400" /> Update Task</h3>
+              <button onClick={() => setProgressLog(null)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-[11px] text-[var(--muted)]">{progressLog.activity_type}{progressLog.brand ? " · " + progressLog.brand : ""}</p>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-[var(--text)]">Status:</label>
+              <select value={pStatus} onChange={(e) => setPStatus(e.target.value)} className="w-full px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs font-bold focus:ring-1 focus:ring-blue-500 focus:outline-none [&>option]:bg-[var(--surface)]">
+                {["Open", "In Progress", "Completed"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-[var(--text)]">Time Spent (minutes):</label>
+              <input type="number" min={0} value={pMinutes} onChange={(e) => setPMinutes(e.target.value)} placeholder="e.g. 15" className="w-full px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none" />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setProgressLog(null)} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">Cancel</button>
+              <button onClick={saveProgress} disabled={pSaving} className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition">{pSaving ? "Saving..." : "Save"}</button>
+            </div>
           </div>
         </div>
       )}
