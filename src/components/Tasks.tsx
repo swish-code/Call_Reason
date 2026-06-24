@@ -127,6 +127,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const fmtDur = (s?: number) => { const x = Number(s || 0); if (!x) return "—"; const h = Math.floor(x / 3600), m = Math.round((x % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
   const statusBadge = (s: string) => s === "Completed" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
     : s === "In Progress" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+    : s === "Available" ? "bg-violet-500/10 text-violet-400 border border-violet-500/20"
     : "bg-blue-500/10 text-blue-400 border border-blue-500/20";
   const prioBadge = (p?: string) => p === "High" ? "text-rose-400" : p === "Low" ? "text-[var(--muted)]" : "text-amber-400";
   const fmt = (d?: string) => d ? d.replace("T", " ").slice(0, 16) : "—";
@@ -242,7 +243,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[var(--muted)]">
                       {isManager ? (
-                        <span className="flex items-center gap-1"><UserIcon className="w-3.5 h-3.5" /> {t.assigned_to_name}</span>
+                        <span className="flex items-center gap-1"><UserIcon className="w-3.5 h-3.5" /> {t.assigned_to_name || "Unassigned (Pool)"}</span>
                       ) : (
                         <span className="flex items-center gap-1"><UserIcon className="w-3.5 h-3.5" /> by {t.assigned_by_name}</span>
                       )}

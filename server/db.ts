@@ -223,6 +223,30 @@ export class DB {
         updated_at TEXT,
         completed_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS recurring_templates (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        department TEXT,
+        priority TEXT DEFAULT 'Medium',
+        recurrence_type TEXT DEFAULT 'daily',
+        days_of_week TEXT,
+        due_time TEXT,
+        assign_mode TEXT DEFAULT 'pool',
+        active BOOLEAN DEFAULT true,
+        created_by TEXT,
+        created_by_name TEXT,
+        created_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS shift_sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        user_name TEXT,
+        department TEXT,
+        started_at TEXT,
+        ended_at TEXT,
+        duration_seconds INTEGER DEFAULT 0
+      );
       CREATE TABLE IF NOT EXISTS logs (
         id TEXT PRIMARY KEY,
         log_type TEXT NOT NULL,
@@ -278,6 +302,11 @@ export class DB {
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS note TEXT;
+      ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS template_id TEXT;
+      ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS task_date TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_status TEXT DEFAULT 'off';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_started_at TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_assigned_tasks_template_date ON assigned_tasks(template_id, task_date) WHERE template_id IS NOT NULL;
     `);
 
     // Backfill teams for rows created before the feature existed
@@ -730,6 +759,120 @@ export class DB {
   static async deleteAssignedTask(id: string): Promise<boolean> {
     const res = await pool.query("DELETE FROM assigned_tasks WHERE id = $1", [id]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // ----------------------------------------------------
+  // Recurring task templates
+  // ----------------------------------------------------
+  static async getRecurringTemplates(filter: { department?: string } = {}): Promise<any[]> {
+    const where = filter.department ? "WHERE department = $1" : "";
+    const values = filter.department ? [filter.department] : [];
+    const { rows } = await pool.query(`SELECT * FROM recurring_templates ${where} ORDER BY created_at DESC`, values);
+    return rows;
+  }
+  static async getRecurringTemplateById(id: string): Promise<any | undefined> {
+    const { rows } = await pool.query("SELECT * FROM recurring_templates WHERE id = $1 LIMIT 1", [id]);
+    return rows[0];
+  }
+  static async addRecurringTemplate(t: any): Promise<any> {
+    const { rows } = await pool.query(
+      `INSERT INTO recurring_templates (id, title, description, department, priority, recurrence_type, days_of_week, due_time, assign_mode, active, created_by, created_by_name, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [t.id, t.title, t.description ?? null, t.department ?? null, t.priority ?? "Medium", t.recurrence_type ?? "daily", t.days_of_week ?? null, t.due_time ?? null, t.assign_mode ?? "pool", t.active ?? true, t.created_by ?? null, t.created_by_name ?? null, t.created_at]
+    );
+    return rows[0];
+  }
+  static async updateRecurringTemplate(id: string, fields: any): Promise<any | undefined> {
+    const cols = ["title", "description", "department", "priority", "recurrence_type", "days_of_week", "due_time", "assign_mode", "active"];
+    const sets: string[] = []; const values: any[] = []; let idx = 1;
+    for (const c of cols) { if (c in fields && fields[c] !== undefined) { sets.push(`${c} = $${idx++}`); values.push(fields[c]); } }
+    if (!sets.length) return DB.getRecurringTemplateById(id);
+    values.push(id);
+    const { rows } = await pool.query(`UPDATE recurring_templates SET ${sets.join(", ")} WHERE id = $${idx} RETURNING *`, values);
+    return rows[0];
+  }
+  static async deleteRecurringTemplate(id: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM recurring_templates WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // Insert a generated recurring instance; idempotent on (template_id, task_date)
+  static async addRecurringInstance(t: AssignedTask & { template_id: string; task_date: string }): Promise<AssignedTask | undefined> {
+    const { rows } = await pool.query<AssignedTask>(
+      `INSERT INTO assigned_tasks (id, title, description, assigned_by, assigned_by_name, assigned_to, assigned_to_name, department, priority, due_date, status, seen, template_id, task_date, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,$13,$14,$14)
+       ON CONFLICT (template_id, task_date) WHERE template_id IS NOT NULL DO NOTHING RETURNING *`,
+      [t.id, t.title, t.description ?? null, t.assigned_by, t.assigned_by_name, t.assigned_to ?? null, t.assigned_to_name ?? null, t.department ?? null, t.priority ?? null, t.due_date ?? null, t.status || "Available", t.template_id, t.task_date, t.created_at]
+    );
+    return rows[0];
+  }
+  static async recurringInstanceExists(templateId: string, taskDate: string): Promise<boolean> {
+    const { rows } = await pool.query("SELECT 1 FROM assigned_tasks WHERE template_id = $1 AND task_date = $2 LIMIT 1", [templateId, taskDate]);
+    return rows.length > 0;
+  }
+
+  // Pool: unclaimed available tasks for a department
+  static async getPoolTasks(department: string): Promise<AssignedTask[]> {
+    const { rows } = await pool.query<AssignedTask>(
+      "SELECT * FROM assigned_tasks WHERE department = $1 AND assigned_to IS NULL AND status = 'Available' ORDER BY due_date ASC NULLS LAST, created_at ASC",
+      [department]
+    );
+    return rows;
+  }
+  // Claim a pool task atomically (returns the task if claim succeeded)
+  static async claimTask(id: string, userId: string, userName: string): Promise<AssignedTask | undefined> {
+    const { rows } = await pool.query<AssignedTask>(
+      "UPDATE assigned_tasks SET assigned_to = $2, assigned_to_name = $3, status = 'New', seen = true, updated_at = $4 WHERE id = $1 AND assigned_to IS NULL RETURNING *",
+      [id, userId, userName, new Date().toISOString()]
+    );
+    return rows[0];
+  }
+  // Count active (non-completed) tasks per agent — for round-robin auto-assign
+  static async getOpenTaskCounts(department: string): Promise<Record<string, number>> {
+    const { rows } = await pool.query<{ assigned_to: string; c: string }>(
+      "SELECT assigned_to, COUNT(*)::int AS c FROM assigned_tasks WHERE department = $1 AND assigned_to IS NOT NULL AND status <> 'Completed' GROUP BY assigned_to",
+      [department]
+    );
+    const map: Record<string, number> = {};
+    rows.forEach((r) => { map[r.assigned_to] = Number(r.c); });
+    return map;
+  }
+
+  // ----------------------------------------------------
+  // Shift presence
+  // ----------------------------------------------------
+  static async getOnShiftAgents(department: string): Promise<{ id: string; full_name: string }[]> {
+    const { rows } = await pool.query<{ id: string; full_name: string }>(
+      "SELECT id, full_name FROM users WHERE role = 'agent' AND status = 'Active' AND shift_status = 'on' AND department = $1",
+      [department]
+    );
+    return rows;
+  }
+  static async setShiftStatus(userId: string, status: "on" | "off", startedAt: string | null): Promise<void> {
+    await pool.query("UPDATE users SET shift_status = $2, shift_started_at = $3 WHERE id = $1", [userId, status, startedAt]);
+  }
+  static async startShiftSession(s: { id: string; user_id: string; user_name: string; department: string; started_at: string }): Promise<void> {
+    await pool.query(
+      "INSERT INTO shift_sessions (id, user_id, user_name, department, started_at) VALUES ($1,$2,$3,$4,$5)",
+      [s.id, s.user_id, s.user_name, s.department, s.started_at]
+    );
+  }
+  static async endShiftSession(userId: string, endedAt: string): Promise<void> {
+    const { rows } = await pool.query<{ id: string; started_at: string }>(
+      "SELECT id, started_at FROM shift_sessions WHERE user_id = $1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+      [userId]
+    );
+    if (!rows.length) return;
+    const dur = Math.max(0, Math.round((new Date(endedAt).getTime() - new Date(rows[0].started_at).getTime()) / 1000));
+    await pool.query("UPDATE shift_sessions SET ended_at = $2, duration_seconds = $3 WHERE id = $1", [rows[0].id, endedAt, dur]);
+  }
+  static async getShiftSessions(filter: { department?: string; user_id?: string } = {}): Promise<any[]> {
+    const clauses: string[] = []; const values: any[] = []; let idx = 1;
+    if (filter.department) { clauses.push(`department = $${idx++}`); values.push(filter.department); }
+    if (filter.user_id) { clauses.push(`user_id = $${idx++}`); values.push(filter.user_id); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { rows } = await pool.query(`SELECT * FROM shift_sessions ${where} ORDER BY started_at DESC LIMIT 500`, values);
+    return rows;
   }
 
   // ----------------------------------------------------

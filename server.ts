@@ -447,6 +447,54 @@ const DEPT_TO_LOGTYPE: Record<string, string> = {
 };
 const LOG_FIELDS = ["department", "activity_type", "status", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date"];
 
+// ----------------------------------------------------
+// Recurring tasks — date helpers & lazy daily generation (Kuwait time, UTC+3)
+// ----------------------------------------------------
+const KW_OFFSET_MS = 3 * 3600 * 1000;
+function kuwaitToday(): { date: string; weekday: number } {
+  const kw = new Date(Date.now() + KW_OFFSET_MS);
+  const date = kw.toISOString().slice(0, 10); // YYYY-MM-DD in Kuwait local
+  const weekday = new Date(date + "T00:00:00Z").getUTCDay(); // 0=Sun..6=Sat
+  return { date, weekday };
+}
+function templateFiresOn(tpl: any, weekday: number): boolean {
+  if (!tpl.active) return false;
+  if (tpl.recurrence_type === "daily") return true;
+  const days = String(tpl.days_of_week || "").split(",").map((d: string) => Number(d.trim())).filter((n: number) => !isNaN(n));
+  return days.includes(weekday); // covers "weekly" (single day) & "weekdays" (multiple)
+}
+
+// Ensure today's instances exist for active templates (optionally a single department).
+// Idempotent via the unique (template_id, task_date) index.
+async function ensureTodayInstances(department?: string): Promise<void> {
+  const { date, weekday } = kuwaitToday();
+  const templates = await DB.getRecurringTemplates(department ? { department } : {});
+  for (const tpl of templates) {
+    if (!templateFiresOn(tpl, weekday)) continue;
+    if (await DB.recurringInstanceExists(tpl.id, date)) continue;
+    const due_date = tpl.due_time ? `${date}T${tpl.due_time}` : `${date}T23:59`;
+    let assigned_to: string | null = null;
+    let assigned_to_name: string | null = null;
+    let status = "Available";
+    if (tpl.assign_mode === "auto") {
+      const onShift = await DB.getOnShiftAgents(tpl.department);
+      if (onShift.length) {
+        const counts = await DB.getOpenTaskCounts(tpl.department);
+        onShift.sort((a, b) => (counts[a.id] || 0) - (counts[b.id] || 0));
+        assigned_to = onShift[0].id; assigned_to_name = onShift[0].full_name; status = "New";
+      } // else: no one on shift → falls back to the pool
+    }
+    await DB.addRecurringInstance({
+      id: "rtask-" + tpl.id.slice(-6) + "-" + date,
+      title: tpl.title, description: tpl.description || undefined,
+      assigned_by: tpl.created_by || "system", assigned_by_name: tpl.created_by_name || "Recurring",
+      assigned_to, assigned_to_name, department: tpl.department,
+      priority: tpl.priority || "Medium", due_date, status,
+      template_id: tpl.id, task_date: date, created_at: new Date().toISOString(),
+    } as any);
+  }
+}
+
 // List logs (scoped by role/department)
 app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, department } = req.user;
@@ -732,11 +780,43 @@ app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) 
 // List tasks (scoped)
 app.get("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, department } = req.user;
+  // Make sure today's recurring instances exist before listing
+  await ensureTodayInstances(role === "admin" ? undefined : department);
   let tasks;
   if (role === "admin") tasks = await DB.getAssignedTasks({});
   else if (role === "agent") tasks = await DB.getAssignedTasks({ assigned_to: id });
   else tasks = await DB.getAssignedTasks({ department });
   res.json(tasks);
+}));
+
+// ---- Pool: available (unclaimed) recurring tasks for on-shift agents ----
+app.get("/api/tasks/pool", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const { role, department } = req.user;
+  if (role !== "agent") {
+    // Managers can view their department's pool (admin: all)
+    if (role === "admin") {
+      let all: any[] = [];
+      for (const d of ["Call Center", "Technical", "Complaints"]) { await ensureTodayInstances(d); all = all.concat(await DB.getPoolTasks(d)); }
+      return res.json(all);
+    }
+    await ensureTodayInstances(department);
+    return res.json(await DB.getPoolTasks(department));
+  }
+  await ensureTodayInstances(department);
+  res.json(await DB.getPoolTasks(department));
+}));
+
+// ---- Claim a pool task (agent must be on shift) ----
+app.post("/api/tasks/:id/claim", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role !== "agent") return res.status(403).json({ error: "Only agents can claim tasks." });
+  const me = await DB.getUserById(req.user.id);
+  if (!me || me.shift_status !== "on") return res.status(400).json({ error: "You must be On Shift to claim tasks." });
+  const task = await DB.getAssignedTaskById(req.params.id);
+  if (!task) return res.status(404).json({ error: "Task not found." });
+  if (task.department !== me.department) return res.status(403).json({ error: "This task is not for your department." });
+  const claimed = await DB.claimTask(req.params.id, me.id, me.full_name);
+  if (!claimed) return res.status(409).json({ error: "This task was already claimed by someone else." });
+  res.json(claimed);
 }));
 
 // Notification badge — agent's unseen tasks
@@ -826,6 +906,92 @@ app.delete("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res:
   }
   await DB.deleteAssignedTask(req.params.id);
   res.json({ message: "Task deleted." });
+}));
+
+// ----------------------------------------------------
+// Recurring task templates (managers; department-scoped)
+// ----------------------------------------------------
+app.get("/api/recurring", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+  const tpls = req.user.role === "admin" ? await DB.getRecurringTemplates({}) : await DB.getRecurringTemplates({ department: req.user.department });
+  res.json(tpls);
+}));
+
+app.post("/api/recurring", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+  const { title, description, priority, recurrence_type, days_of_week, due_time, assign_mode } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: "Task is required." });
+  let department = req.user.department;
+  if (req.user.role === "admin" && req.body.department) department = req.body.department;
+  if (!department) return res.status(400).json({ error: "Department is required." });
+  if ((recurrence_type === "weekly" || recurrence_type === "weekdays") && !String(days_of_week || "").trim()) {
+    return res.status(400).json({ error: "Please choose at least one day of the week." });
+  }
+  const tpl = await DB.addRecurringTemplate({
+    id: "tpl-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+    title: title.trim(), description: description || undefined, department,
+    priority: priority || "Medium", recurrence_type: recurrence_type || "daily",
+    days_of_week: days_of_week || null, due_time: due_time || null,
+    assign_mode: assign_mode === "auto" ? "auto" : "pool", active: true,
+    created_by: req.user.id, created_by_name: req.user.full_name, created_at: new Date().toISOString(),
+  });
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+    category: department, department, action: "Create Recurring Task", related_ref: tpl.id, details: title.trim(),
+  });
+  res.status(201).json(tpl);
+}));
+
+app.put("/api/recurring/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+  const tpl = await DB.getRecurringTemplateById(req.params.id);
+  if (!tpl) return res.status(404).json({ error: "Template not found." });
+  if (req.user.role !== "admin" && tpl.department !== req.user.department) return res.status(403).json({ error: "Not authorized." });
+  const fields: any = {};
+  ["title", "description", "priority", "recurrence_type", "days_of_week", "due_time", "assign_mode", "active"].forEach((k) => { if (req.body[k] !== undefined) fields[k] = req.body[k]; });
+  if (req.user.role === "admin" && req.body.department !== undefined) fields.department = req.body.department;
+  const updated = await DB.updateRecurringTemplate(req.params.id, fields);
+  res.json(updated);
+}));
+
+app.delete("/api/recurring/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+  const tpl = await DB.getRecurringTemplateById(req.params.id);
+  if (!tpl) return res.status(404).json({ error: "Template not found." });
+  if (req.user.role !== "admin" && tpl.department !== req.user.department) return res.status(403).json({ error: "Not authorized." });
+  await DB.deleteRecurringTemplate(req.params.id);
+  res.json({ message: "Template deleted." });
+}));
+
+// ----------------------------------------------------
+// Shift presence (On Shift / Out of Shift) + sessions for reports
+// ----------------------------------------------------
+app.get("/api/shift/status", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const me = await DB.getUserById(req.user.id);
+  res.json({ status: me?.shift_status || "off", since: (me as any)?.shift_started_at || null });
+}));
+
+app.post("/api/shift/start", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role !== "agent") return res.status(403).json({ error: "Only agents have shifts." });
+  const me = await DB.getUserById(req.user.id);
+  if (!me) return res.status(404).json({ error: "User not found." });
+  const now = new Date().toISOString();
+  if (me.shift_status === "on") return res.json({ status: "on", since: (me as any).shift_started_at });
+  await DB.setShiftStatus(me.id, "on", now);
+  await DB.startShiftSession({ id: "sh-" + Date.now() + "-" + Math.floor(Math.random() * 1000), user_id: me.id, user_name: me.full_name, department: me.department || "", started_at: now });
+  // Auto-assign any unassigned auto-mode tasks waiting in the pool to this newcomer if appropriate is left to next generation; just return.
+  res.json({ status: "on", since: now });
+}));
+
+app.post("/api/shift/end", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role !== "agent") return res.status(403).json({ error: "Only agents have shifts." });
+  const me = await DB.getUserById(req.user.id);
+  if (!me) return res.status(404).json({ error: "User not found." });
+  const now = new Date().toISOString();
+  if (me.shift_status === "on") await DB.endShiftSession(me.id, now);
+  await DB.setShiftStatus(me.id, "off", null);
+  res.json({ status: "off" });
+}));
+
+app.get("/api/shift/sessions", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+  const sessions = req.user.role === "admin" ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department: req.user.department });
+  res.json(sessions);
 }));
 
 // ----------------------------------------------------

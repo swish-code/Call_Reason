@@ -8,6 +8,8 @@ import OpsDashboard from "./components/OpsDashboard.tsx";
 import OpsReports from "./components/OpsReports.tsx";
 import HistoryLogs from "./components/HistoryLogs.tsx";
 import Tasks from "./components/Tasks.tsx";
+import RecurringTasks from "./components/RecurringTasks.tsx";
+import TaskPool from "./components/TaskPool.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -40,10 +42,13 @@ import {
   Sun,
   Moon,
   Bell,
-  ClipboardCheck
+  ClipboardCheck,
+  Repeat,
+  Inbox,
+  Power
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker";
+type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -110,6 +115,22 @@ export default function App() {
   }, [currentUser]);
 
   const openTasks = () => { setActivePage("tasks"); if (currentUser?.role === "agent") { setUnseenTasks(0); prevUnseenRef.current = 0; } };
+
+  // Shift presence (agents): On Shift / Out of Shift
+  const [shiftStatus, setShiftStatus] = useState<"on" | "off">("off");
+  const [shiftBusy, setShiftBusy] = useState(false);
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== "agent") return;
+    apiFetch("/api/shift/status").then((r) => r.ok ? r.json() : null).then((d) => { if (d) setShiftStatus(d.status === "on" ? "on" : "off"); }).catch(() => {});
+  }, [currentUser]);
+  const toggleShift = async () => {
+    if (shiftBusy) return;
+    setShiftBusy(true);
+    const next = shiftStatus === "on" ? "off" : "on";
+    const r = await apiFetch(`/api/shift/${next === "on" ? "start" : "end"}`, { method: "POST" });
+    setShiftBusy(false);
+    if (r.ok) setShiftStatus(next);
+  };
 
   // Login inputs
   const [email, setEmail] = useState("");
@@ -412,6 +433,21 @@ export default function App() {
               </span>}
             </button>
 
+            {/* Available Tasks (pool) — agents only */}
+            {currentUser?.role === "agent" && (
+              <button
+                onClick={() => setActivePage("pool")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "pool"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <Inbox className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Available Tasks</span>}
+              </button>
+            )}
+
             {/* Task Tracker — managers only */}
             {currentUser?.role !== "agent" && (
               <button
@@ -424,6 +460,21 @@ export default function App() {
               >
                 <ClipboardList className="w-4 h-4 shrink-0" />
                 {sidebarOpen && <span className="truncate">Task Tracker</span>}
+              </button>
+            )}
+
+            {/* Recurring Tasks — managers only */}
+            {currentUser?.role !== "agent" && (
+              <button
+                onClick={() => setActivePage("recurring")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "recurring"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <Repeat className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Recurring Tasks</span>}
               </button>
             )}
 
@@ -528,6 +579,8 @@ export default function App() {
               {activePage === "history" && "History Logs — Audit Trail"}
               {activePage === "tasks" && (currentUser.role === "agent" ? "My Tasks" : "Assign Tasks")}
               {activePage === "tracker" && "Task Tracker"}
+              {activePage === "recurring" && "Recurring Tasks"}
+              {activePage === "pool" && "Available Tasks"}
             </h1>
           </div>
 
@@ -537,6 +590,23 @@ export default function App() {
               <UserCheck className="w-3.5 h-3.5" />
               <span>Logged in as: <strong>{getLocalizedRole(currentUser.role)}</strong></span>
             </div>
+
+            {currentUser.role === "agent" && (
+              <button
+                onClick={toggleShift}
+                disabled={shiftBusy}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-[11px] font-extrabold border transition active:scale-95 disabled:opacity-60 ${
+                  shiftStatus === "on"
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                    : "bg-[var(--surface)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--heading)]"
+                }`}
+                title={shiftStatus === "on" ? "You are On Shift — click to end" : "You are Out of Shift — click to start"}
+              >
+                <Power className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{shiftStatus === "on" ? "On Shift" : "Out of Shift"}</span>
+                <span className={`w-2 h-2 rounded-full ${shiftStatus === "on" ? "bg-emerald-400 animate-pulse" : "bg-[var(--muted)]"}`}></span>
+              </button>
+            )}
 
             {currentUser.role === "agent" && (
               <button
@@ -583,6 +653,12 @@ export default function App() {
           )}
           {activePage === "tracker" && currentUser.role !== "agent" && (
             <Tasks currentUser={currentUser} mode="tracker" />
+          )}
+          {activePage === "recurring" && currentUser.role !== "agent" && (
+            <RecurringTasks currentUser={currentUser} />
+          )}
+          {activePage === "pool" && currentUser.role === "agent" && (
+            <TaskPool currentUser={currentUser} shiftStatus={shiftStatus} />
           )}
           {activePage === "users" && (
             <UsersManagement currentUser={currentUser} />

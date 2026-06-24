@@ -66,6 +66,8 @@ export interface User {
   team?: Team; // Legacy team field (kept for backward compatibility)
   department?: Department; // Department for the Operations & Logs system
   status: "Active" | "Inactive";
+  shift_status?: "on" | "off"; // Agent shift presence
+  shift_started_at?: string | null;
   created_at: string;
   updated_at: string;
   created_by?: string | null;
