@@ -559,6 +559,9 @@ app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =
   const body = req.body;
   if (role === "supervisor") return res.status(403).json({ error: "Supervisors have view & export access only." });
   if (!body.activity_type) return res.status(400).json({ error: "Activity type is required." });
+  if (["Completed", "Solved"].includes(body.status) && Number(body.duration_seconds) <= 0) {
+    return res.status(400).json({ error: "Time spent is required to complete a task." });
+  }
 
   let log_type: string, dept: string, agent_id: string, agent_name: string;
   if (role === "agent") {
@@ -647,6 +650,12 @@ app.put("/api/logs/:id/progress", authenticateJWT, asyncHandler(async (req: any,
   if (req.body.status !== undefined) fields.status = req.body.status;
   if (req.body.duration_seconds !== undefined) fields.duration_seconds = Math.max(0, Math.round(Number(req.body.duration_seconds) || 0));
   if (Object.keys(fields).length === 0) return res.status(400).json({ error: "Nothing to update." });
+
+  const finalStatus = fields.status ?? log.status;
+  const finalDuration = fields.duration_seconds ?? log.duration_seconds ?? 0;
+  if (["Completed", "Solved"].includes(finalStatus || "") && Number(finalDuration) <= 0) {
+    return res.status(400).json({ error: "Time spent is required to complete a task." });
+  }
 
   const updated = await DB.updateLog(req.params.id, fields);
   await DB.addAuditLog({

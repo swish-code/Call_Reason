@@ -105,6 +105,9 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     setError("");
     if (!activity) return setError("Please select an activity type.");
     if (cfg.statusKey && !status) return setError("Please select a status.");
+    if (["Completed", "Solved"].includes(status) && (!durationMin || Number(durationMin) <= 0)) {
+      return setError("Please enter the time spent before marking the task as Completed.");
+    }
 
     const payload: any = { activity_type: activity };
     if (cfg.statusKey) payload.status = status;

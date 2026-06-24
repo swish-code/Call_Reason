@@ -33,6 +33,10 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   };
   const saveProgress = async () => {
     if (!progressLog) return;
+    if (pStatus === "Completed" && (!pMinutes || Number(pMinutes) <= 0)) {
+      alert("Please enter the time spent before completing the task.");
+      return;
+    }
     setPSaving(true);
     const res = await apiFetch(`/api/logs/${progressLog.id}/progress`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
