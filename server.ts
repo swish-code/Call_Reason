@@ -454,7 +454,7 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   let logs;
   if (role === "admin") {
     logs = await DB.getLogs({ log_type: typeFilter, department: (req.query.department as string) || undefined });
-  } else if (role === "leader") {
+  } else if (role === "leader" || role === "supervisor") {
     logs = await DB.getLogs({ department, log_type: typeFilter });
   } else {
     logs = await DB.getLogs({ agent_id: id, log_type: typeFilter });
@@ -467,7 +467,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const { role, id, department } = req.user;
   let logs;
   if (role === "admin") logs = await DB.getLogs({});
-  else if (role === "leader") logs = await DB.getLogs({ department });
+  else if (role === "leader" || role === "supervisor") logs = await DB.getLogs({ department });
   else logs = await DB.getLogs({ agent_id: id });
 
   const OPEN = ["Open"];
@@ -542,6 +542,7 @@ app.get("/api/logs/history", authenticateJWT, requireLeaderOrAdmin, asyncHandler
 app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, full_name, department } = req.user;
   const body = req.body;
+  if (role === "supervisor") return res.status(403).json({ error: "Supervisors have view & export access only." });
   if (!body.activity_type) return res.status(400).json({ error: "Activity type is required." });
 
   let log_type: string, dept: string, agent_id: string, agent_name: string;

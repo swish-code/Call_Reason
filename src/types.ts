@@ -1,4 +1,4 @@
-export type UserRole = "agent" | "leader" | "admin";
+export type UserRole = "agent" | "leader" | "supervisor" | "admin";
 
 // Organizational team an employee belongs to (separate from the permission role)
 export type Team = "Complain Team" | "Call Center" | "Technical Team" | "Team Leader";

@@ -71,7 +71,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
     downloadCSV(headers, rows, `Logs_${new Date().toISOString().split("T")[0]}`);
   };
 
-  const title = isAgent ? "My Logs" : currentUser.role === "leader" ? "Department Logs" : "All Logs";
+  const title = isAgent ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs";
   const statusBadge = (s?: string) => {
     if (s === "Completed" || s === "Solved") return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
     if (s === "In Progress" || s === "Waiting Feedback") return "bg-amber-500/10 text-amber-400 border border-amber-500/20";

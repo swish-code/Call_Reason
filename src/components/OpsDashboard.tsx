@@ -110,7 +110,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     <div className="space-y-8 animate-fade-in text-[#e4e4e7]">
       {/* Banner */}
       <div className="bg-gradient-to-r from-[#121214] via-[#1c1c1f] to-[#0a0a0b] border border-[#27272a] p-6 md:p-8 rounded-3xl shadow-xl">
-        <span className="bg-blue-950/45 text-blue-400 text-xs font-bold px-3 py-1 rounded-full border border-blue-500/30">{isAgent ? "Agent Dashboard" : currentUser.role === "leader" ? "Team Leader Dashboard" : "Admin Dashboard"}</span>
+        <span className="bg-blue-950/45 text-blue-400 text-xs font-bold px-3 py-1 rounded-full border border-blue-500/30">{isAgent ? "Agent Dashboard" : currentUser.role === "leader" ? "Team Leader Dashboard" : currentUser.role === "supervisor" ? "Supervisor Dashboard" : "Admin Dashboard"}</span>
         <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight mt-2">Welcome, {currentUser.name || currentUser.full_name}</h1>
         <p className="text-[#71717a] text-sm mt-1 font-light">{d.department ? `Department: ${d.department}` : "All departments"}</p>
       </div>

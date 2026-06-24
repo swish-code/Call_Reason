@@ -3,11 +3,14 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 
 // A single "User Type" encodes role + department for account creation
-const USER_TYPES: { label: string; role: "agent" | "leader" | "admin"; department: string }[] = [
+const USER_TYPES: { label: string; role: "agent" | "leader" | "supervisor" | "admin"; department: string }[] = [
   { label: "Call Center Agent", role: "agent", department: "Call Center" },
   { label: "Call Center Team Leader", role: "leader", department: "Call Center" },
   { label: "Technical Agent", role: "agent", department: "Technical" },
   { label: "Complaint Team Agent", role: "agent", department: "Complaints" },
+  { label: "Supervisor Call Center", role: "supervisor", department: "Call Center" },
+  { label: "Supervisor Complaint", role: "supervisor", department: "Complaints" },
+  { label: "Supervisor Technical", role: "supervisor", department: "Technical" },
   { label: "System Admin", role: "admin", department: "Call Center" },
 ];
 
@@ -17,7 +20,7 @@ const userTypeLabel = (u: User): string => {
   return m ? m.label : "Call Center Agent";
 };
 
-const resolveUserType = (label: string, existing?: User | null): { role: "agent" | "leader" | "admin"; department: string; team: string } => {
+const resolveUserType = (label: string, existing?: User | null): { role: "agent" | "leader" | "supervisor" | "admin"; department: string; team: string } => {
   if (label === "System Admin") return { role: "admin", department: existing?.department || "Call Center", team: "Team Leader" };
   const t = USER_TYPES.find((x) => x.label === label) || USER_TYPES[0];
   const team = t.role === "leader" ? "Team Leader" : t.department === "Complaints" ? "Complain Team" : t.department === "Technical" ? "Technical Team" : "Call Center";
@@ -220,12 +223,14 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const getRoleBadgeColor = (r: string) => {
     if (r === "admin") return "bg-rose-500/10 text-rose-400 border border-rose-500/20";
     if (r === "leader") return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+    if (r === "supervisor") return "bg-purple-500/10 text-purple-400 border border-purple-500/20";
     return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
   };
 
   const getRoleLabel = (r: string) => {
     if (r === "admin") return "Admin";
     if (r === "leader") return "Team Leader";
+    if (r === "supervisor") return "Supervisor";
     return "Support Agent";
   };
 

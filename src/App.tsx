@@ -233,6 +233,7 @@ export default function App() {
     switch (role) {
       case "admin": return "System Admin (Admin)";
       case "leader": return "Team Leader (TL)";
+      case "supervisor": return "Supervisor";
       default: return "Support Agent (Agent)";
     }
   };
@@ -290,17 +291,20 @@ export default function App() {
               {sidebarOpen && <span className="truncate">Dashboard</span>}
             </button>
 
-            <button
-              onClick={() => setActivePage("newlog")}
-              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "newlog"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
-              }`}
-            >
-              <FilePlus2 className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">New Log</span>}
-            </button>
+            {/* New Log: not for Supervisors (view-only) */}
+            {currentUser?.role !== "supervisor" && (
+              <button
+                onClick={() => setActivePage("newlog")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "newlog"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                }`}
+              >
+                <FilePlus2 className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">New Log</span>}
+              </button>
+            )}
 
             <button
               onClick={() => setActivePage("logs")}
@@ -311,7 +315,7 @@ export default function App() {
               }`}
             >
               <ClipboardList className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "leader" ? "Department Logs" : "All Logs"}</span>}
+              {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs"}</span>}
             </button>
 
             {/* Reports limited to Admin & TL */}
@@ -329,8 +333,8 @@ export default function App() {
               </button>
             )}
 
-            {/* History Logs (audit) limited to Admin & TL */}
-            {currentUser?.role !== "agent" && (
+            {/* History Logs (audit) limited to Admin & Team Leader */}
+            {(currentUser?.role === "admin" || currentUser?.role === "leader") && (
               <button
                 onClick={() => setActivePage("history")}
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
