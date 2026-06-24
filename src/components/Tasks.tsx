@@ -8,10 +8,17 @@ interface TasksProps {
   onSeen?: () => void;
 }
 
+// Each department's task options come from its own activity list
+const DEPT_ACTIVITY_KEY: Record<string, string> = {
+  "Call Center": "cc_activity",
+  "Technical": "tech_activity",
+  "Complaints": "complaint_activity",
+};
+
 export default function Tasks({ currentUser, onSeen }: TasksProps) {
   const isManager = currentUser.role !== "agent";
   const [tasks, setTasks] = useState<AssignedTask[]>([]);
-  const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; full_name: string; department?: string }[]>([]);
   const [taskTypes, setTaskTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -34,11 +41,18 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
 
+  const loadActivities = (dept?: string) => {
+    const key = DEPT_ACTIVITY_KEY[dept || ""];
+    if (!key) { setTaskTypes([]); return; }
+    apiFetch(`/api/options/${key}`).then((r) => r.ok ? r.json() : []).then((opts: any[]) => setTaskTypes(opts.map((o) => o.label))).catch(() => setTaskTypes([]));
+  };
+
   useEffect(() => {
     fetchTasks();
     if (isManager) {
       apiFetch("/api/tasks/agents").then((r) => r.ok ? r.json() : []).then(setAgents).catch(() => {});
-      apiFetch("/api/options/task_types").then((r) => r.ok ? r.json() : []).then((opts: any[]) => setTaskTypes(opts.map((o) => o.label))).catch(() => {});
+      // Leaders/supervisors: their own department. Admin: loaded when an agent is picked.
+      if (currentUser.role !== "admin") loadActivities(currentUser.department);
     } else {
       // Agent: mark notifications as read
       apiFetch("/api/tasks/mark-seen", { method: "POST" }).then(() => onSeen && onSeen()).catch(() => {});
@@ -122,7 +136,7 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[var(--text)]">Assign To (agent):</label>
-              <select value={assignTo} onChange={(e) => setAssignTo(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+              <select value={assignTo} onChange={(e) => { const v = e.target.value; setAssignTo(v); if (currentUser.role === "admin") { setTitle(""); loadActivities(agents.find((x) => x.id === v)?.department); } }} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
                 <option value="">— Select agent —</option>
                 {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
               </select>

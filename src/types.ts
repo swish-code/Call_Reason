@@ -224,7 +224,6 @@ export const CONFIGURABLE_LISTS: { key: string; title: string; description: stri
   { key: "tl_activity", title: "Team Leader — Activities", description: "Team Leader log activity types" },
   { key: "cc_status", title: "Log Status (CC/Technical)", description: "Open / In Progress / Completed" },
   { key: "complaint_status", title: "Complaint Status", description: "Solved / Not Solved / Waiting Feedback" },
-  { key: "task_types", title: "Assignable Task Types", description: "Predefined tasks managers can assign to agents" },
 ];
 
 export interface DashboardStats {
