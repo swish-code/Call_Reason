@@ -12,6 +12,7 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
   const isManager = currentUser.role !== "agent";
   const [tasks, setTasks] = useState<AssignedTask[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
+  const [taskTypes, setTaskTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -37,6 +38,7 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
     fetchTasks();
     if (isManager) {
       apiFetch("/api/tasks/agents").then((r) => r.ok ? r.json() : []).then(setAgents).catch(() => {});
+      apiFetch("/api/options/task_types").then((r) => r.ok ? r.json() : []).then((opts: any[]) => setTaskTypes(opts.map((o) => o.label))).catch(() => {});
     } else {
       // Agent: mark notifications as read
       apiFetch("/api/tasks/mark-seen", { method: "POST" }).then(() => onSeen && onSeen()).catch(() => {});
@@ -75,6 +77,9 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
     if (res.ok) fetchTasks(); else { const d = await res.json(); alert(d.error || "Failed."); }
   };
   const fmtDur = (s?: number) => { const x = Number(s || 0); if (!x) return "—"; const h = Math.floor(x / 3600), m = Math.round((x % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
+
+  // Agents see only their active tasks; completed ones move to My Logs
+  const visibleTasks = isManager ? tasks : tasks.filter((t) => t.status !== "Completed");
   const remove = async (t: AssignedTask) => {
     if (!confirm(`Delete task "${t.title}"?`)) return;
     const res = await apiFetch(`/api/tasks/${t.id}`, { method: "DELETE" });
@@ -96,7 +101,7 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
           <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl"><ClipboardCheck className="w-6 h-6" /></div>
           <div>
             <h2 className="text-md font-extrabold text-[var(--heading)]">{isManager ? "Assign Tasks" : "My Tasks"}</h2>
-            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{isManager ? "Create and track tasks for your team." : "Tasks assigned to you."} · {tasks.length} task(s)</p>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{isManager ? "Create and track tasks for your team." : "Tasks assigned to you."} · {visibleTasks.length} task(s)</p>
           </div>
         </div>
         <button onClick={fetchTasks} className="p-3 text-[var(--text)] hover:text-[var(--heading)] bg-[var(--bg)] hover:bg-[var(--surface-2)] border border-[var(--border)] rounded-2xl active:scale-95 transition"><RefreshCw className="w-4 h-4" /></button>
@@ -109,8 +114,11 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
           {formMsg && <div className="text-xs text-rose-400 font-bold flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> {formMsg}</div>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Task Title:</label>
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Follow up order #1234" className={inputCls} />
+              <label className="text-xs font-bold text-[var(--text)]">Task:</label>
+              <select value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                <option value="">— Select a task —</option>
+                {taskTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
+              </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[var(--text)]">Assign To (agent):</label>
@@ -144,11 +152,11 @@ export default function Tasks({ currentUser, onSeen }: TasksProps) {
 
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[160px]"><div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
-      ) : tasks.length === 0 ? (
+      ) : visibleTasks.length === 0 ? (
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-10 text-center text-[var(--muted)] text-sm">{isManager ? "No tasks assigned yet." : "No tasks assigned to you yet."}</div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {tasks.map((t) => (
+          {visibleTasks.map((t) => (
             <div key={t.id} className={`bg-[var(--surface)] border rounded-3xl p-5 shadow-lg space-y-3 ${overdue(t) ? "border-rose-500/40" : "border-[var(--border)]"}`}>
               <div className="flex items-start justify-between gap-2">
                 <div>

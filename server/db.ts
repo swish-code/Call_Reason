@@ -89,6 +89,7 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   tl_activity: ["Agent Coaching", "One-to-One Session", "Monthly Meeting", "Floor Task", "Validation Quality Review", "Agent Mistake Review", "Performance Feedback", "Other"],
   cc_status: ["Open", "In Progress", "Completed"],
   complaint_status: ["Solved", "Not Solved", "Waiting Feedback"],
+  task_types: ["Follow Up Order", "Call Customer", "Handle Complaint", "Quality Check", "Coaching Session", "Data Entry", "Branch Visit", "Other"],
 };
 
 const SEED_CATEGORIES: Category[] = [

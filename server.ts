@@ -779,8 +779,23 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
   if (fields.status === "Completed" && Number(finalDuration) <= 0) {
     return res.status(400).json({ error: "Time spent is required to complete the task." });
   }
-  if (fields.status === "Completed" && !task.completed_at) fields.completed_at = new Date().toISOString();
+  const newlyCompleted = fields.status === "Completed" && task.status !== "Completed";
+  if (newlyCompleted && !task.completed_at) fields.completed_at = new Date().toISOString();
   const updated = await DB.updateAssignedTask(req.params.id, fields);
+
+  // On completion, record a Log for the assigned agent (shows in My Logs + Dashboard)
+  if (newlyCompleted) {
+    const logType = DEPT_TO_LOGTYPE[task.department || ""] || "call_center";
+    const now = new Date().toISOString();
+    await DB.addLog({
+      log_type: logType as any, department: task.department, activity_type: task.title,
+      status: logType === "complaint" ? "Solved" : "Completed",
+      agent_id: task.assigned_to, agent_name: task.assigned_to_name,
+      notes: task.description ? `[Assigned task] ${task.description}` : "[Assigned task]",
+      duration_seconds: Number(finalDuration), created_at: now, updated_at: now, created_by: id,
+    });
+  }
+
   await DB.addAuditLog({
     operator_id: id, operator_name: req.user.full_name, operator_role: role,
     category: task.department, department: task.department, action: "Update Task", related_ref: task.id,
