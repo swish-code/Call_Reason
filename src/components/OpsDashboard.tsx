@@ -19,6 +19,10 @@ interface DashData {
   daily: number;
   weekly: number;
   monthly: number;
+  todayTasks: number;
+  weekTasks: number;
+  todaySeconds: number;
+  weekSeconds: number;
   byActivity: { name: string; count: number }[];
   byDepartment: { name: string; count: number }[];
   agentProductivity: { name: string; count: number }[];
@@ -106,6 +110,25 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     );
   };
 
+  const ProductivityBar = ({ seconds, capacity, label }: { seconds: number; capacity: number; label: string }) => {
+    const pct = capacity ? Math.round((seconds / capacity) * 100) : 0;
+    const tone = pct >= 85 ? "from-emerald-500 to-emerald-400" : pct >= 50 ? "from-blue-600 to-blue-400" : "from-amber-500 to-amber-400";
+    return (
+      <div className="space-y-2">
+        <div className="flex justify-between items-baseline text-xs font-bold">
+          <span className="text-[var(--text)]">{label}</span>
+          <span className="text-[var(--heading)] font-mono">{fmtDur(seconds)} / {fmtDur(capacity)} · {pct}%</span>
+        </div>
+        <div className="w-full bg-[var(--surface-2)] border border-[var(--border)] h-3 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full bg-gradient-to-r ${tone}`} style={{ width: `${Math.min(pct, 100)}%` }}></div>
+        </div>
+      </div>
+    );
+  };
+
+  const DAY_CAP = 8 * 3600; // 8 working hours/day
+  const WEEK_CAP = 6 * 8 * 3600; // 6 working days/week
+
   return (
     <div className="space-y-8 animate-fade-in text-[var(--text)]">
       {/* Banner */}
@@ -117,23 +140,30 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
 
       {isAgent ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-            <Card label="My Open Tasks" value={d.open} icon={FolderOpen} tone="text-blue-400" />
-            <Card label="My Pending Tasks" value={d.pending} icon={Clock} tone="text-amber-400" />
-            <Card label="My Completed Tasks" value={d.completed} icon={CheckCircle2} tone="text-emerald-400" />
+          {/* Today */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-lg space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-md font-extrabold text-[var(--heading)] flex items-center gap-2"><CalendarDays className="w-5 h-5 text-blue-400" /> Today</h2>
+              <span className="text-[11px] text-[var(--muted)] font-bold">Working day · 8h</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Card label="Tasks" value={d.todayTasks} icon={CheckCircle2} tone="text-blue-400" />
+              <Card label="Time Worked" value={fmtDur(d.todaySeconds)} icon={Clock} tone="text-emerald-400" />
+            </div>
+            <ProductivityBar seconds={d.todaySeconds} capacity={DAY_CAP} label="Productivity (worked / 8h)" />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-            <Card label="Daily Activities" value={d.daily} icon={CalendarDays} tone="text-blue-400" />
-            <Card label="Weekly Activities" value={d.weekly} icon={CalendarDays} tone="text-purple-400" />
-            <Card label="Monthly Activities" value={d.monthly} icon={CalendarDays} tone="text-sky-400" />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-            <Card label="Avg Time / Task" value={fmtDur(d.avgHandlingSeconds)} icon={Timer} tone="text-emerald-400" />
-            <Card label="Total Time Logged" value={fmtDur(d.totalHandlingSeconds)} icon={Clock} tone="text-sky-400" />
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <Trend />
-            <BarList title="My Activities by Type" data={d.byActivity} color="bg-blue-500" icon={ClipboardList} />
+
+          {/* This week */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-lg space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-md font-extrabold text-[var(--heading)] flex items-center gap-2"><CalendarDays className="w-5 h-5 text-purple-400" /> This Week</h2>
+              <span className="text-[11px] text-[var(--muted)] font-bold">6 working days · 48h</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Card label="Tasks" value={d.weekTasks} icon={CheckCircle2} tone="text-blue-400" />
+              <Card label="Time Worked" value={fmtDur(d.weekSeconds)} icon={Clock} tone="text-emerald-400" />
+            </div>
+            <ProductivityBar seconds={d.weekSeconds} capacity={WEEK_CAP} label="Productivity (worked / 48h)" />
           </div>
         </>
       ) : (

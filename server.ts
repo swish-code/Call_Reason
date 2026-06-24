@@ -503,10 +503,20 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     return Object.keys(m).map((name) => ({ name, count: m[name] }));
   })();
 
-  // Handling time metrics (from the live task timer)
-  const timed = logs.filter((l) => Number((l as any).duration_seconds) > 0);
-  const totalHandlingSeconds = timed.reduce((a, l) => a + Number((l as any).duration_seconds || 0), 0);
+  // Handling time metrics (from the logged time spent)
+  const dur = (l: any) => Number(l.duration_seconds || 0);
+  const timed = logs.filter((l) => dur(l) > 0);
+  const totalHandlingSeconds = timed.reduce((a, l) => a + dur(l), 0);
   const avgHandlingSeconds = timed.length ? Math.round(totalHandlingSeconds / timed.length) : 0;
+
+  // Productivity windows (today = calendar day, week = last 7 days)
+  const todayStr = new Date(now).toISOString().split("T")[0];
+  const todayLogs = logs.filter((l) => (l.created_at || "").split("T")[0] === todayStr);
+  const weekLogs = logs.filter((l) => ts(l) >= since(7));
+  const todayTasks = todayLogs.length;
+  const weekTasks = weekLogs.length;
+  const todaySeconds = todayLogs.reduce((a, l) => a + dur(l), 0);
+  const weekSeconds = weekLogs.reduce((a, l) => a + dur(l), 0);
 
   res.json({
     role,
@@ -514,6 +524,10 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     totalLogs: logs.length,
     totalHandlingSeconds,
     avgHandlingSeconds,
+    todayTasks,
+    weekTasks,
+    todaySeconds,
+    weekSeconds,
     open: logs.filter((l) => inSet(l.status, OPEN)).length,
     pending: logs.filter((l) => inSet(l.status, PENDING)).length,
     completed: logs.filter((l) => inSet(l.status, DONE)).length,
