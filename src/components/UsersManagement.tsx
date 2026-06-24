@@ -239,11 +239,11 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-3">
+          <h2 className="text-xl font-bold text-[var(--heading)] flex items-center gap-3">
             <Shield className="w-6 h-6 text-blue-500" />
             User Directory & Access Authorization
           </h2>
-          <p className="text-xs text-zinc-500 mt-1">
+          <p className="text-xs text-[var(--muted)] mt-1">
             Provision employee profiles, define security clearance ranks, suspend/activate records, and enforce credential resets.
           </p>
         </div>
@@ -273,38 +273,38 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       )}
 
       {loading ? (
-        <div className="bg-[#121214] border border-[#27272a] rounded-3xl p-12 text-center text-zinc-500 text-xs font-medium space-y-3">
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-12 text-center text-[var(--muted)] text-xs font-medium space-y-3">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
           <p>Fetching security roster records...</p>
         </div>
       ) : (
-        <div className="bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-xl">
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-xl">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-[#27272a] bg-[#1c1c1f]/50">
-                  <th className="px-6 py-4 text-xs font-bold text-zinc-400">Legal Identity</th>
-                  <th className="px-6 py-4 text-xs font-bold text-zinc-400">Username</th>
-                  <th className="px-6 py-4 text-xs font-bold text-zinc-400">Email Address</th>
-                  <th className="px-6 py-4 text-xs font-bold text-zinc-400">System Role</th>
-                  <th className="px-6 py-4 text-xs font-bold text-zinc-400">Access Status</th>
-                  <th className="px-6 py-4 text-xs font-bold text-zinc-400 text-center">Administrative Actions</th>
+                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]/50">
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--muted)]">Legal Identity</th>
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--muted)]">Username</th>
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--muted)]">Email Address</th>
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--muted)]">System Role</th>
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--muted)]">Access Status</th>
+                  <th className="px-6 py-4 text-xs font-bold text-[var(--muted)] text-center">Administrative Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#27272a]/40">
+              <tbody className="divide-y divide-[var(--border)]/40">
                 {users.map((user) => (
-                  <tr key={user.id} className="hover:bg-[#1c1c1f]/20 transition duration-100">
-                    <td className="px-6 py-4 text-xs font-medium text-white flex items-center gap-3">
+                  <tr key={user.id} className="hover:bg-[var(--surface-2)]/20 transition duration-100">
+                    <td className="px-6 py-4 text-xs font-medium text-[var(--heading)] flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 font-bold shrink-0">
                         {(user.full_name || user.name || "?").substring(0, 2)}
                       </div>
                       <div>
-                        <div className="font-bold text-zinc-200">{user.full_name || user.name}</div>
-                        <div className="text-[10px] text-zinc-500 mt-0.5">UID: {user.id}</div>
+                        <div className="font-bold text-[var(--heading)]">{user.full_name || user.name}</div>
+                        <div className="text-[10px] text-[var(--muted)] mt-0.5">UID: {user.id}</div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-xs text-zinc-300 font-mono" dir="ltr">{user.username}</td>
-                    <td className="px-6 py-4 text-xs text-zinc-300 font-mono" dir="ltr">{user.email}</td>
+                    <td className="px-6 py-4 text-xs text-[var(--text)] font-mono" dir="ltr">{user.username}</td>
+                    <td className="px-6 py-4 text-xs text-[var(--text)] font-mono" dir="ltr">{user.email}</td>
                     <td className="px-6 py-4 text-xs">
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${getRoleBadgeColor(user.role)}`}>
                         {getRoleLabel(user.role)}
@@ -313,7 +313,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                     </td>
                     <td className="px-6 py-4 text-xs">
                       {user.status === "Inactive" ? (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700 flex items-center gap-1 w-max">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-[var(--surface-2)] text-[var(--muted)] border border-[var(--border)] flex items-center gap-1 w-max">
                           <UserX className="w-3 h-3" />
                           Inactive
                         </span>
@@ -328,7 +328,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => handleOpenEdit(user)}
-                          className="p-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 rounded-lg transition text-xs flex items-center gap-1"
+                          className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-zinc-700 text-[var(--text)] border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1"
                           title="Modify Profile"
                         >
                           <Edit className="w-3.5 h-3.5" />
@@ -337,7 +337,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                         
                         <button
                           onClick={() => handleOpenReset(user)}
-                          className="p-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-amber-500/10 hover:text-amber-400 hover:border-amber-500/20 text-zinc-300 border border-zinc-700 rounded-lg transition text-xs flex items-center gap-1"
+                          className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-amber-500/10 hover:text-amber-400 hover:border-amber-500/20 text-[var(--text)] border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1"
                           title="Reset Credentials"
                         >
                           <Key className="w-3.5 h-3.5" />
@@ -347,7 +347,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                         <button
                           onClick={() => handleDeleteUser(user.id, user.username)}
                           disabled={user.id === currentUser.id}
-                          className="p-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-rose-500/10 text-zinc-300 hover:text-rose-400 hover:border-rose-500/20 border border-zinc-700 rounded-lg transition text-xs flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none"
+                          className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-rose-500/10 text-[var(--text)] hover:text-rose-400 hover:border-rose-500/20 border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none"
                           title="Permanently Drop Record"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -366,13 +366,13 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       {/* CREATE & EDIT MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs font-sans">
-          <div className="w-full max-w-md bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl relative p-6 space-y-4">
+          <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-2xl relative p-6 space-y-4">
             
-            <div className="flex items-center justify-between border-b border-[#27272a] pb-3">
-              <h3 className="text-sm font-bold text-white">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-sm font-bold text-[var(--heading)]">
                 {editingUser ? `Edit Profile: ${editingUser.username}` : "Create New User Account"}
               </h3>
-              <button onClick={() => setIsModalOpen(false)} className="p-1.5 hover:bg-zinc-800 text-zinc-400 rounded-lg transition">
+              <button onClick={() => setIsModalOpen(false)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -386,61 +386,61 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
 
             <form onSubmit={handleSaveUser} className="space-y-3">
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-zinc-400 block">Full Legal Name:</label>
+                <label className="text-[11px] font-bold text-[var(--muted)] block">Full Legal Name:</label>
                 <input
                   type="text"
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="e.g. John Doe"
-                  className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-zinc-400 block">Username:</label>
+                <label className="text-[11px] font-bold text-[var(--muted)] block">Username:</label>
                 <input
                   type="text"
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="sales_agent"
-                  className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono text-left"
+                  className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none font-mono text-left"
                   dir="ltr"
                 />
               </div>
 
               {!editingUser && (
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-zinc-400 block">Default Password:</label>
+                  <label className="text-[11px] font-bold text-[var(--muted)] block">Default Password:</label>
                   <input
                     type="password"
                     required={!editingUser}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none text-left"
+                    className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none text-left"
                     dir="ltr"
                   />
                 </div>
               )}
 
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-zinc-400 block">User Type:</label>
+                <label className="text-[11px] font-bold text-[var(--muted)] block">User Type:</label>
                 <select
                   value={userType}
                   onChange={(e) => setUserType(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 >
                   {USER_TYPES.map((t) => (<option key={t.label} value={t.label}>{t.label}</option>))}
                 </select>
               </div>
 
-              <div className="pt-4 border-t border-[#27272a] flex items-center justify-end gap-2 text-xs">
+              <div className="pt-4 border-t border-[var(--border)] flex items-center justify-end gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl transition font-medium"
+                  className="px-4 py-2 bg-[var(--surface-2)] hover:bg-zinc-700 text-[var(--text)] rounded-xl transition font-medium"
                 >
                   Cancel
                 </button>
@@ -460,14 +460,14 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       {/* RESET PASSWORD MODAL */}
       {isResetOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs font-sans">
-          <div className="w-full max-w-sm bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-2xl relative p-6 space-y-4">
+          <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-2xl relative p-6 space-y-4">
             
-            <div className="flex items-center justify-between border-b border-[#27272a] pb-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-sm font-bold text-[var(--heading)] flex items-center gap-2">
                 <Key className="w-4 h-4 text-amber-400" />
                 Change Password credentials: {resettingUser?.username}
               </h3>
-              <button onClick={() => setIsResetOpen(false)} className="p-1.5 hover:bg-zinc-800 text-zinc-400 rounded-lg transition">
+              <button onClick={() => setIsResetOpen(false)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -481,14 +481,14 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
 
             <form onSubmit={handleResetPassword} className="space-y-4">
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-zinc-400 block">Specified Pass-Credential:</label>
+                <label className="text-[11px] font-bold text-[var(--muted)] block">Specified Pass-Credential:</label>
                 <input
                   type="password"
                   required
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Type a highly secure complex phrase"
-                  className="w-full px-3 py-2.5 bg-[#1c1c1f] text-white border border-[#27272a] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none text-left"
+                  className="w-full px-3 py-2.5 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none text-left"
                   dir="ltr"
                 />
               </div>
@@ -497,7 +497,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                 <button
                   type="button"
                   onClick={() => setIsResetOpen(false)}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl transition font-medium"
+                  className="px-4 py-2 bg-[var(--surface-2)] hover:bg-zinc-700 text-[var(--text)] rounded-xl transition font-medium"
                 >
                   Cancel
                 </button>

@@ -35,7 +35,9 @@ import {
   ArrowRight,
   ShieldCheck,
   Zap,
-  BarChart2
+  BarChart2,
+  Sun,
+  Moon
 } from "lucide-react";
 
 type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history";
@@ -44,6 +46,17 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Theme (Light is the default)
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try { return (localStorage.getItem("swish-theme") as "light" | "dark") || "light"; } catch { return "light"; }
+  });
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark"); else root.classList.remove("dark");
+    try { localStorage.setItem("swish-theme", theme); } catch {}
+  }, [theme]);
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   // Login inputs
   const [email, setEmail] = useState("");
@@ -106,7 +119,7 @@ export default function App() {
   // Render Login page if not authenticated
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-[#050506] flex items-center justify-center p-4 sm:p-6 relative overflow-hidden font-sans select-none text-[#e4e4e7]">
+      <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center p-4 sm:p-6 relative overflow-hidden font-sans select-none text-[var(--text)]">
 
         {/* Animated ambient background */}
         <div className="absolute inset-0 pointer-events-none">
@@ -117,7 +130,15 @@ export default function App() {
           <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)", backgroundSize: "44px 44px" }}></div>
         </div>
 
-        <div className="w-full max-w-5xl grid lg:grid-cols-2 bg-[#0d0d0f]/80 backdrop-blur-2xl border border-white/10 rounded-[2rem] overflow-hidden shadow-2xl shadow-black/60 relative z-10 animate-fade-in">
+        <button
+          onClick={toggleTheme}
+          className="absolute top-5 right-5 z-20 p-2.5 bg-[var(--surface)]/80 backdrop-blur border border-[var(--border)] text-[var(--muted)] hover:text-[var(--heading)] rounded-xl transition active:scale-95"
+          title={theme === "dark" ? "Switch to Light mode" : "Switch to Dark mode"}
+        >
+          {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
+
+        <div className="w-full max-w-5xl grid lg:grid-cols-2 bg-[var(--surface)]/80 backdrop-blur-2xl border border-white/10 rounded-[2rem] overflow-hidden shadow-2xl shadow-black/60 relative z-10 animate-fade-in">
 
           {/* Left — brand / marketing panel */}
           <div className="hidden lg:flex flex-col justify-between p-10 relative bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 overflow-hidden">
@@ -155,14 +176,14 @@ export default function App() {
             {/* Mobile logo */}
             <div className="lg:hidden flex items-center gap-3 mb-8">
               <div className="w-12 h-12 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30">
-                <Building2 className="w-6 h-6 text-white stroke-[2.2]" />
+                <Building2 className="w-6 h-6 text-[var(--heading)] stroke-[2.2]" />
               </div>
-              <span className="text-lg font-black text-white tracking-tight">Swish Tasks</span>
+              <span className="text-lg font-black text-[var(--heading)] tracking-tight">Swish Tasks</span>
             </div>
 
             <div className="mb-8">
-              <h1 className="text-2xl font-black text-white tracking-tight">Welcome back</h1>
-              <p className="text-sm text-[#71717a] mt-1.5 font-light">Sign in to continue to your workspace.</p>
+              <h1 className="text-2xl font-black text-[var(--heading)] tracking-tight">Welcome back</h1>
+              <p className="text-sm text-[var(--muted)] mt-1.5 font-light">Sign in to continue to your workspace.</p>
             </div>
 
             <form onSubmit={handleLoginSubmit} className="space-y-5">
@@ -174,35 +195,35 @@ export default function App() {
               )}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-zinc-300 block">Username</label>
+                <label className="text-xs font-bold text-[var(--text)] block">Username</label>
                 <div className="relative">
-                  <UserIcon className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                  <UserIcon className="w-4 h-4 text-[var(--muted)] absolute left-4 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="Enter your username"
-                    className="w-full pl-11 pr-4 py-3.5 bg-[#16161a] text-white placeholder:text-zinc-600 border border-[#27272a] rounded-2xl text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
+                    className="w-full pl-11 pr-4 py-3.5 bg-[var(--surface-2)] text-[var(--heading)] placeholder:text-zinc-600 border border-[var(--border)] rounded-2xl text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
                     dir="ltr"
                   />
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-zinc-300 block">Password</label>
+                <label className="text-xs font-bold text-[var(--text)] block">Password</label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                  <Lock className="w-4 h-4 text-[var(--muted)] absolute left-4 top-1/2 -translate-y-1/2" />
                   <input
                     type={showPwd ? "text" : "password"}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-11 pr-11 py-3.5 bg-[#16161a] text-white placeholder:text-zinc-600 border border-[#27272a] rounded-2xl text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
+                    className="w-full pl-11 pr-11 py-3.5 bg-[var(--surface-2)] text-[var(--heading)] placeholder:text-zinc-600 border border-[var(--border)] rounded-2xl text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
                     dir="ltr"
                   />
-                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition" tabIndex={-1}>
+                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--text)] transition" tabIndex={-1}>
                     {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
@@ -239,15 +260,15 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0b] flex flex-col md:flex-row relative font-sans text-[#e4e4e7]">
+    <div className="min-h-screen bg-[var(--bg)] flex flex-col md:flex-row relative font-sans text-[var(--text)]">
       
       {/* ----------------------------------------------------
           Sidebar Menu navigation
           ---------------------------------------------------- */}
       <aside
-        className={`bg-[#121214] text-[#e4e4e7] z-40 flex flex-col justify-between transition-all duration-300 shrink-0 ${
+        className={`bg-[var(--surface)] text-[var(--text)] z-40 flex flex-col justify-between transition-all duration-300 shrink-0 ${
           sidebarOpen ? "w-64" : "w-0 md:w-20"
-        } overflow-hidden border-r border-[#27272a] h-screen fixed md:sticky top-0`}
+        } overflow-hidden border-r border-[var(--border)] h-screen fixed md:sticky top-0`}
       >
         <div className="flex flex-col space-y-8 p-4">
           
@@ -258,20 +279,20 @@ export default function App() {
             </div>
             {sidebarOpen && (
               <div className="truncate">
-                <h2 className="text-xs font-extrabold text-white leading-tight truncate">Swish Tasks</h2>
+                <h2 className="text-xs font-extrabold text-[var(--heading)] leading-tight truncate">Swish Tasks</h2>
                 <span className="text-[10px] text-blue-400 font-bold block mt-0.5 leading-none">Operations & Logs</span>
               </div>
             )}
           </div>
 
           {/* User Session Profile Card */}
-          <div className="bg-[#1c1c1f] border border-[#27272a] p-3 rounded-2xl flex items-center gap-2.5 overflow-hidden shrink-0">
+          <div className="bg-[var(--surface-2)] border border-[var(--border)] p-3 rounded-2xl flex items-center gap-2.5 overflow-hidden shrink-0">
             <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow shadow-blue-500/10">
               {currentUser.name.substring(0, 2)}
             </div>
             {sidebarOpen && (
               <div className="truncate text-left">
-                <h4 className="text-[11px] font-bold text-white truncate leading-tight">{currentUser.name}</h4>
+                <h4 className="text-[11px] font-bold text-[var(--heading)] truncate leading-tight">{currentUser.name}</h4>
                 <span className="text-[10px] text-emerald-400 font-bold block mt-0.5 leading-none">{getLocalizedRole(currentUser.role)}</span>
               </div>
             )}
@@ -284,7 +305,7 @@ export default function App() {
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                 activePage === "dashboard"
                   ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
               }`}
             >
               <BarChart3 className="w-4 h-4 shrink-0" />
@@ -298,7 +319,7 @@ export default function App() {
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                   activePage === "newlog"
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
                 }`}
               >
                 <FilePlus2 className="w-4 h-4 shrink-0" />
@@ -311,7 +332,7 @@ export default function App() {
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                 activePage === "logs"
                   ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
               }`}
             >
               <ClipboardList className="w-4 h-4 shrink-0" />
@@ -325,7 +346,7 @@ export default function App() {
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                   activePage === "reports"
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
                 }`}
               >
                 <FileText className="w-4 h-4 shrink-0" />
@@ -340,7 +361,7 @@ export default function App() {
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                   activePage === "history"
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
                 }`}
               >
                 <History className="w-4 h-4 shrink-0" />
@@ -355,7 +376,7 @@ export default function App() {
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                   activePage === "users"
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
                 }`}
               >
                 <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
@@ -370,7 +391,7 @@ export default function App() {
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
                   activePage === "configuration"
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[#71717a] hover:text-white hover:bg-[#1c1c1f]"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
                 }`}
               >
                 <SlidersHorizontal className="w-4 h-4 shrink-0" />
@@ -381,10 +402,10 @@ export default function App() {
         </div>
 
         {/* Logout bottom */}
-        <div className="p-4 border-t border-[#27272a]">
+        <div className="p-4 border-t border-[var(--border)]">
           <button
             onClick={handleLogout}
-            className="w-full py-3 px-3.5 rounded-xl text-xs font-bold text-[#71717a] hover:text-rose-400 hover:bg-rose-500/10 transition flex items-center gap-3 active:scale-95"
+            className="w-full py-3 px-3.5 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-rose-400 hover:bg-rose-500/10 transition flex items-center gap-3 active:scale-95"
           >
             <LogOut className="w-4 h-4 shrink-0" />
             {sidebarOpen && <span className="truncate">Log Out</span>}
@@ -398,18 +419,18 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         
         {/* Top Navbar Header */}
-        <header className="sticky top-0 bg-[#0a0a0b]/85 backdrop-blur-md border-b border-[#27272a] p-4 flex items-center justify-between z-30 print:hidden shadow-xs">
+        <header className="sticky top-0 bg-[var(--bg)]/85 backdrop-blur-md border-b border-[var(--border)] p-4 flex items-center justify-between z-30 print:hidden shadow-xs">
           
           <div className="flex items-center gap-3">
             {/* Toggle sidebar button */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-2 hover:bg-[#1c1c1f] rounded-xl transition active:scale-90"
+              className="p-2 hover:bg-[var(--surface-2)] rounded-xl transition active:scale-90"
             >
-              <Menu className="w-4 h-4 text-[#e4e4e7]" />
+              <Menu className="w-4 h-4 text-[var(--text)]" />
             </button>
 
-            <h1 className="text-xs md:text-sm font-extrabold text-[#e4e4e7]">
+            <h1 className="text-xs md:text-sm font-extrabold text-[var(--text)]">
               {activePage === "dashboard" && "Dashboard Overview"}
               {activePage === "reports" && "Reports & Export"}
               {activePage === "users" && "User and Access Role Management"}
@@ -422,14 +443,22 @@ export default function App() {
 
           <div className="flex items-center gap-3 text-xs">
             {/* Role indicator banner */}
-            <div className="hidden sm:flex items-center gap-1.5 bg-[#121214] text-blue-400 px-3.5 py-1.5 rounded-2xl border border-[#27272a]/80 font-bold">
+            <div className="hidden sm:flex items-center gap-1.5 bg-[var(--surface)] text-blue-400 px-3.5 py-1.5 rounded-2xl border border-[var(--border)]/80 font-bold">
               <UserCheck className="w-3.5 h-3.5" />
               <span>Logged in as: <strong>{getLocalizedRole(currentUser.role)}</strong></span>
             </div>
-            
+
+            <button
+              onClick={toggleTheme}
+              className="p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
+              title={theme === "dark" ? "Switch to Light mode" : "Switch to Dark mode"}
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+
             <button
               onClick={handleLogout}
-              className="p-2 bg-[#121214] hover:bg-rose-500/10 text-[#71717a] hover:text-rose-400 border border-[#27272a] rounded-xl transition active:scale-95"
+              className="p-2 bg-[var(--surface)] hover:bg-rose-500/10 text-[var(--muted)] hover:text-rose-400 border border-[var(--border)] rounded-xl transition active:scale-95"
               title="Quick Log Out"
             >
               <LogOut className="w-4.5 h-4.5 md:w-3.5 md:h-3.5" />

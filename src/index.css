@@ -6,25 +6,52 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-body {
-  font-family: var(--font-sans);
-  background-color: #0a0a0b;
-  color: #e4e4e7;
+/* ----- Theme palette (Light is the default) ----- */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --border: #e3e7ed;
+  --text: #374151;
+  --muted: #6b7280;
+  --heading: #0f172a;
+  --scroll-track: #eef1f5;
+  --scroll-thumb: #cbd2dc;
+  --scroll-thumb-hover: #aeb6c2;
 }
 
-/* Custom scrollbars for Dark Theme */
+/* Dark theme overrides */
+.dark {
+  --bg: #0a0a0b;
+  --surface: #121214;
+  --surface-2: #1c1c1f;
+  --border: #27272a;
+  --text: #e4e4e7;
+  --muted: #71717a;
+  --heading: #ffffff;
+  --scroll-track: #0a0a0b;
+  --scroll-thumb: #27272a;
+  --scroll-thumb-hover: #3f3f46;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+/* Custom scrollbars (theme-aware) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0a0b;
+  background: var(--scroll-track);
 }
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: var(--scroll-thumb);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: var(--scroll-thumb-hover);
 }
-

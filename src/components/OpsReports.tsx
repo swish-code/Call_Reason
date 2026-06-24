@@ -66,7 +66,7 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
     downloadCSV(headers, rows, `Operations_Report_${new Date().toISOString().split("T")[0]}`);
   };
 
-  const selCls = "px-3 py-2 bg-[#0a0a0b] text-zinc-300 border border-[#27272a] rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[#121214]";
+  const selCls = "px-3 py-2 bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[var(--surface)]";
   const fmt = (ts?: string) => (ts ? ts.replace("T", " ").slice(0, 16) : "");
   const dur = (l: OpsLog) => {
     let s = Number(l.duration_seconds || 0);
@@ -77,37 +77,37 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in text-[#e4e4e7] print:text-black">
-      <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+    <div className="space-y-6 animate-fade-in text-[var(--text)] print:text-black">
+      <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl"><FileText className="w-6 h-6" /></div>
           <div>
-            <h2 className="text-md font-extrabold text-white">Reports &amp; Export</h2>
-            <p className="text-xs text-[#71717a] font-light mt-0.5">Filter operations logs and export to Excel or PDF.</p>
+            <h2 className="text-md font-extrabold text-[var(--heading)]">Reports &amp; Export</h2>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">Filter operations logs and export to Excel or PDF.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={exportCsv} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Download className="w-4 h-4" /> Export to Excel (CSV)</button>
-          <button onClick={() => window.print()} className="px-4 py-2.5 bg-[#0a0a0b] hover:bg-zinc-800 text-zinc-300 border border-[#27272a] font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Printer className="w-4 h-4" /> Export to PDF</button>
+          <button onClick={() => window.print()} className="px-4 py-2.5 bg-[var(--bg)] hover:bg-[var(--surface-2)] text-[var(--text)] border border-[var(--border)] font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Printer className="w-4 h-4" /> Export to PDF</button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-[#121214] p-5 border border-[#27272a] rounded-3xl shadow-sm space-y-3 print:hidden">
+      <div className="bg-[var(--surface)] p-5 border border-[var(--border)] rounded-3xl shadow-sm space-y-3 print:hidden">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-extrabold text-white flex items-center gap-1.5"><Filter className="w-4 h-4 text-blue-400" /> Filters</h3>
+          <h3 className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-1.5"><Filter className="w-4 h-4 text-blue-400" /> Filters</h3>
           <button onClick={reset} className="px-3 py-1.5 text-[11px] font-bold text-rose-400 bg-rose-500/5 border border-rose-500/20 hover:bg-rose-500/10 rounded-xl">Reset</button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">From</label><input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className={selCls + " w-full"} /></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">To</label><input type="date" value={fEnd} onChange={(e) => setFEnd(e.target.value)} className={selCls + " w-full"} /></div>
-          {currentUser.role === "admin" && <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Department</label><select value={fDept} onChange={(e) => setFDept(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>}
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Log Type</label><select value={fType} onChange={(e) => setFType(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Agent</label><select value={fAgent} onChange={(e) => setFAgent(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{agents.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Branch</label><select value={fBranch} onChange={(e) => setFBranch(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{branches.map((b) => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Brand</label><select value={fBrand} onChange={(e) => setFBrand(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{brands.map((b) => <option key={b.id} value={b.brand_name}>{b.brand_name}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Status</label><select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{["Open", "In Progress", "Completed", "Solved", "Not Solved", "Waiting Feedback"].map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-zinc-400">Activity</label><select value={fActivity} onChange={(e) => setFActivity(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{activities.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">From</label><input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className={selCls + " w-full"} /></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">To</label><input type="date" value={fEnd} onChange={(e) => setFEnd(e.target.value)} className={selCls + " w-full"} /></div>
+          {currentUser.role === "admin" && <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Department</label><select value={fDept} onChange={(e) => setFDept(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>}
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Log Type</label><select value={fType} onChange={(e) => setFType(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Agent</label><select value={fAgent} onChange={(e) => setFAgent(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{agents.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Branch</label><select value={fBranch} onChange={(e) => setFBranch(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{branches.map((b) => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Brand</label><select value={fBrand} onChange={(e) => setFBrand(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{brands.map((b) => <option key={b.id} value={b.brand_name}>{b.brand_name}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Status</label><select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{["Open", "In Progress", "Completed", "Solved", "Not Solved", "Waiting Feedback"].map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Activity</label><select value={fActivity} onChange={(e) => setFActivity(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{activities.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>
         </div>
       </div>
 
@@ -122,31 +122,31 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[200px]"><div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
       ) : (
-        <div className="bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-sm print:border print:bg-white">
-          <div className="p-4 bg-[#0a0a0b] border-b border-[#27272a] text-xs font-bold text-zinc-400 print:hidden">{filtered.length} record(s)</div>
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-sm print:border print:bg-white">
+          <div className="p-4 bg-[var(--bg)] border-b border-[var(--border)] text-xs font-bold text-[var(--muted)] print:hidden">{filtered.length} record(s)</div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-[#0a0a0b] text-[#71717a] font-bold border-b border-[#27272a]">
+              <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold border-b border-[var(--border)]">
                 <tr>
                   <th className="p-3">Date</th><th className="p-3">Type</th><th className="p-3">Dept</th><th className="p-3">Activity</th>
                   <th className="p-3">Agent</th><th className="p-3">Branch/Brand</th><th className="p-3">Order/Customer</th><th className="p-3">Status</th><th className="p-3">Time</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#27272a]">
+              <tbody className="divide-y divide-[var(--border)]">
                 {filtered.map((l) => (
-                  <tr key={l.id} className="hover:bg-[#1c1c1f]/40 transition">
-                    <td className="p-3 font-mono text-[10px] text-zinc-400 whitespace-nowrap">{fmt(l.created_at)}</td>
-                    <td className="p-3 text-zinc-400">{LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type}</td>
-                    <td className="p-3 text-zinc-400">{l.department}</td>
+                  <tr key={l.id} className="hover:bg-[var(--surface-2)]/40 transition">
+                    <td className="p-3 font-mono text-[10px] text-[var(--muted)] whitespace-nowrap">{fmt(l.created_at)}</td>
+                    <td className="p-3 text-[var(--muted)]">{LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type}</td>
+                    <td className="p-3 text-[var(--muted)]">{l.department}</td>
                     <td className="p-3 font-bold text-blue-400">{l.activity_type}</td>
-                    <td className="p-3 text-zinc-300">{l.agent_name}</td>
-                    <td className="p-3 text-zinc-300">{l.branch || "—"}{l.brand ? " / " + l.brand : ""}</td>
-                    <td className="p-3 text-zinc-300">{l.order_number ? "#" + l.order_number : ""}{l.customer_name ? " " + l.customer_name : ""}{!l.order_number && !l.customer_name ? "—" : ""}</td>
-                    <td className="p-3 text-zinc-300">{l.status || "—"}</td>
-                    <td className="p-3 font-mono text-[11px] text-zinc-300">{dur(l)}</td>
+                    <td className="p-3 text-[var(--text)]">{l.agent_name}</td>
+                    <td className="p-3 text-[var(--text)]">{l.branch || "—"}{l.brand ? " / " + l.brand : ""}</td>
+                    <td className="p-3 text-[var(--text)]">{l.order_number ? "#" + l.order_number : ""}{l.customer_name ? " " + l.customer_name : ""}{!l.order_number && !l.customer_name ? "—" : ""}</td>
+                    <td className="p-3 text-[var(--text)]">{l.status || "—"}</td>
+                    <td className="p-3 font-mono text-[11px] text-[var(--text)]">{dur(l)}</td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-zinc-500">No records match the filters.</td></tr>}
+                {filtered.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-[var(--muted)]">No records match the filters.</td></tr>}
               </tbody>
             </table>
           </div>

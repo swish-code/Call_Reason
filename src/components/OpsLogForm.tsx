@@ -129,8 +129,8 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     }
   };
 
-  const inputCls = "w-full px-4 py-3 bg-[#0a0a0b] text-white border border-[#27272a] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition";
-  const selectCls = inputCls + " font-bold [&>option]:bg-[#121214]";
+  const inputCls = "w-full px-4 py-3 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition";
+  const selectCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
   const renderField = (f: string) => {
     const meta = FIELD_META[f];
@@ -156,24 +156,24 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     const full = meta.type === "textarea";
     return (
       <div key={f} className={`space-y-1.5 ${full ? "md:col-span-2" : ""}`}>
-        <label className="text-xs font-bold text-zinc-300">{meta.label}:</label>
+        <label className="text-xs font-bold text-[var(--text)]">{meta.label}:</label>
         {control}
       </div>
     );
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-[#121214] border border-[#27272a] rounded-3xl p-6 md:p-8 shadow-xl space-y-6 relative overflow-hidden text-[#e4e4e7]">
+    <form onSubmit={handleSubmit} className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-xl space-y-6 relative overflow-hidden text-[var(--text)]">
       {success && (
-        <div className="absolute inset-0 bg-[#121214]/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-center">
+        <div className="absolute inset-0 bg-[var(--surface)]/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-center">
           <div className="w-16 h-16 bg-emerald-900/30 text-emerald-400 border border-emerald-500/20 rounded-full flex items-center justify-center mb-4"><Check className="w-8 h-8 stroke-[3]" /></div>
-          <h3 className="text-lg font-extrabold text-white">{editing ? "Log Updated!" : "Log Saved!"}</h3>
+          <h3 className="text-lg font-extrabold text-[var(--heading)]">{editing ? "Log Updated!" : "Log Saved!"}</h3>
         </div>
       )}
 
       <div>
-        <h2 className="text-lg font-extrabold text-white flex items-center gap-2"><ClipboardList className="w-5 h-5 text-blue-400" /> {editing ? "Edit" : "New"} {cfg.title}</h2>
-        <p className="text-xs text-[#71717a] mt-1 font-light">Date &amp; time are recorded automatically.</p>
+        <h2 className="text-lg font-extrabold text-[var(--heading)] flex items-center gap-2"><ClipboardList className="w-5 h-5 text-blue-400" /> {editing ? "Edit" : "New"} {cfg.title}</h2>
+        <p className="text-xs text-[var(--muted)] mt-1 font-light">Date &amp; time are recorded automatically.</p>
       </div>
 
       {error && (<div className="flex bg-rose-500/10 border border-rose-500/20 text-rose-300 p-4 rounded-2xl text-xs gap-2 items-center"><AlertCircle className="w-5 h-5 shrink-0" /><p className="font-bold">{error}</p></div>)}
@@ -181,7 +181,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
       {/* Admin picks the log type */}
       {isAdmin && !editing && (
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-zinc-300">Log Type:</label>
+          <label className="text-xs font-bold text-[var(--text)]">Log Type:</label>
           <select value={logType} onChange={(e) => setLogType(e.target.value as LogType)} className={selectCls}>
             {(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}
           </select>
@@ -190,7 +190,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-zinc-300">{cfg.activityLabel}:</label>
+          <label className="text-xs font-bold text-[var(--text)]">{cfg.activityLabel}:</label>
           <select value={activity} onChange={(e) => setActivity(e.target.value)} className={selectCls}>
             <option value="">— Select —</option>
             {activityOpts.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -198,7 +198,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
         </div>
         {cfg.statusKey && (
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-zinc-300">Status:</label>
+            <label className="text-xs font-bold text-[var(--text)]">Status:</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectCls}>
               <option value="">— Select —</option>
               {statusOpts.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -206,12 +206,12 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
           </div>
         )}
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-zinc-300">Time Spent (minutes):</label>
+          <label className="text-xs font-bold text-[var(--text)]">Time Spent (minutes):</label>
           <input type="number" min={0} value={durationMin} onChange={(e) => setDurationMin(e.target.value)} placeholder="e.g. 15" className={inputCls} />
           <div className="flex flex-wrap gap-1.5 pt-1">
             {[5, 10, 15, 30, 45, 60].map((m) => (
               <button type="button" key={m} onClick={() => setDurationMin(String(m))}
-                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition ${durationMin === String(m) ? "bg-blue-600 text-white border-blue-600" : "bg-[#0a0a0b] text-zinc-400 border-[#27272a] hover:text-white hover:border-blue-500/40"}`}>
+                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition ${durationMin === String(m) ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--muted)] border-[var(--border)] hover:text-white hover:border-blue-500/40"}`}>
                 {m}m
               </button>
             ))}

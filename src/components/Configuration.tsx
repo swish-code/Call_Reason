@@ -57,44 +57,44 @@ const OptionListCard: React.FC<OptionListCardProps> = ({ meta, items, onChange }
   };
 
   return (
-    <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-3xl space-y-4">
+    <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl space-y-4">
       <div>
-        <h3 className="text-sm font-extrabold text-white flex items-center gap-2"><ListChecks className="w-4 h-4 text-blue-400" /> {meta.title}</h3>
-        <p className="text-[11px] text-[#71717a] mt-0.5 font-light">{meta.description}</p>
+        <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2"><ListChecks className="w-4 h-4 text-blue-400" /> {meta.title}</h3>
+        <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">{meta.description}</p>
       </div>
 
       <div className="space-y-1.5">
         {sorted.map((o, i) => (
-          <div key={o.id} className={`flex items-center gap-2 p-2 pl-3 bg-[#0a0a0b] border border-[#27272a]/70 rounded-xl text-xs ${!o.active ? "opacity-50" : ""}`}>
+          <div key={o.id} className={`flex items-center gap-2 p-2 pl-3 bg-[var(--bg)] border border-[var(--border)]/70 rounded-xl text-xs ${!o.active ? "opacity-50" : ""}`}>
             <div className="flex flex-col">
-              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="text-zinc-500 hover:text-white disabled:opacity-20"><ChevronUp className="w-3.5 h-3.5" /></button>
-              <button type="button" onClick={() => move(i, 1)} disabled={i === sorted.length - 1} className="text-zinc-500 hover:text-white disabled:opacity-20"><ChevronDown className="w-3.5 h-3.5" /></button>
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="text-[var(--muted)] hover:text-[var(--heading)] disabled:opacity-20"><ChevronUp className="w-3.5 h-3.5" /></button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === sorted.length - 1} className="text-[var(--muted)] hover:text-[var(--heading)] disabled:opacity-20"><ChevronDown className="w-3.5 h-3.5" /></button>
             </div>
             {editingId === o.id ? (
               <input autoFocus value={editLabel} onChange={(e) => setEditLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveEdit(o.id)}
-                className="flex-1 px-2 py-1 bg-[#1c1c1f] text-white border border-blue-500/40 rounded-lg text-xs focus:outline-none" />
+                className="flex-1 px-2 py-1 bg-[var(--surface-2)] text-[var(--heading)] border border-blue-500/40 rounded-lg text-xs focus:outline-none" />
             ) : (
-              <span className="flex-1 font-bold text-zinc-200">{o.label}{!o.active && <span className="ml-2 text-[9px] text-zinc-500 font-normal">(disabled)</span>}</span>
+              <span className="flex-1 font-bold text-[var(--heading)]">{o.label}{!o.active && <span className="ml-2 text-[9px] text-[var(--muted)] font-normal">(disabled)</span>}</span>
             )}
             {editingId === o.id ? (
               <>
                 <button type="button" onClick={() => saveEdit(o.id)} className="p-1 text-emerald-400 hover:bg-emerald-500/10 rounded-lg"><Check className="w-3.5 h-3.5" /></button>
-                <button type="button" onClick={() => setEditingId(null)} className="p-1 text-zinc-400 hover:bg-zinc-700/40 rounded-lg"><X className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => setEditingId(null)} className="p-1 text-[var(--muted)] hover:bg-zinc-700/40 rounded-lg"><X className="w-3.5 h-3.5" /></button>
               </>
             ) : (
               <>
-                <button type="button" onClick={() => { setEditingId(o.id); setEditLabel(o.label); }} className="p-1 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
-                <button type="button" onClick={() => toggleActive(o)} className="p-1 text-zinc-400 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg" title={o.active ? "Disable" : "Enable"}>{o.active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}</button>
-                <button type="button" onClick={() => remove(o)} className="p-1 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg" title="Delete"><Trash className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => { setEditingId(o.id); setEditLabel(o.label); }} className="p-1 text-[var(--muted)] hover:text-blue-400 hover:bg-blue-500/10 rounded-lg" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => toggleActive(o)} className="p-1 text-[var(--muted)] hover:text-amber-400 hover:bg-amber-500/10 rounded-lg" title={o.active ? "Disable" : "Enable"}>{o.active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}</button>
+                <button type="button" onClick={() => remove(o)} className="p-1 text-[var(--muted)] hover:text-rose-400 hover:bg-rose-500/10 rounded-lg" title="Delete"><Trash className="w-3.5 h-3.5" /></button>
               </>
             )}
           </div>
         ))}
-        {sorted.length === 0 && <div className="text-center py-4 text-zinc-500 text-xs">No options yet.</div>}
+        {sorted.length === 0 && <div className="text-center py-4 text-[var(--muted)] text-xs">No options yet.</div>}
       </div>
 
       <form onSubmit={add} className="flex gap-2">
-        <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Add new option…" className="flex-1 px-3 py-2 bg-[#0a0a0b] border border-[#27272a] rounded-xl text-xs font-bold text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Add new option…" className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-bold text-[var(--heading)] placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         <button type="submit" disabled={busy} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 active:scale-95"><Plus className="w-4 h-4" /></button>
       </form>
     </div>
@@ -119,22 +119,22 @@ const SimpleEntityCard: React.FC<SimpleEntityCardProps> = ({ title, description,
     onChange();
   };
   return (
-    <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-3xl space-y-4">
+    <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl space-y-4">
       <div>
-        <h3 className="text-sm font-extrabold text-white flex items-center gap-2"><ListChecks className="w-4 h-4 text-emerald-400" /> {title}</h3>
-        <p className="text-[11px] text-[#71717a] mt-0.5 font-light">{description}</p>
+        <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2"><ListChecks className="w-4 h-4 text-emerald-400" /> {title}</h3>
+        <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">{description}</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {items.map((it) => (
-          <span key={it.id} className="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 bg-[#0a0a0b] border border-[#27272a]/70 rounded-xl text-xs font-bold text-zinc-200">
+          <span key={it.id} className="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 bg-[var(--bg)] border border-[var(--border)]/70 rounded-xl text-xs font-bold text-[var(--heading)]">
             {it[labelField]}
-            <button type="button" onClick={() => remove(it.id, it[labelField])} className="p-0.5 text-zinc-500 hover:text-rose-400 rounded"><X className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => remove(it.id, it[labelField])} className="p-0.5 text-[var(--muted)] hover:text-rose-400 rounded"><X className="w-3.5 h-3.5" /></button>
           </span>
         ))}
-        {items.length === 0 && <span className="text-zinc-500 text-xs">None defined.</span>}
+        {items.length === 0 && <span className="text-[var(--muted)] text-xs">None defined.</span>}
       </div>
       <form onSubmit={add} className="flex gap-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={`Add new ${title.slice(0, -1).toLowerCase()}…`} className="flex-1 px-3 py-2 bg-[#0a0a0b] border border-[#27272a] rounded-xl text-xs font-bold text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={`Add new ${title.slice(0, -1).toLowerCase()}…`} className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-bold text-[var(--heading)] placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         <button type="submit" className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 active:scale-95"><Plus className="w-4 h-4" /></button>
       </form>
     </div>
@@ -170,16 +170,16 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
   useEffect(() => { fetchAll(); }, []);
 
   return (
-    <div className="space-y-6 animate-fade-in text-[#e4e4e7]">
-      <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-3xl flex items-center justify-between">
+    <div className="space-y-6 animate-fade-in text-[var(--text)]">
+      <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl"><Settings className="w-6 h-6" /></div>
           <div>
-            <h2 className="text-md font-extrabold text-white">System Configuration</h2>
-            <p className="text-xs text-[#71717a] font-light mt-0.5">Manage every dropdown list used across the system. Changes apply to all forms on their next load.</p>
+            <h2 className="text-md font-extrabold text-[var(--heading)]">System Configuration</h2>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">Manage every dropdown list used across the system. Changes apply to all forms on their next load.</p>
           </div>
         </div>
-        <button onClick={fetchAll} className="p-3 text-zinc-400 hover:text-white bg-[#0a0a0b] hover:bg-[#121214] border border-[#27272a] rounded-2xl active:scale-95 transition" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
+        <button onClick={fetchAll} className="p-3 text-[var(--muted)] hover:text-[var(--heading)] bg-[var(--bg)] hover:bg-[var(--surface)] border border-[var(--border)] rounded-2xl active:scale-95 transition" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
       </div>
 
       {error && (
@@ -189,7 +189,7 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
       {loading ? (
         <div className="flex flex-col items-center justify-center min-h-[260px]">
           <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="mt-3 text-xs text-zinc-400">Loading configuration...</p>
+          <p className="mt-3 text-xs text-[var(--muted)]">Loading configuration...</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">

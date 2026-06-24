@@ -44,7 +44,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     })();
   }, []);
 
-  if (loading) return <div className="flex flex-col items-center justify-center min-h-[400px]"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div><p className="mt-4 text-[#71717a]">Loading dashboard...</p></div>;
+  if (loading) return <div className="flex flex-col items-center justify-center min-h-[400px]"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div><p className="mt-4 text-[var(--muted)]">Loading dashboard...</p></div>;
   if (error) return <div className="p-6 bg-rose-950/20 border border-rose-500/30 rounded-2xl text-center text-rose-300"><AlertCircle className="w-10 h-10 mx-auto text-rose-500" /><p className="mt-2 text-sm">{error}</p></div>;
   if (!d) return null;
 
@@ -55,11 +55,11 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${s}s`;
   };
   const Card = ({ label, value, icon: Icon, tone }: { label: string; value: any; icon: any; tone: string }) => (
-    <div className="bg-[#121214] p-5 border border-[#27272a] shadow-lg rounded-2xl flex items-center gap-4">
+    <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl flex items-center gap-4">
       <div className={`p-3 rounded-xl bg-opacity-10 ${tone} bg-current/10`}><Icon className={`w-6 h-6 ${tone}`} /></div>
       <div>
-        <p className="text-[10px] text-[#71717a] font-bold uppercase">{label}</p>
-        <h3 className="text-2xl font-bold text-white tracking-tight font-mono">{value}</h3>
+        <p className="text-[10px] text-[var(--muted)] font-bold uppercase">{label}</p>
+        <h3 className="text-2xl font-bold text-[var(--heading)] tracking-tight font-mono">{value}</h3>
       </div>
     </div>
   );
@@ -67,19 +67,19 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   const BarList = ({ title, data, color, icon: Icon }: { title: string; data: { name: string; count: number }[]; color: string; icon: any }) => {
     const total = data.reduce((a, c) => a + c.count, 0) || 1;
     return (
-      <div className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-2xl">
-        <h2 className="text-md font-bold text-white mb-4 flex items-center gap-2"><Icon className="w-5 h-5 text-blue-400" /> {title}</h2>
+      <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+        <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Icon className="w-5 h-5 text-blue-400" /> {title}</h2>
         <div className="space-y-3">
           {data.map((x) => {
             const pct = Math.round((x.count / total) * 100);
             return (
               <div key={x.name} className="space-y-1">
-                <div className="flex justify-between items-center text-xs font-bold"><span className="text-white truncate pr-2">{x.name}</span><span className="text-[#71717a] font-mono shrink-0">{x.count}</span></div>
-                <div className="w-full bg-[#1c1c1f] border border-[#27272a]/60 h-2 rounded-full overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }}></div></div>
+                <div className="flex justify-between items-center text-xs font-bold"><span className="text-[var(--heading)] truncate pr-2">{x.name}</span><span className="text-[var(--muted)] font-mono shrink-0">{x.count}</span></div>
+                <div className="w-full bg-[var(--surface-2)] border border-[var(--border)]/60 h-2 rounded-full overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }}></div></div>
               </div>
             );
           })}
-          {data.length === 0 && <div className="text-center py-6 text-[#71717a] text-xs">No data yet.</div>}
+          {data.length === 0 && <div className="text-center py-6 text-[var(--muted)] text-xs">No data yet.</div>}
         </div>
       </div>
     );
@@ -88,8 +88,8 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   const Trend = () => {
     const max = Math.max(...d.trend.map((t) => t.count), 1);
     return (
-      <div className="bg-[#121214] p-6 border border-[#27272a] shadow-lg rounded-2xl">
-        <h2 className="text-md font-bold text-white mb-4 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-400" /> Activity — last 7 days</h2>
+      <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+        <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-400" /> Activity — last 7 days</h2>
         <div className="flex items-end justify-between gap-2 h-40">
           {d.trend.map((t) => {
             const p = t.date.split("-");
@@ -97,7 +97,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
               <div key={t.date} className="flex-1 flex flex-col items-center justify-end gap-2 h-full">
                 <span className="text-[10px] font-mono text-blue-300">{t.count}</span>
                 <div className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t-lg" style={{ height: `${Math.max((t.count / max) * 100, 3)}%` }}></div>
-                <span className="text-[9px] font-mono text-zinc-500">{p[2]}/{p[1]}</span>
+                <span className="text-[9px] font-mono text-[var(--muted)]">{p[2]}/{p[1]}</span>
               </div>
             );
           })}
@@ -107,12 +107,12 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in text-[#e4e4e7]">
+    <div className="space-y-8 animate-fade-in text-[var(--text)]">
       {/* Banner */}
-      <div className="bg-gradient-to-r from-[#121214] via-[#1c1c1f] to-[#0a0a0b] border border-[#27272a] p-6 md:p-8 rounded-3xl shadow-xl">
+      <div className="bg-gradient-to-r from-[var(--surface)] via-[var(--surface-2)] to-[var(--bg)] border border-[var(--border)] p-6 md:p-8 rounded-3xl shadow-xl">
         <span className="bg-blue-950/45 text-blue-400 text-xs font-bold px-3 py-1 rounded-full border border-blue-500/30">{isAgent ? "Agent Dashboard" : currentUser.role === "leader" ? "Team Leader Dashboard" : currentUser.role === "supervisor" ? "Supervisor Dashboard" : "Admin Dashboard"}</span>
-        <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight mt-2">Welcome, {currentUser.name || currentUser.full_name}</h1>
-        <p className="text-[#71717a] text-sm mt-1 font-light">{d.department ? `Department: ${d.department}` : "All departments"}</p>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Welcome, {currentUser.name || currentUser.full_name}</h1>
+        <p className="text-[var(--muted)] text-sm mt-1 font-light">{d.department ? `Department: ${d.department}` : "All departments"}</p>
       </div>
 
       {isAgent ? (
@@ -139,7 +139,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <Card label="Total Logs" value={d.totalLogs} icon={ClipboardList} tone="text-white" />
+            <Card label="Total Logs" value={d.totalLogs} icon={ClipboardList} tone="text-[var(--heading)]" />
             <Card label="Open Tasks" value={d.open} icon={FolderOpen} tone="text-blue-400" />
             <Card label="Pending" value={d.pending} icon={Clock} tone="text-amber-400" />
             <Card label="Closed Tasks" value={d.completed} icon={CheckCircle2} tone="text-emerald-400" />
