@@ -53,7 +53,9 @@ type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog"
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Open by default on desktop, closed (drawer) on mobile
+  const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 768 : true));
+  const closeSidebarOnMobile = () => { if (typeof window !== "undefined" && window.innerWidth < 768) setSidebarOpen(false); };
 
   // Theme (Light is the default)
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -341,13 +343,20 @@ export default function App() {
         </div>
       )}
       
+      {/* Mobile backdrop — closes the drawer when tapped */}
+      {sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-30 md:hidden" aria-hidden="true" />
+      )}
+
       {/* ----------------------------------------------------
           Sidebar Menu navigation
+          - Mobile: off-canvas drawer (slides in/out, overlays content)
+          - Desktop: sticky column, collapsible to a 20-wide rail
           ---------------------------------------------------- */}
       <aside
-        className={`bg-[var(--surface)] text-[var(--text)] z-40 flex flex-col justify-between transition-all duration-300 shrink-0 ${
-          sidebarOpen ? "w-64" : "w-0 md:w-20"
-        } overflow-hidden border-r border-[var(--border)] h-screen fixed md:sticky top-0`}
+        className={`bg-[var(--surface)] text-[var(--text)] z-40 flex flex-col justify-between border-r border-[var(--border)] h-screen overflow-hidden
+          fixed top-0 left-0 w-64 transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
+          md:sticky md:translate-x-0 md:transition-all ${sidebarOpen ? "md:w-64" : "md:w-20"}`}
       >
         <div className="flex flex-col space-y-8 p-4">
           
@@ -378,7 +387,7 @@ export default function App() {
           </div>
 
           {/* Nav Buttons links */}
-          <nav className="flex flex-col gap-1">
+          <nav className="flex flex-col gap-1" onClick={closeSidebarOnMobile}>
             <button
               onClick={() => setActivePage("dashboard")}
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
