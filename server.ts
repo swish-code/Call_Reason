@@ -53,6 +53,15 @@ const requireLeaderOrAdmin = (req: any, res: any, next: any) => {
   }
 };
 
+// Any manager (Team Leader, Supervisor, or Admin) — i.e. not an agent
+const requireManager = (req: any, res: any, next: any) => {
+  if (req.user && req.user.role !== "agent") {
+    next();
+  } else {
+    res.status(403).json({ error: "Sorry, this action is restricted to Team Leaders, Supervisors, or Admins." });
+  }
+};
+
 // Wrap async route handlers so rejected promises become 500s instead of
 // crashing the process with an unhandled rejection.
 const asyncHandler = (fn: (req: any, res: any) => Promise<any>) => (req: any, res: any) => {
@@ -911,12 +920,12 @@ app.delete("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res:
 // ----------------------------------------------------
 // Recurring task templates (managers; department-scoped)
 // ----------------------------------------------------
-app.get("/api/recurring", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+app.get("/api/recurring", authenticateJWT, requireManager, asyncHandler(async (req: any, res: any) => {
   const tpls = req.user.role === "admin" ? await DB.getRecurringTemplates({}) : await DB.getRecurringTemplates({ department: req.user.department });
   res.json(tpls);
 }));
 
-app.post("/api/recurring", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+app.post("/api/recurring", authenticateJWT, requireManager, asyncHandler(async (req: any, res: any) => {
   const { title, description, priority, recurrence_type, days_of_week, due_time, assign_mode } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: "Task is required." });
   let department = req.user.department;
@@ -940,7 +949,7 @@ app.post("/api/recurring", authenticateJWT, requireLeaderOrAdmin, asyncHandler(a
   res.status(201).json(tpl);
 }));
 
-app.put("/api/recurring/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+app.put("/api/recurring/:id", authenticateJWT, requireManager, asyncHandler(async (req: any, res: any) => {
   const tpl = await DB.getRecurringTemplateById(req.params.id);
   if (!tpl) return res.status(404).json({ error: "Template not found." });
   if (req.user.role !== "admin" && tpl.department !== req.user.department) return res.status(403).json({ error: "Not authorized." });
@@ -951,7 +960,7 @@ app.put("/api/recurring/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandle
   res.json(updated);
 }));
 
-app.delete("/api/recurring/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+app.delete("/api/recurring/:id", authenticateJWT, requireManager, asyncHandler(async (req: any, res: any) => {
   const tpl = await DB.getRecurringTemplateById(req.params.id);
   if (!tpl) return res.status(404).json({ error: "Template not found." });
   if (req.user.role !== "admin" && tpl.department !== req.user.department) return res.status(403).json({ error: "Not authorized." });
@@ -989,7 +998,7 @@ app.post("/api/shift/end", authenticateJWT, asyncHandler(async (req: any, res: a
   res.json({ status: "off" });
 }));
 
-app.get("/api/shift/sessions", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
+app.get("/api/shift/sessions", authenticateJWT, requireManager, asyncHandler(async (req: any, res: any) => {
   const sessions = req.user.role === "admin" ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department: req.user.department });
   res.json(sessions);
 }));
