@@ -691,6 +691,110 @@ app.post("/api/logs/:id/timer", authenticateJWT, asyncHandler(async (req: any, r
 }));
 
 // ----------------------------------------------------
+// Assigned Tasks API (manager assigns to agent)
+// ----------------------------------------------------
+// Create & assign — any non-agent (leader/supervisor/admin)
+app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role === "agent") return res.status(403).json({ error: "Agents cannot assign tasks." });
+  const { title, description, assigned_to, due_date, priority } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: "Task title is required." });
+  if (!assigned_to) return res.status(400).json({ error: "Please choose an agent to assign the task to." });
+
+  const target = await DB.getUserById(assigned_to);
+  if (!target || target.role !== "agent") return res.status(400).json({ error: "Selected user is not a valid agent." });
+  if (req.user.role !== "admin" && target.department !== req.user.department) {
+    return res.status(403).json({ error: "You can only assign tasks to agents in your own department." });
+  }
+
+  const now = new Date().toISOString();
+  const task = await DB.addAssignedTask({
+    id: "task-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+    title: title.trim(),
+    description: description || undefined,
+    assigned_by: req.user.id,
+    assigned_by_name: req.user.full_name,
+    assigned_to: target.id,
+    assigned_to_name: target.full_name,
+    department: target.department,
+    priority: priority || "Medium",
+    due_date: due_date || undefined,
+    status: "New",
+    created_at: now,
+  });
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+    category: target.department, department: target.department, action: "Assign Task", related_ref: task.id,
+    details: `${title.trim()} → ${target.full_name}`,
+  });
+  res.status(201).json(task);
+}));
+
+// List tasks (scoped)
+app.get("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const { role, id, department } = req.user;
+  let tasks;
+  if (role === "admin") tasks = await DB.getAssignedTasks({});
+  else if (role === "agent") tasks = await DB.getAssignedTasks({ assigned_to: id });
+  else tasks = await DB.getAssignedTasks({ department });
+  res.json(tasks);
+}));
+
+// Notification badge — agent's unseen tasks
+app.get("/api/tasks/unseen-count", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role !== "agent") return res.json({ count: 0 });
+  res.json({ count: await DB.countUnseenTasks(req.user.id) });
+}));
+
+// Mark all of the agent's tasks as seen
+app.post("/api/tasks/mark-seen", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role === "agent") await DB.markTasksSeen(req.user.id);
+  res.json({ message: "ok" });
+}));
+
+// Agents a manager can assign to (own department; admin = all)
+app.get("/api/tasks/agents", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role === "agent") return res.status(403).json({ error: "Forbidden" });
+  let agents = (await DB.getUsers()).filter((u) => u.role === "agent" && u.status !== "Inactive");
+  if (req.user.role !== "admin") agents = agents.filter((u) => u.department === req.user.department);
+  res.json(agents.map((u) => ({ id: u.id, full_name: u.full_name, department: u.department })));
+}));
+
+// Update a task (agent owner updates status; manager/admin can update)
+app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const task = await DB.getAssignedTaskById(req.params.id);
+  if (!task) return res.status(404).json({ error: "Task not found." });
+  const { role, id, department } = req.user;
+  const isOwnerAgent = role === "agent" && task.assigned_to === id;
+  const isManager = role === "admin" || (role !== "agent" && task.department === department);
+  if (!isOwnerAgent && !isManager) return res.status(403).json({ error: "Not authorized to update this task." });
+
+  const fields: any = {};
+  if (req.body.status !== undefined) fields.status = req.body.status;
+  if (isManager) {
+    ["title", "description", "priority", "due_date"].forEach((k) => { if (req.body[k] !== undefined) fields[k] = req.body[k]; });
+  }
+  if (fields.status === "Completed" && !task.completed_at) fields.completed_at = new Date().toISOString();
+  const updated = await DB.updateAssignedTask(req.params.id, fields);
+  await DB.addAuditLog({
+    operator_id: id, operator_name: req.user.full_name, operator_role: role,
+    category: task.department, department: task.department, action: "Update Task", related_ref: task.id,
+    details: task.title, previous_value: JSON.stringify({ status: task.status }), new_value: JSON.stringify(fields),
+  });
+  res.json(updated);
+}));
+
+// Delete a task (assigner or admin)
+app.delete("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const task = await DB.getAssignedTaskById(req.params.id);
+  if (!task) return res.status(404).json({ error: "Task not found." });
+  if (req.user.role !== "admin" && task.assigned_by !== req.user.id) {
+    return res.status(403).json({ error: "Only the assigner or an admin can delete this task." });
+  }
+  await DB.deleteAssignedTask(req.params.id);
+  res.json({ message: "Task deleted." });
+}));
+
+// ----------------------------------------------------
 // Interactions API (Secure & Role-Filtered)
 // ----------------------------------------------------
 app.get("/api/interactions", authenticateJWT, asyncHandler(async (req, res) => {

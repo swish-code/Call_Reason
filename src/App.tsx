@@ -7,6 +7,7 @@ import OpsLogsList from "./components/OpsLogsList.tsx";
 import OpsDashboard from "./components/OpsDashboard.tsx";
 import OpsReports from "./components/OpsReports.tsx";
 import HistoryLogs from "./components/HistoryLogs.tsx";
+import Tasks from "./components/Tasks.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -37,10 +38,12 @@ import {
   Zap,
   BarChart2,
   Sun,
-  Moon
+  Moon,
+  Bell,
+  ClipboardCheck
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history";
+type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -57,6 +60,16 @@ export default function App() {
     try { localStorage.setItem("swish-theme", theme); } catch {}
   }, [theme]);
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
+  // Assigned-task notifications (agent)
+  const [unseenTasks, setUnseenTasks] = useState(0);
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== "agent") return;
+    const load = () => apiFetch("/api/tasks/unseen-count").then((r) => (r.ok ? r.json() : { count: 0 })).then((d) => setUnseenTasks(d.count || 0)).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [currentUser]);
 
   // Login inputs
   const [email, setEmail] = useState("");
@@ -339,6 +352,21 @@ export default function App() {
               {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs"}</span>}
             </button>
 
+            {/* Tasks: My Tasks (agent) / Assign Task (managers) */}
+            <button
+              onClick={() => { setActivePage("tasks"); if (currentUser.role === "agent") setUnseenTasks(0); }}
+              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                activePage === "tasks"
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+              }`}
+            >
+              <ClipboardCheck className="w-4 h-4 shrink-0" />
+              {sidebarOpen && <span className="truncate flex items-center gap-2">{currentUser.role === "agent" ? "My Tasks" : "Assign Task"}
+                {currentUser.role === "agent" && unseenTasks > 0 && <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{unseenTasks}</span>}
+              </span>}
+            </button>
+
             {/* Reports limited to Admin & TL */}
             {currentUser?.role !== "agent" && (
               <button
@@ -438,6 +466,7 @@ export default function App() {
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
               {activePage === "history" && "History Logs — Audit Trail"}
+              {activePage === "tasks" && (currentUser.role === "agent" ? "My Tasks" : "Assign Tasks")}
             </h1>
           </div>
 
@@ -447,6 +476,17 @@ export default function App() {
               <UserCheck className="w-3.5 h-3.5" />
               <span>Logged in as: <strong>{getLocalizedRole(currentUser.role)}</strong></span>
             </div>
+
+            {currentUser.role === "agent" && (
+              <button
+                onClick={() => { setActivePage("tasks"); setUnseenTasks(0); }}
+                className="relative p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
+                title="My Tasks"
+              >
+                <Bell className="w-4 h-4" />
+                {unseenTasks > 0 && <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-extrabold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{unseenTasks}</span>}
+              </button>
+            )}
 
             <button
               onClick={toggleTheme}
@@ -476,6 +516,9 @@ export default function App() {
           )}
           {activePage === "history" && (
             <HistoryLogs currentUser={currentUser} />
+          )}
+          {activePage === "tasks" && (
+            <Tasks currentUser={currentUser} onSeen={() => setUnseenTasks(0)} />
           )}
           {activePage === "users" && (
             <UsersManagement currentUser={currentUser} />

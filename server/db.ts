@@ -1,6 +1,6 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
-import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog } from "../src/types.js";
+import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog, AssignedTask } from "../src/types.js";
 
 const { Pool } = pkg;
 
@@ -203,6 +203,23 @@ export class DB {
         label TEXT NOT NULL,
         sort_order INTEGER DEFAULT 0,
         active BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS assigned_tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        assigned_by TEXT,
+        assigned_by_name TEXT,
+        assigned_to TEXT,
+        assigned_to_name TEXT,
+        department TEXT,
+        priority TEXT,
+        due_date TEXT,
+        status TEXT DEFAULT 'New',
+        seen BOOLEAN DEFAULT false,
+        created_at TEXT,
+        updated_at TEXT,
+        completed_at TEXT
       );
       CREATE TABLE IF NOT EXISTS logs (
         id TEXT PRIMARY KEY,
@@ -651,6 +668,64 @@ export class DB {
       [duration, running_since, started_at, status, nowIso, id]
     );
     return rows[0];
+  }
+
+  // ----------------------------------------------------
+  // Assigned tasks (manager -> agent)
+  // ----------------------------------------------------
+  static async getAssignedTasks(filter: { assigned_to?: string; department?: string } = {}): Promise<AssignedTask[]> {
+    const clauses: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (filter.assigned_to) { clauses.push(`assigned_to = $${idx++}`); values.push(filter.assigned_to); }
+    if (filter.department) { clauses.push(`department = $${idx++}`); values.push(filter.department); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { rows } = await pool.query<AssignedTask>(`SELECT * FROM assigned_tasks ${where} ORDER BY created_at DESC`, values);
+    return rows;
+  }
+
+  static async getAssignedTaskById(id: string): Promise<AssignedTask | undefined> {
+    const { rows } = await pool.query<AssignedTask>("SELECT * FROM assigned_tasks WHERE id = $1 LIMIT 1", [id]);
+    return rows[0];
+  }
+
+  static async addAssignedTask(t: AssignedTask): Promise<AssignedTask> {
+    const { rows } = await pool.query<AssignedTask>(
+      `INSERT INTO assigned_tasks (id, title, description, assigned_by, assigned_by_name, assigned_to, assigned_to_name, department, priority, due_date, status, seen, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,$12) RETURNING *`,
+      [t.id, t.title, t.description ?? null, t.assigned_by, t.assigned_by_name, t.assigned_to, t.assigned_to_name, t.department ?? null, t.priority ?? null, t.due_date ?? null, t.status || "New", t.created_at]
+    );
+    return rows[0];
+  }
+
+  static async updateAssignedTask(id: string, fields: Partial<AssignedTask>): Promise<AssignedTask | undefined> {
+    const cols = ["title", "description", "priority", "due_date", "status", "seen", "completed_at", "assigned_to", "assigned_to_name"] as const;
+    const sets: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    for (const c of cols) {
+      if (c in fields && (fields as any)[c] !== undefined) { sets.push(`${c} = $${idx++}`); values.push((fields as any)[c]); }
+    }
+    sets.push(`updated_at = $${idx++}`);
+    values.push(new Date().toISOString());
+    if (sets.length === 1) return DB.getAssignedTaskById(id);
+    values.push(id);
+    const { rows } = await pool.query<AssignedTask>(`UPDATE assigned_tasks SET ${sets.join(", ")} WHERE id = $${idx} RETURNING *`, values);
+    return rows[0];
+  }
+
+  static async countUnseenTasks(assignedTo: string): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM assigned_tasks WHERE assigned_to = $1 AND seen = false", [assignedTo]);
+    return Number(rows[0].count);
+  }
+
+  static async markTasksSeen(assignedTo: string): Promise<void> {
+    await pool.query("UPDATE assigned_tasks SET seen = true WHERE assigned_to = $1 AND seen = false", [assignedTo]);
+  }
+
+  static async deleteAssignedTask(id: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM assigned_tasks WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
   }
 
   // ----------------------------------------------------

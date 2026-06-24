@@ -159,6 +159,26 @@ export interface Interaction {
   created_at: string;
 }
 
+// A task assigned by a manager (leader/supervisor/admin) to an agent
+export interface AssignedTask {
+  id: string;
+  title: string;
+  description?: string;
+  assigned_by: string;
+  assigned_by_name: string;
+  assigned_to: string;
+  assigned_to_name: string;
+  department?: string;
+  priority?: string;
+  due_date?: string; // YYYY-MM-DDTHH:mm
+  status: string; // New | In Progress | Completed
+  seen?: boolean;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string;
+}
+export const TASK_STATUSES = ["New", "In Progress", "Completed"];
+
 export interface Brand {
   id: string;
   brand_name: string;
