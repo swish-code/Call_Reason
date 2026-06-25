@@ -25,15 +25,20 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
 
   const isAgent = currentUser.role === "agent";
 
-  const canProgress = (l: OpsLog) => l.agent_id === currentUser.id && ["Open", "In Progress"].includes(l.status || "");
+  // Editable while not in a final state. Complaint logs use Not Solved / Waiting Feedback as in-progress.
+  const canProgress = (l: OpsLog) => l.agent_id === currentUser.id && ["Open", "In Progress", "Not Solved", "Waiting Feedback"].includes(l.status || "");
+  // Status options offered in the modal depend on the log type
+  const progressStatusOptions = (l: OpsLog | null) =>
+    l && l.log_type === "complaint" ? ["Not Solved", "Waiting Feedback", "Solved"] : ["Open", "In Progress", "Completed"];
+  const isFinalStatus = (s: string) => ["Completed", "Solved"].includes(s);
   const openProgress = (l: OpsLog) => {
     setProgressLog(l);
-    setPStatus(l.status || "Open");
+    setPStatus(l.status || progressStatusOptions(l)[0]);
     setPMinutes(l.duration_seconds ? String(Math.round(l.duration_seconds / 60)) : "");
   };
   const saveProgress = async () => {
     if (!progressLog) return;
-    if (pStatus === "Completed" && (!pMinutes || Number(pMinutes) <= 0)) {
+    if (isFinalStatus(pStatus) && (!pMinutes || Number(pMinutes) <= 0)) {
       alert("Please enter the time spent before completing the task.");
       return;
     }
@@ -223,7 +228,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[var(--text)]">Status:</label>
               <select value={pStatus} onChange={(e) => setPStatus(e.target.value)} className="w-full px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs font-bold focus:ring-1 focus:ring-blue-500 focus:outline-none [&>option]:bg-[var(--surface)]">
-                {["Open", "In Progress", "Completed"].map((s) => <option key={s} value={s}>{s}</option>)}
+                {progressStatusOptions(progressLog).map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">

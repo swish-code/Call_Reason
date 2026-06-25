@@ -730,7 +730,9 @@ app.put("/api/logs/:id/progress", authenticateJWT, asyncHandler(async (req: any,
   if (req.user.role !== "admin" && !isOwner) {
     return res.status(403).json({ error: "You can only update your own tasks." });
   }
-  if (req.user.role !== "admin" && !["Open", "In Progress"].includes(log.status || "")) {
+  // Editable while not in a final state. Final = Completed / Solved.
+  // Complaint logs use Not Solved / Waiting Feedback as in-progress states.
+  if (req.user.role !== "admin" && !["Open", "In Progress", "Not Solved", "Waiting Feedback"].includes(log.status || "")) {
     return res.status(403).json({ error: "This task is already closed and can no longer be updated." });
   }
   const fields: any = {};
