@@ -3,7 +3,7 @@ import { User, AssignedTask } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { ClipboardCheck, Send, RefreshCw, AlertCircle, Trash2, Clock, User as UserIcon, CalendarClock, Loader2, Check, Pencil, Save, X, StickyNote } from "lucide-react";
 
-type TaskMode = "assign" | "tracker" | "agent";
+type TaskMode = "assign" | "tracker" | "mine";
 
 interface TasksProps {
   currentUser: User;
@@ -16,15 +16,18 @@ const DEPT_ACTIVITY_KEY: Record<string, string> = {
   "Call Center": "cc_activity",
   "Technical": "tech_activity",
   "Complaints": "complaint_activity",
+  "Quality": "quality_activity",
 };
 
 export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const isAgent = currentUser.role === "agent";
-  const view: TaskMode = isAgent ? "agent" : (mode || "assign");
-  const isManager = !isAgent;
+  const view: TaskMode = mode || (isAgent ? "mine" : "assign");
+  const isManager = view !== "mine"; // assign / tracker are the management views
+  // Management (no fixed department) resolves task activities from the chosen assignee
+  const orgWide = !currentUser.department;
 
   const [tasks, setTasks] = useState<AssignedTask[]>([]);
-  const [agents, setAgents] = useState<{ id: string; full_name: string; department?: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; full_name: string; department?: string; job_title?: string }[]>([]);
   const [taskTypes, setTaskTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -41,7 +44,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const fetchTasks = async () => {
     try {
       setLoading(true); setError("");
-      const res = await apiFetch("/api/tasks");
+      const res = await apiFetch(view === "mine" ? "/api/tasks/mine" : "/api/tasks");
       if (!res.ok) throw new Error("Failed to load tasks.");
       setTasks(await res.json());
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
@@ -57,10 +60,11 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
     fetchTasks();
     if (isManager) {
       apiFetch("/api/tasks/agents").then((r) => r.ok ? r.json() : []).then(setAgents).catch(() => {});
-      // Leaders/supervisors: their own department. Admin: loaded when an agent is picked.
-      if (currentUser.role !== "admin") loadActivities(currentUser.department);
+      // Department-scoped managers load their own activities; org-wide managers
+      // resolve activities from the chosen assignee's department.
+      if (!orgWide) loadActivities(currentUser.department);
     } else {
-      // Agent: mark notifications as read
+      // My Tasks: clear the unseen notifications
       apiFetch("/api/tasks/mark-seen", { method: "POST" }).then(() => onSeen && onSeen()).catch(() => {});
     }
   }, []);
@@ -135,10 +139,11 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const inputCls = "w-full px-4 py-3 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition";
   const smallCls = "px-2.5 py-1.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-lg text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[var(--surface)]";
 
-  // Agent: only active tasks (completed move to My Logs). Manager tracker: all.
-  const visibleTasks = view === "agent" ? tasks.filter((t) => t.status !== "Completed") : tasks;
-  // Agents eligible for reassign in edit = same department as the task being edited
-  const editAgents = currentUser.role === "admin" ? agents.filter((a) => a.department === (tasks.find((t) => t.id === editing)?.department)) : agents;
+  // My Tasks: only active tasks (completed move to My Logs). Manager tracker: all.
+  const visibleTasks = view === "mine" ? tasks.filter((t) => t.status !== "Completed") : tasks;
+  // Employees eligible for reassign = subordinates in the edited task's department
+  const editDept = tasks.find((t) => t.id === editing)?.department;
+  const editAgents = editDept ? agents.filter((a) => a.department === editDept) : agents;
 
   const headerTitle = view === "assign" ? "Assign Tasks" : view === "tracker" ? "Task Tracker" : "My Tasks";
   const headerSub = view === "assign" ? "Create tasks for your team." : view === "tracker" ? "Track and manage your team's tasks." : "Tasks assigned to you.";
@@ -170,10 +175,10 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
               </select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Assign To (agent):</label>
-              <select value={assignTo} onChange={(e) => { const v = e.target.value; setAssignTo(v); if (currentUser.role === "admin") { setTitle(""); loadActivities(agents.find((x) => x.id === v)?.department); } }} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
-                <option value="">— Select agent —</option>
-                {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+              <label className="text-xs font-bold text-[var(--text)]">Assign To (employee):</label>
+              <select value={assignTo} onChange={(e) => { const v = e.target.value; setAssignTo(v); if (orgWide) { setTitle(""); loadActivities(agents.find((x) => x.id === v)?.department); } }} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                <option value="">— Select employee —</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}{a.job_title ? ` — ${a.job_title}` : ""}{a.department ? ` (${a.department})` : ""}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
@@ -204,7 +209,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
         loading ? (
           <div className="flex flex-col items-center justify-center min-h-[160px]"><div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
         ) : visibleTasks.length === 0 ? (
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-10 text-center text-[var(--muted)] text-sm">{view === "agent" ? "No tasks assigned to you yet." : "No tasks yet."}</div>
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-10 text-center text-[var(--muted)] text-sm">{view === "mine" ? "No tasks assigned to you yet." : "No tasks yet."}</div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {visibleTasks.map((t) => (
@@ -256,8 +261,8 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
 
                     <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]/60 gap-2 flex-wrap">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {/* Agent: progress + complete with time & note */}
-                        {view === "agent" && t.status !== "Completed" && (
+                        {/* Assignee: progress + complete with time & note */}
+                        {view === "mine" && t.status !== "Completed" && (
                           <>
                             <select value={t.status} onChange={(e) => e.target.value !== "Completed" && setStatus(t, e.target.value)} className={smallCls + " font-bold"}>
                               <option value="New">New</option>

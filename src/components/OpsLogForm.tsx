@@ -33,11 +33,13 @@ const FIELD_META: Record<string, { label: string; type: "text" | "textarea" | "d
 export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormProps) {
   const isAdmin = currentUser.role === "admin";
   const isLeader = currentUser.role === "leader";
+  // Management (admin / owner / manager) can choose log type + department
+  const canChoose = currentUser.role === "admin" || currentUser.role === "owner" || currentUser.role === "manager";
   const editing = !!editLog;
 
   // Determine the log type
   const initialType: LogType = editLog?.log_type as LogType
-    || (isLeader ? "team_leader" : isAdmin ? "call_center" : (DEPT_TO_LOGTYPE[currentUser.department || ""] || "call_center"));
+    || (isLeader ? "team_leader" : canChoose ? "call_center" : (DEPT_TO_LOGTYPE[currentUser.department || ""] || "call_center"));
   const [logType, setLogType] = useState<LogType>(initialType);
   const cfg = LOG_TYPE_CONFIG[logType];
 
@@ -113,7 +115,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     if (cfg.statusKey) payload.status = status;
     payload.duration_seconds = durationMin ? Math.max(0, Math.round(Number(durationMin) * 60)) : 0;
     cfg.fields.forEach((f) => { if (values[f]) payload[f] = values[f]; });
-    if (isAdmin) { payload.log_type = logType; payload.department = cfg.department || currentUser.department; }
+    if (canChoose) { payload.log_type = logType; payload.department = cfg.department || currentUser.department; }
 
     try {
       setLoading(true);
@@ -182,7 +184,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
       {error && (<div className="flex bg-rose-500/10 border border-rose-500/20 text-rose-300 p-4 rounded-2xl text-xs gap-2 items-center"><AlertCircle className="w-5 h-5 shrink-0" /><p className="font-bold">{error}</p></div>)}
 
       {/* Admin picks the log type */}
-      {isAdmin && !editing && (
+      {canChoose && !editing && (
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-[var(--text)]">Log Type:</label>
           <select value={logType} onChange={(e) => setLogType(e.target.value as LogType)} className={selectCls}>

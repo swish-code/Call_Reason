@@ -5,8 +5,21 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB } from "./server/db.js";
+import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
+
+// Cross-department (management) roles see everything; below that is department-scoped.
+const isExecutive = (u: any) => u.role === "admin" || u.role === "owner" || (Number(u.level ?? roleDefaultLevel(u.role)) >= EXECUTIVE_LEVEL);
+const userLevel = (u: any) => Number(u.level ?? roleDefaultLevel(u.role));
+// Can `actor` assign / reassign a task to `target`?
+const canAssignTo = (actor: any, target: any): boolean => {
+  if (actor.role === "admin") return true;
+  if (!target || target.status === "Inactive") return false;
+  if (userLevel(target) >= userLevel(actor)) return false; // must be strictly below
+  if (isExecutive(actor)) return true; // management: any department
+  return (target.department || "") === (actor.department || ""); // dept-scoped
+};
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -103,6 +116,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
       username: user.username,
       email: user.email,
       role: user.role,
+      level: user.level ?? roleDefaultLevel(user.role),
+      job_title: user.job_title,
       team: user.team,
       department: user.department,
       full_name: user.full_name
@@ -173,6 +188,11 @@ app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, r
   const password_hash = bcrypt.hashSync(password, saltRounds);
   const nowString = new Date().toISOString();
 
+  // Resolve hierarchy level + job title (from the account type, with fallbacks)
+  const ut = USER_TYPES.find((t) => t.label === req.body.job_title);
+  const level = req.body.level != null ? Number(req.body.level) : (ut ? ut.level : roleDefaultLevel(role));
+  const job_title = req.body.job_title || (ut ? ut.label : null);
+
   const newUser = await DB.addUser({
     id: "user-" + Date.now(),
     full_name,
@@ -181,8 +201,11 @@ app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, r
     email,
     password_hash,
     role,
+    level,
+    job_title,
     team,
-    department: department || "Call Center",
+    // Management roles (Assistant Manager and up) are org-wide → no department
+    department: (level >= EXECUTIVE_LEVEL) ? null : (department || (ut ? ut.department : null) || "Call Center"),
     status,
     created_at: nowString,
     updated_at: nowString,
@@ -453,6 +476,7 @@ const DEPT_TO_LOGTYPE: Record<string, string> = {
   "Call Center": "call_center",
   "Technical": "technical",
   "Complaints": "complaint",
+  "Quality": "quality",
 };
 const LOG_FIELDS = ["department", "activity_type", "status", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date"];
 
@@ -509,7 +533,7 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   const { role, id, department } = req.user;
   const typeFilter = (req.query.type as string) || undefined;
   let logs;
-  if (role === "admin") {
+  if (isExecutive(req.user)) {
     logs = await DB.getLogs({ log_type: typeFilter, department: (req.query.department as string) || undefined });
   } else if (role === "leader" || role === "supervisor") {
     logs = await DB.getLogs({ department, log_type: typeFilter });
@@ -523,7 +547,7 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
 app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, department } = req.user;
   let logs;
-  if (role === "admin") logs = await DB.getLogs({});
+  if (isExecutive(req.user)) logs = await DB.getLogs({});
   else if (role === "leader" || role === "supervisor") logs = await DB.getLogs({ department });
   else logs = await DB.getLogs({ agent_id: id });
 
@@ -585,7 +609,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   // Per-agent shift hours (today / this week) from logged shift sessions
   let shiftByAgent: { name: string; today: number; week: number }[] = [];
   if (role !== "agent") {
-    const sessions = role === "admin" ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department });
+    const sessions = isExecutive(req.user) ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department });
     const kwTodayStr = kuwaitToday().date;
     const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
     const eff = (s: any) => {
@@ -644,14 +668,17 @@ app.get("/api/logs/history", authenticateJWT, requireLeaderOrAdmin, asyncHandler
 app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, full_name, department } = req.user;
   const body = req.body;
-  if (role === "supervisor") return res.status(403).json({ error: "Supervisors have view & export access only." });
   if (!body.activity_type) return res.status(400).json({ error: "Activity type is required." });
   if (["Completed", "Solved"].includes(body.status) && Number(body.duration_seconds) <= 0) {
     return res.status(400).json({ error: "Time spent is required to complete a task." });
   }
 
+  // Log routing by role:
+  //  - Agent / Supervisor: a log in their own department
+  //  - Team Leader: a coaching (team_leader) log
+  //  - Management (manager / owner / admin): choose log type + department
   let log_type: string, dept: string, agent_id: string, agent_name: string;
-  if (role === "agent") {
+  if (role === "agent" || role === "supervisor") {
     log_type = DEPT_TO_LOGTYPE[department];
     if (!log_type) return res.status(400).json({ error: "Your account is not assigned to a valid department." });
     dept = department; agent_id = id; agent_name = full_name;
@@ -787,12 +814,12 @@ app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) 
   if (req.user.role === "agent") return res.status(403).json({ error: "Agents cannot assign tasks." });
   const { title, description, assigned_to, due_date, priority } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: "Task title is required." });
-  if (!assigned_to) return res.status(400).json({ error: "Please choose an agent to assign the task to." });
+  if (!assigned_to) return res.status(400).json({ error: "Please choose an employee to assign the task to." });
 
   const target = await DB.getUserById(assigned_to);
-  if (!target || target.role !== "agent") return res.status(400).json({ error: "Selected user is not a valid agent." });
-  if (req.user.role !== "admin" && target.department !== req.user.department) {
-    return res.status(403).json({ error: "You can only assign tasks to agents in your own department." });
+  if (!target) return res.status(400).json({ error: "Selected employee was not found." });
+  if (!canAssignTo(req.user, target)) {
+    return res.status(403).json({ error: "You can only assign tasks to employees below you in the hierarchy (within your department)." });
   }
 
   const now = new Date().toISOString();
@@ -818,16 +845,22 @@ app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) 
   res.status(201).json(task);
 }));
 
-// List tasks (scoped)
+// List tasks in the caller's management scope (for the Task Tracker)
 app.get("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, department } = req.user;
   // Make sure today's recurring instances exist before listing
-  await ensureTodayInstances(role === "admin" ? undefined : department);
+  await ensureTodayInstances(isExecutive(req.user) ? undefined : department);
   let tasks;
-  if (role === "admin") tasks = await DB.getAssignedTasks({});
+  if (isExecutive(req.user)) tasks = await DB.getAssignedTasks({});
   else if (role === "agent") tasks = await DB.getAssignedTasks({ assigned_to: id });
   else tasks = await DB.getAssignedTasks({ department });
   res.json(tasks);
+}));
+
+// Tasks assigned to me personally (the "My Tasks" page — available to every role)
+app.get("/api/tasks/mine", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.department) await ensureTodayInstances(req.user.department);
+  res.json(await DB.getAssignedTasks({ assigned_to: req.user.id }));
 }));
 
 // ---- Pool: available (unclaimed) recurring tasks for on-shift agents ----
@@ -837,7 +870,7 @@ app.get("/api/tasks/pool", authenticateJWT, asyncHandler(async (req: any, res: a
     // Managers can view their department's pool (admin: all)
     if (role === "admin") {
       let all: any[] = [];
-      for (const d of ["Call Center", "Technical", "Complaints"]) { await ensureTodayInstances(d); all = all.concat(await DB.getPoolTasks(d)); }
+      for (const d of ["Call Center", "Technical", "Complaints", "Quality"]) { await ensureTodayInstances(d); all = all.concat(await DB.getPoolTasks(d)); }
       return res.json(all);
     }
     await ensureTodayInstances(department);
@@ -860,24 +893,24 @@ app.post("/api/tasks/:id/claim", authenticateJWT, asyncHandler(async (req: any, 
   res.json(claimed);
 }));
 
-// Notification badge — agent's unseen tasks
+// Notification badge — my unseen assigned tasks (every role can receive tasks)
 app.get("/api/tasks/unseen-count", authenticateJWT, asyncHandler(async (req: any, res: any) => {
-  if (req.user.role !== "agent") return res.json({ count: 0 });
   res.json({ count: await DB.countUnseenTasks(req.user.id) });
 }));
 
-// Mark all of the agent's tasks as seen
+// Mark all of my assigned tasks as seen
 app.post("/api/tasks/mark-seen", authenticateJWT, asyncHandler(async (req: any, res: any) => {
-  if (req.user.role === "agent") await DB.markTasksSeen(req.user.id);
+  await DB.markTasksSeen(req.user.id);
   res.json({ message: "ok" });
 }));
 
-// Agents a manager can assign to (own department; admin = all)
+// Employees the caller can assign to — anyone strictly below them
+// (department-scoped for supervisors/leaders; cross-department for management)
 app.get("/api/tasks/agents", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   if (req.user.role === "agent") return res.status(403).json({ error: "Forbidden" });
-  let agents = (await DB.getUsers()).filter((u) => u.role === "agent" && u.status !== "Inactive");
-  if (req.user.role !== "admin") agents = agents.filter((u) => u.department === req.user.department);
-  res.json(agents.map((u) => ({ id: u.id, full_name: u.full_name, department: u.department })));
+  const subs = (await DB.getUsers())
+    .filter((u) => u.id !== req.user.id && u.status !== "Inactive" && canAssignTo(req.user, u));
+  res.json(subs.map((u) => ({ id: u.id, full_name: u.full_name, department: u.department, job_title: u.job_title, level: u.level })));
 }));
 
 // Update a task (agent owner updates status; manager/admin can update)
@@ -885,24 +918,28 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
   const task = await DB.getAssignedTaskById(req.params.id);
   if (!task) return res.status(404).json({ error: "Task not found." });
   const { role, id, department } = req.user;
-  const isOwnerAgent = role === "agent" && task.assigned_to === id;
-  const isManager = role === "admin" || (role !== "agent" && task.department === department);
-  if (!isOwnerAgent && !isManager) return res.status(403).json({ error: "Not authorized to update this task." });
+  // The person the task is assigned to can progress it (any role can be an assignee).
+  const isAssignee = task.assigned_to === id;
+  // A manager can edit/reassign tasks they created, or within their scope.
+  const canManage = role === "admin" || task.assigned_by === id
+    || (role !== "agent" && (isExecutive(req.user) || task.department === department));
+  if (!isAssignee && !canManage) return res.status(403).json({ error: "Not authorized to update this task." });
 
   const fields: any = {};
 
-  if (isOwnerAgent) {
-    // Agent: progress the task (status / time / note). Only the agent completes.
+  if (isAssignee) {
+    // Assignee: progress the task (status / time / note). Only the assignee completes.
     if (req.body.status !== undefined) fields.status = req.body.status;
     if (req.body.duration_seconds !== undefined) fields.duration_seconds = Math.max(0, Math.round(Number(req.body.duration_seconds) || 0));
     if (req.body.note !== undefined) fields.note = req.body.note;
-  } else if (isManager) {
+  }
+  if (canManage && !isAssignee) {
     // Manager: edit details + reassign (NOT complete)
     ["title", "description", "priority", "due_date"].forEach((k) => { if (req.body[k] !== undefined) fields[k] = req.body[k]; });
     if (req.body.assigned_to !== undefined && req.body.assigned_to !== task.assigned_to) {
       const target = await DB.getUserById(req.body.assigned_to);
-      if (!target || target.role !== "agent") return res.status(400).json({ error: "Selected user is not a valid agent." });
-      if (role !== "admin" && target.department !== department) return res.status(403).json({ error: "You can only reassign within your department." });
+      if (!target) return res.status(400).json({ error: "Selected employee was not found." });
+      if (!canAssignTo(req.user, target)) return res.status(403).json({ error: "You can only reassign to employees below you in the hierarchy (within your department)." });
       fields.assigned_to = target.id; fields.assigned_to_name = target.full_name; fields.department = target.department; fields.seen = false;
     }
   }

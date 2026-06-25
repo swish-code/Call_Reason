@@ -45,10 +45,11 @@ import {
   ClipboardCheck,
   Repeat,
   Inbox,
-  Power
+  Power,
+  Send
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool";
+type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -89,7 +90,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!currentUser || currentUser.role !== "agent") { prevUnseenRef.current = 0; return; }
+    if (!currentUser) { prevUnseenRef.current = 0; return; }
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
@@ -116,7 +117,7 @@ export default function App() {
     return () => clearInterval(t);
   }, [currentUser]);
 
-  const openTasks = () => { setActivePage("tasks"); if (currentUser?.role === "agent") { setUnseenTasks(0); prevUnseenRef.current = 0; } };
+  const openTasks = () => { setActivePage("mytasks"); setUnseenTasks(0); prevUnseenRef.current = 0; };
 
   // Shift presence (agents): On Shift / Out of Shift
   const [shiftStatus, setShiftStatus] = useState<"on" | "off">("off");
@@ -327,8 +328,12 @@ export default function App() {
 
   // Get localized role string
   const getLocalizedRole = (role: UserRole) => {
+    // Prefer the specific account-type label when available
+    if (currentUser?.job_title) return currentUser.job_title;
     switch (role) {
       case "admin": return "System Admin (Admin)";
+      case "owner": return "Owner";
+      case "manager": return "Manager";
       case "leader": return "Team Leader (TL)";
       case "supervisor": return "Supervisor";
       default: return "Support Agent (Agent)";
@@ -400,20 +405,18 @@ export default function App() {
               {sidebarOpen && <span className="truncate">Dashboard</span>}
             </button>
 
-            {/* New Log: not for Supervisors (view-only) */}
-            {currentUser?.role !== "supervisor" && (
-              <button
-                onClick={() => setActivePage("newlog")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "newlog"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <FilePlus2 className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">New Log</span>}
-              </button>
-            )}
+            {/* New Log: available to every role */}
+            <button
+              onClick={() => setActivePage("newlog")}
+              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                activePage === "newlog"
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+              }`}
+            >
+              <FilePlus2 className="w-4 h-4 shrink-0" />
+              {sidebarOpen && <span className="truncate">New Log</span>}
+            </button>
 
             <button
               onClick={() => setActivePage("logs")}
@@ -427,20 +430,35 @@ export default function App() {
               {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs"}</span>}
             </button>
 
-            {/* Tasks: My Tasks (agent) / Assign Task (managers) */}
+            {/* My Tasks — tasks assigned to me (every role can receive tasks) */}
             <button
               onClick={openTasks}
               className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "tasks"
+                activePage === "mytasks"
                   ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
                   : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
               }`}
             >
               <ClipboardCheck className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate flex items-center gap-2">{currentUser.role === "agent" ? "My Tasks" : "Assign Task"}
-                {currentUser.role === "agent" && unseenTasks > 0 && <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{unseenTasks}</span>}
+              {sidebarOpen && <span className="truncate flex items-center gap-2">My Tasks
+                {unseenTasks > 0 && <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{unseenTasks}</span>}
               </span>}
             </button>
+
+            {/* Assign Task — anyone above agent can assign downward */}
+            {currentUser?.role !== "agent" && (
+              <button
+                onClick={() => setActivePage("tasks")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "tasks"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <Send className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Assign Task</span>}
+              </button>
+            )}
 
             {/* Available Tasks (pool) — agents only */}
             {currentUser?.role === "agent" && (
@@ -586,7 +604,8 @@ export default function App() {
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
               {activePage === "history" && "History Logs — Audit Trail"}
-              {activePage === "tasks" && (currentUser.role === "agent" ? "My Tasks" : "Assign Tasks")}
+              {activePage === "mytasks" && "My Tasks"}
+              {activePage === "tasks" && "Assign Tasks"}
               {activePage === "tracker" && "Task Tracker"}
               {activePage === "recurring" && "Recurring Tasks"}
               {activePage === "pool" && "Available Tasks"}
@@ -617,16 +636,14 @@ export default function App() {
               </button>
             )}
 
-            {currentUser.role === "agent" && (
-              <button
-                onClick={openTasks}
-                className="relative p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
-                title="My Tasks"
-              >
-                <Bell className="w-4 h-4" />
-                {unseenTasks > 0 && <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-extrabold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{unseenTasks}</span>}
-              </button>
-            )}
+            <button
+              onClick={openTasks}
+              className="relative p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
+              title="My Tasks"
+            >
+              <Bell className="w-4 h-4" />
+              {unseenTasks > 0 && <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-extrabold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{unseenTasks}</span>}
+            </button>
 
             <button
               onClick={toggleTheme}
@@ -657,8 +674,11 @@ export default function App() {
           {activePage === "history" && (
             <HistoryLogs currentUser={currentUser} />
           )}
-          {activePage === "tasks" && (
-            <Tasks currentUser={currentUser} mode="assign" onSeen={() => setUnseenTasks(0)} />
+          {activePage === "mytasks" && (
+            <Tasks currentUser={currentUser} mode="mine" onSeen={() => setUnseenTasks(0)} />
+          )}
+          {activePage === "tasks" && currentUser.role !== "agent" && (
+            <Tasks currentUser={currentUser} mode="assign" />
           )}
           {activePage === "tracker" && currentUser.role !== "agent" && (
             <Tasks currentUser={currentUser} mode="tracker" />

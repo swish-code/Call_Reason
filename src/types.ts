@@ -1,15 +1,58 @@
-export type UserRole = "agent" | "leader" | "supervisor" | "admin";
+// Coarse permission bucket. Authority order is driven by `level` (below), not by role.
+export type UserRole = "agent" | "leader" | "supervisor" | "manager" | "owner" | "admin";
 
 // Organizational team an employee belongs to (separate from the permission role)
 export type Team = "Complain Team" | "Call Center" | "Technical Team" | "Team Leader";
 export const TEAMS: Team[] = ["Complain Team", "Call Center", "Technical Team", "Team Leader"];
 
-// Department an Agent / Team Leader belongs to (Operations & Logs system)
-export type Department = "Call Center" | "Technical" | "Complaints";
-export const DEPARTMENTS: Department[] = ["Call Center", "Technical", "Complaints"];
+// Department an employee belongs to (Operations & Logs system)
+export type Department = "Call Center" | "Technical" | "Complaints" | "Quality";
+export const DEPARTMENTS: Department[] = ["Call Center", "Technical", "Complaints", "Quality"];
 
-// The four log modules
-export type LogType = "call_center" | "technical" | "complaint" | "team_leader";
+// Org hierarchy levels (higher number = more authority).
+// Roles at level <= 3 are department-scoped; level >= 4 (management) act across departments.
+export const LEVEL = {
+  AGENT: 1,
+  LEADER: 2,
+  SUPERVISOR: 3,
+  ASSISTANT_MANAGER: 4,
+  MANAGER: 5, // Operations / Marketing / Call Center managers (peers)
+  OWNER: 6,
+  ADMIN: 99, // System Admin — full system access
+} as const;
+// A role/level is "executive" (cross-department) once it reaches Assistant Manager.
+export const EXECUTIVE_LEVEL = LEVEL.ASSISTANT_MANAGER;
+
+// A selectable account type encodes the permission role, department and hierarchy level.
+export interface UserType { value: string; label: string; role: UserRole; department: Department | null; level: number; }
+export const USER_TYPES: UserType[] = [
+  { value: "call_center_agent", label: "Call Center Agent", role: "agent", department: "Call Center", level: LEVEL.AGENT },
+  { value: "call_center_leader", label: "Call Center Team Leader", role: "leader", department: "Call Center", level: LEVEL.LEADER },
+  { value: "technical_agent", label: "Technical Agent", role: "agent", department: "Technical", level: LEVEL.AGENT },
+  { value: "technical_leader", label: "Technical Team Leader", role: "leader", department: "Technical", level: LEVEL.LEADER },
+  { value: "complaint_agent", label: "Complaint Team Agent", role: "agent", department: "Complaints", level: LEVEL.AGENT },
+  { value: "complaint_leader", label: "Complaint Team Leader", role: "leader", department: "Complaints", level: LEVEL.LEADER },
+  { value: "quality_agent", label: "Quality Agent", role: "agent", department: "Quality", level: LEVEL.AGENT },
+  { value: "quality_leader", label: "Quality Team Leader", role: "leader", department: "Quality", level: LEVEL.LEADER },
+  { value: "supervisor_call_center", label: "Supervisor Call Center", role: "supervisor", department: "Call Center", level: LEVEL.SUPERVISOR },
+  { value: "supervisor_complaint", label: "Supervisor Complaint", role: "supervisor", department: "Complaints", level: LEVEL.SUPERVISOR },
+  { value: "supervisor_technical", label: "Supervisor Technical", role: "supervisor", department: "Technical", level: LEVEL.SUPERVISOR },
+  { value: "quality_supervisor", label: "Quality Supervisor", role: "supervisor", department: "Quality", level: LEVEL.SUPERVISOR },
+  { value: "assistant_manager", label: "Assistant Manager", role: "manager", department: null, level: LEVEL.ASSISTANT_MANAGER },
+  { value: "call_center_manager", label: "Call Center Manager", role: "manager", department: null, level: LEVEL.MANAGER },
+  { value: "marketing_manager", label: "Marketing Manager", role: "manager", department: null, level: LEVEL.MANAGER },
+  { value: "operations_manager", label: "Operations Manager", role: "manager", department: null, level: LEVEL.MANAGER },
+  { value: "owner", label: "Owner", role: "owner", department: null, level: LEVEL.OWNER },
+  { value: "system_admin", label: "System Admin", role: "admin", department: null, level: LEVEL.ADMIN },
+];
+
+// Default level for a bare role (used to backfill legacy accounts without a stored level)
+export const roleDefaultLevel = (role: string): number =>
+  role === "owner" ? LEVEL.OWNER : role === "admin" ? LEVEL.ADMIN : role === "manager" ? LEVEL.MANAGER
+  : role === "supervisor" ? LEVEL.SUPERVISOR : role === "leader" ? LEVEL.LEADER : LEVEL.AGENT;
+
+// The log modules
+export type LogType = "call_center" | "technical" | "complaint" | "team_leader" | "quality";
 
 export interface OpsLog {
   id: string;
@@ -54,6 +97,7 @@ export const LOG_TYPE_CONFIG: Record<LogType, {
   technical: { title: "Technical Log", department: "Technical", activityLabel: "Technical Task Type", activityKey: "tech_activity", statusKey: "cc_status", fields: ["brand", "notes"] },
   complaint: { title: "Complaint Log", department: "Complaints", activityLabel: "Complaint Type", activityKey: "complaint_activity", statusKey: "complaint_status", fields: ["complaint_id", "resolution_notes"] },
   team_leader: { title: "Team Leader Log", department: null, activityLabel: "Activity Type", activityKey: "tl_activity", fields: ["target_agent_name", "notes", "action_plan", "follow_up_date"] },
+  quality: { title: "Quality Log", department: "Quality", activityLabel: "Quality Activity", activityKey: "quality_activity", statusKey: "cc_status", fields: ["brand", "notes"] },
 };
 
 export interface User {
@@ -63,6 +107,8 @@ export interface User {
   email: string;
   password_hash: string;
   role: UserRole;
+  level?: number; // Org hierarchy level (see LEVEL)
+  job_title?: string; // Human-facing account type label (e.g. "Call Center Manager")
   team?: Team; // Legacy team field (kept for backward compatibility)
   department?: Department; // Department for the Operations & Logs system
   status: "Active" | "Inactive";
@@ -224,6 +270,7 @@ export const CONFIGURABLE_LISTS: { key: string; title: string; description: stri
   { key: "cc_activity", title: "Call Center — Activities", description: "Call Center log activity types" },
   { key: "tech_activity", title: "Technical — Task Types", description: "Technical log task types" },
   { key: "complaint_activity", title: "Complaints — Types", description: "Complaint log types" },
+  { key: "quality_activity", title: "Quality — Activities", description: "Quality log activity types" },
   { key: "tl_activity", title: "Team Leader — Activities", description: "Team Leader log activity types" },
   { key: "cc_status", title: "Log Status (CC/Technical)", description: "Open / In Progress / Completed" },
   { key: "complaint_status", title: "Complaint Status", description: "Solved / Not Solved / Waiting Feedback" },

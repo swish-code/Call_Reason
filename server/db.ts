@@ -82,10 +82,11 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   status: ["Open", "Pending", "Resolved", "Closed"],
   team: ["Complain Team", "Call Center", "Technical Team", "Team Leader"],
   call_direction: ["Inbound", "Outbound"],
-  department: ["Call Center", "Technical", "Complaints"],
+  department: ["Call Center", "Technical", "Complaints", "Quality"],
   cc_activity: ["Survey", "Review", "Follow-up CST", "Handle Customer Issue", "Handle Complaint", "Follow-up Orders", "Open Branch", "Close Branch", "Floor Tasks", "Previous Tasks Follow-up", "Other"],
   tech_activity: ["Delayed Orders Follow-up", "Aggregator Follow-up", "Missing Item Cases", "Wrong Dispatch Cases", "Big Order Confirmation", "Order Assignment", "Aggregator Comments", "Punch Orders", "Open Branch", "Busy Branch", "Close Branch", "Hide Item", "Unhide Item", "Follow-up Groups", "Cancellation Request", "Foodics / POS Issues", "Other"],
   complaint_activity: ["Validation", "Escalation", "Coupon Request", "Email Complaint", "Social Media Complaint", "Agent Inquiry", "Customer Review", "Survey Result", "Follow-up Store", "Other"],
+  quality_activity: ["Call Evaluation", "Order Audit", "Compliance Check", "Coaching Review", "Calibration Session", "Mystery Shopper", "Other"],
   tl_activity: ["Agent Coaching", "One-to-One Session", "Monthly Meeting", "Floor Task", "Validation Quality Review", "Agent Mistake Review", "Performance Feedback", "Other"],
   cc_status: ["Open", "In Progress", "Completed"],
   complaint_status: ["Solved", "Not Solved", "Waiting Feedback"],
@@ -113,7 +114,7 @@ const SEED_INTERACTIONS: Interaction[] = [
 
 // Columns that may be updated through the API (whitelist guards against
 // arbitrary fields in request bodies being written to the table).
-const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "team", "department", "status", "created_by"] as const;
+const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "level", "job_title", "team", "department", "status", "created_by"] as const;
 const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "order_number", "branch", "team", "customer_type", "call_from", "aggregator_name", "comments", "complaint_reason", "fcr", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
 
 const LOG_COLS = ["log_type", "department", "activity_type", "status", "agent_id", "agent_name", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "created_at", "updated_at", "created_by"] as const;
@@ -133,6 +134,8 @@ export class DB {
         email TEXT NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL,
+        level INTEGER,
+        job_title TEXT,
         team TEXT,
         status TEXT NOT NULL,
         created_at TEXT,
@@ -306,8 +309,28 @@ export class DB {
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS task_date TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_status TEXT DEFAULT 'off';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_started_at TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS level INTEGER;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT;
       CREATE UNIQUE INDEX IF NOT EXISTS uq_assigned_tasks_template_date ON assigned_tasks(template_id, task_date) WHERE template_id IS NOT NULL;
     `);
+
+    // Backfill hierarchy level from the coarse role for legacy accounts
+    await pool.query(`
+      UPDATE users SET level = CASE
+        WHEN role = 'owner' THEN 6
+        WHEN role = 'admin' THEN 99
+        WHEN role = 'manager' THEN 5
+        WHEN role = 'supervisor' THEN 3
+        WHEN role = 'leader' THEN 2
+        ELSE 1 END
+      WHERE level IS NULL
+    `);
+
+    // Ensure the "Quality" department option exists even on databases whose
+    // department list was seeded before Quality was added
+    await pool.query(
+      "INSERT INTO options (id, list_key, label, sort_order, active) SELECT 'opt-department-quality', 'department', 'Quality', 99, true WHERE NOT EXISTS (SELECT 1 FROM options WHERE list_key = 'department' AND label = 'Quality')"
+    );
 
     // Backfill teams for rows created before the feature existed
     await pool.query(
@@ -318,14 +341,16 @@ export class DB {
     );
     await pool.query("UPDATE interactions SET team = 'Call Center' WHERE team IS NULL OR team = ''");
 
-    // Backfill department from the legacy team value
+    // Backfill department from the legacy team value — only for department-scoped
+    // roles. Management roles (manager / owner / admin) are org-wide (no department).
     await pool.query(`
       UPDATE users SET department = CASE
         WHEN team = 'Complain Team' THEN 'Complaints'
         WHEN team = 'Technical Team' THEN 'Technical'
         WHEN team = 'Call Center' THEN 'Call Center'
         ELSE 'Call Center' END
-      WHERE department IS NULL OR department = ''
+      WHERE (department IS NULL OR department = '')
+        AND role NOT IN ('manager','owner','admin')
     `);
 
     // One-time: install the real company brands + per-brand branches.
@@ -430,9 +455,9 @@ export class DB {
 
   static async addUser(user: User): Promise<User> {
     const { rows } = await pool.query<User>(
-      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, team, department, status, created_at, updated_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.team ?? "Call Center", user.department ?? "Call Center", user.status, user.created_at, user.updated_at, user.created_by ?? null]
+      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, level, job_title, team, department, status, created_at, updated_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.level ?? null, user.job_title ?? null, user.team ?? "Call Center", user.department ?? null, user.status, user.created_at, user.updated_at, user.created_by ?? null]
     );
     return rows[0];
   }
