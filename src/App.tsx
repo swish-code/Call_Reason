@@ -119,6 +119,13 @@ export default function App() {
 
   const openTasks = () => { setActivePage("mytasks"); setUnseenTasks(0); prevUnseenRef.current = 0; };
 
+  // The Owner has no Dashboard / New Log / Team Logs / My Tasks — keep them off those pages
+  useEffect(() => {
+    if (currentUser?.role === "owner" && ["dashboard", "newlog", "logs", "mytasks"].includes(activePage)) {
+      setActivePage("tracker");
+    }
+  }, [currentUser, activePage]);
+
   // Shift presence (agents): On Shift / Out of Shift
   const [shiftStatus, setShiftStatus] = useState<"on" | "off">("off");
   const [shiftBusy, setShiftBusy] = useState(false);
@@ -393,57 +400,67 @@ export default function App() {
 
           {/* Nav Buttons links */}
           <nav className="flex flex-col gap-1" onClick={closeSidebarOnMobile}>
-            <button
-              onClick={() => setActivePage("dashboard")}
-              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "dashboard"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-              }`}
-            >
-              <BarChart3 className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">Dashboard</span>}
-            </button>
+            {/* Dashboard: hidden for the Owner */}
+            {currentUser?.role !== "owner" && (
+              <button
+                onClick={() => setActivePage("dashboard")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "dashboard"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Dashboard</span>}
+              </button>
+            )}
 
-            {/* New Log: available to every role */}
-            <button
-              onClick={() => setActivePage("newlog")}
-              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "newlog"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-              }`}
-            >
-              <FilePlus2 className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">New Log</span>}
-            </button>
+            {/* New Log: every role except the Owner */}
+            {currentUser?.role !== "owner" && (
+              <button
+                onClick={() => setActivePage("newlog")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "newlog"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <FilePlus2 className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">New Log</span>}
+              </button>
+            )}
 
-            <button
-              onClick={() => setActivePage("logs")}
-              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "logs"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-              }`}
-            >
-              <ClipboardList className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs"}</span>}
-            </button>
+            {/* Logs: hidden for the Owner */}
+            {currentUser?.role !== "owner" && (
+              <button
+                onClick={() => setActivePage("logs")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "logs"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <ClipboardList className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs"}</span>}
+              </button>
+            )}
 
-            {/* My Tasks — tasks assigned to me (every role can receive tasks) */}
-            <button
-              onClick={openTasks}
-              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "mytasks"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-              }`}
-            >
-              <ClipboardCheck className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate flex items-center gap-2">My Tasks
-                {unseenTasks > 0 && <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{unseenTasks}</span>}
-              </span>}
-            </button>
+            {/* My Tasks — tasks assigned to me (every role except the Owner) */}
+            {currentUser?.role !== "owner" && (
+              <button
+                onClick={openTasks}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "mytasks"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <ClipboardCheck className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate flex items-center gap-2">My Tasks
+                  {unseenTasks > 0 && <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{unseenTasks}</span>}
+                </span>}
+              </button>
+            )}
 
             {/* Assign Task — anyone above agent can assign downward */}
             {currentUser?.role !== "agent" && (
@@ -636,14 +653,16 @@ export default function App() {
               </button>
             )}
 
-            <button
-              onClick={openTasks}
-              className="relative p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
-              title="My Tasks"
-            >
-              <Bell className="w-4 h-4" />
-              {unseenTasks > 0 && <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-extrabold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{unseenTasks}</span>}
-            </button>
+            {currentUser.role !== "owner" && (
+              <button
+                onClick={openTasks}
+                className="relative p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
+                title="My Tasks"
+              >
+                <Bell className="w-4 h-4" />
+                {unseenTasks > 0 && <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-extrabold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{unseenTasks}</span>}
+              </button>
+            )}
 
             <button
               onClick={toggleTheme}
