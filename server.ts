@@ -12,11 +12,13 @@ dotenv.config();
 // Cross-department (management) roles see everything; below that is department-scoped.
 const isExecutive = (u: any) => u.role === "admin" || u.role === "owner" || (Number(u.level ?? roleDefaultLevel(u.role)) >= EXECUTIVE_LEVEL);
 const userLevel = (u: any) => Number(u.level ?? roleDefaultLevel(u.role));
-// Can `actor` assign / reassign a task to `target`?
+// Strict chain of command: each role assigns only to the tier directly below it
+// (direct reports). The level ladder is contiguous (1..6), so that tier = level-1.
+// Department-scoped roles stay within their department; management is org-wide.
 const canAssignTo = (actor: any, target: any): boolean => {
-  if (actor.role === "admin") return true;
+  if (actor.role === "admin") return true; // System Admin: unrestricted
   if (!target || target.status === "Inactive") return false;
-  if (userLevel(target) >= userLevel(actor)) return false; // must be strictly below
+  if (userLevel(target) !== userLevel(actor) - 1) return false; // direct reports only
   if (isExecutive(actor)) return true; // management: any department
   return (target.department || "") === (actor.department || ""); // dept-scoped
 };
@@ -819,7 +821,7 @@ app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) 
   const target = await DB.getUserById(assigned_to);
   if (!target) return res.status(400).json({ error: "Selected employee was not found." });
   if (!canAssignTo(req.user, target)) {
-    return res.status(403).json({ error: "You can only assign tasks to employees below you in the hierarchy (within your department)." });
+    return res.status(403).json({ error: "You can only assign tasks to your direct reports (the level immediately below you, in your department)." });
   }
 
   const now = new Date().toISOString();
@@ -939,7 +941,7 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
     if (req.body.assigned_to !== undefined && req.body.assigned_to !== task.assigned_to) {
       const target = await DB.getUserById(req.body.assigned_to);
       if (!target) return res.status(400).json({ error: "Selected employee was not found." });
-      if (!canAssignTo(req.user, target)) return res.status(403).json({ error: "You can only reassign to employees below you in the hierarchy (within your department)." });
+      if (!canAssignTo(req.user, target)) return res.status(403).json({ error: "You can only reassign to your direct reports (the level immediately below you, in your department)." });
       fields.assigned_to = target.id; fields.assigned_to_name = target.full_name; fields.department = target.department; fields.seen = false;
     }
   }
