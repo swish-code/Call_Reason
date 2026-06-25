@@ -18,6 +18,8 @@ const userLevel = (u: any) => Number(u.level ?? roleDefaultLevel(u.role));
 const canAssignTo = (actor: any, target: any): boolean => {
   if (actor.role === "admin") return true; // System Admin: unrestricted
   if (!target || target.status === "Inactive") return false;
+  // The Owner's only direct report is the Call Center Manager.
+  if (actor.role === "owner") return target.job_title === "Call Center Manager";
   if (userLevel(target) !== userLevel(actor) - 1) return false; // direct reports only
   if (isExecutive(actor)) return true; // management: any department
   return (target.department || "") === (actor.department || ""); // dept-scoped
