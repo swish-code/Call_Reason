@@ -52,7 +52,7 @@ export const LOG_TYPE_CONFIG: Record<LogType, {
 }> = {
   call_center: { title: "Call Center Log", department: "Call Center", activityLabel: "Activity Type", activityKey: "cc_activity", statusKey: "cc_status", fields: ["brand", "order_number", "notes"] },
   technical: { title: "Technical Log", department: "Technical", activityLabel: "Technical Task Type", activityKey: "tech_activity", statusKey: "cc_status", fields: ["brand", "order_number", "aggregator", "notes"] },
-  complaint: { title: "Complaint Log", department: "Complaints", activityLabel: "Complaint Type", activityKey: "complaint_activity", statusKey: "complaint_status", fields: ["complaint_id", "order_number", "customer_name", "action_taken", "resolution_notes"] },
+  complaint: { title: "Complaint Log", department: "Complaints", activityLabel: "Complaint Type", activityKey: "complaint_activity", statusKey: "complaint_status", fields: ["complaint_id", "resolution_notes"] },
   team_leader: { title: "Team Leader Log", department: null, activityLabel: "Activity Type", activityKey: "tl_activity", fields: ["target_agent_name", "notes", "action_plan", "follow_up_date"] },
 };
 
