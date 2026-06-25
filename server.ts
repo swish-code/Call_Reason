@@ -22,8 +22,8 @@ const canAssignTo = (actor: any, target: any): boolean => {
   if (!target || target.status === "Inactive") return false;
   // The Owner's only direct report is the Call Center Manager.
   if (actor.role === "owner") return target.job_title === "Call Center Manager";
-  // The Call Center Manager oversees everyone in the operations departments.
-  if (actor.job_title === "Call Center Manager") {
+  // The Call Center Manager & Assistant Manager oversee everyone in the operations departments.
+  if (actor.job_title === "Call Center Manager" || actor.job_title === "Assistant Manager") {
     return userLevel(target) < userLevel(actor) && OPS_DEPTS.includes(target.department || "");
   }
   if (userLevel(target) !== userLevel(actor) - 1) return false; // direct reports only

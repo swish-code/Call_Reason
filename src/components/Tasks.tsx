@@ -168,17 +168,17 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
           {formMsg && <div className="text-xs text-rose-400 font-bold flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> {formMsg}</div>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Task:</label>
-              <select value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
-                <option value="">— Select a task —</option>
-                {taskTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
               <label className="text-xs font-bold text-[var(--text)]">Assign To (employee):</label>
               <select value={assignTo} onChange={(e) => { const v = e.target.value; setAssignTo(v); if (orgWide) { setTitle(""); loadActivities(agents.find((x) => x.id === v)?.department); } }} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
                 <option value="">— Select employee —</option>
                 {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}{a.job_title ? ` — ${a.job_title}` : ""}{a.department ? ` (${a.department})` : ""}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-[var(--text)]">Task:</label>
+              <select value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                <option value="">— Select a task —</option>
+                {taskTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
