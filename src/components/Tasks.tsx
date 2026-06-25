@@ -61,8 +61,8 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
     if (isManager) {
       apiFetch("/api/tasks/agents").then((r) => r.ok ? r.json() : []).then(setAgents).catch(() => {});
       // Department-scoped managers load their own activities; org-wide managers
-      // resolve activities from the chosen assignee's department.
-      if (!orgWide) loadActivities(currentUser.department);
+      // default to Call Center tasks and refine to the chosen assignee's department.
+      loadActivities(currentUser.department || "Call Center");
     } else {
       // My Tasks: clear the unseen notifications
       apiFetch("/api/tasks/mark-seen", { method: "POST" }).then(() => onSeen && onSeen()).catch(() => {});

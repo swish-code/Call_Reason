@@ -15,11 +15,17 @@ const userLevel = (u: any) => Number(u.level ?? roleDefaultLevel(u.role));
 // Strict chain of command: each role assigns only to the tier directly below it
 // (direct reports). The level ladder is contiguous (1..6), so that tier = level-1.
 // Department-scoped roles stay within their department; management is org-wide.
+// The Call Center Manager heads operations across these departments
+const OPS_DEPTS = ["Call Center", "Technical", "Complaints"];
 const canAssignTo = (actor: any, target: any): boolean => {
   if (actor.role === "admin") return true; // System Admin: unrestricted
   if (!target || target.status === "Inactive") return false;
   // The Owner's only direct report is the Call Center Manager.
   if (actor.role === "owner") return target.job_title === "Call Center Manager";
+  // The Call Center Manager oversees everyone in the operations departments.
+  if (actor.job_title === "Call Center Manager") {
+    return userLevel(target) < userLevel(actor) && OPS_DEPTS.includes(target.department || "");
+  }
   if (userLevel(target) !== userLevel(actor) - 1) return false; // direct reports only
   if (isExecutive(actor)) return true; // management: any department
   return (target.department || "") === (actor.department || ""); // dept-scoped
