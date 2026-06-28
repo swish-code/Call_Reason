@@ -23,6 +23,10 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [pMinutes, setPMinutes] = useState("");
   const [pSaving, setPSaving] = useState(false);
 
+  // Pagination — easily tunable; change PAGE_SIZE to adjust rows per page
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+
   const isAgent = currentUser.role === "agent";
 
   // Editable while not in a final state. Complaint logs use Not Solved / Waiting Feedback as in-progress.
@@ -83,6 +87,24 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
     }
     return true;
   });
+
+  // Pagination over the filtered set
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter]); // reset on filter change
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]); // clamp (e.g. after delete)
+  const pageStart = (page - 1) * PAGE_SIZE;
+  const paged = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+  // Page-number buttons with ellipsis (scales to any number of pages)
+  const pageItems: (number | "…")[] = (() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const items: (number | "…")[] = [1];
+    const lo = Math.max(2, page - 1), hi = Math.min(totalPages - 1, page + 1);
+    if (lo > 2) items.push("…");
+    for (let i = lo; i <= hi; i++) items.push(i);
+    if (hi < totalPages - 1) items.push("…");
+    items.push(totalPages);
+    return items;
+  })();
 
   // Editing/deleting logs is restricted to Admin only
   const canModify = (_l: OpsLog) => currentUser.role === "admin";
@@ -166,7 +188,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {filtered.map((l) => (
+                {paged.map((l) => (
                   <tr key={l.id} className="hover:bg-[var(--surface-2)]/40 transition align-top">
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmt(l.created_at)}</td>
                     <td className="p-4"><span className="text-[10px] font-bold text-[var(--muted)]">{LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type}</span></td>
@@ -203,6 +225,40 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {filtered.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-[var(--border)] bg-[var(--bg)]">
+              <span className="text-[11px] text-[var(--muted)] font-medium">
+                Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-40 disabled:pointer-events-none transition"
+                >Prev</button>
+                {pageItems.map((it, i) => it === "…" ? (
+                  <span key={`e${i}`} className="px-2 text-[11px] text-[var(--muted)]">…</span>
+                ) : (
+                  <button
+                    key={it}
+                    onClick={() => setPage(it)}
+                    className={`min-w-[32px] px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition ${
+                      it === page
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-900/30"
+                        : "border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-2)]"
+                    }`}
+                  >{it}</button>
+                ))}
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-40 disabled:pointer-events-none transition"
+                >Next</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
