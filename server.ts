@@ -26,7 +26,7 @@ const canAssignTo = (actor: any, target: any): boolean => {
   if (actor.job_title === "Call Center Manager" || actor.job_title === "Assistant Manager") {
     return userLevel(target) < userLevel(actor) && OPS_DEPTS.includes(target.department || "");
   }
-  if (userLevel(target) !== userLevel(actor) - 1) return false; // direct reports only
+  if (userLevel(target) >= userLevel(actor)) return false; // must be lower level
   if (isExecutive(actor)) return true; // management: any department
   return (target.department || "") === (actor.department || ""); // dept-scoped
 };
