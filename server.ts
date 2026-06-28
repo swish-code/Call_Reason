@@ -546,7 +546,10 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   if (isExecutive(req.user)) {
     logs = await DB.getLogs({ log_type: typeFilter, department: (req.query.department as string) || undefined });
   } else if (role === "leader" || role === "supervisor") {
-    logs = await DB.getLogs({ department, log_type: typeFilter });
+    // Department-scoped managers see ONLY their own department's log type
+    // (e.g. a Call Center Team Leader sees Call Center logs only — not complaint/technical).
+    const deptLogType = DEPT_TO_LOGTYPE[department];
+    logs = await DB.getLogs({ department, log_type: deptLogType || typeFilter });
   } else {
     logs = await DB.getLogs({ agent_id: id, log_type: typeFilter });
   }
@@ -558,8 +561,10 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const { role, id, department } = req.user;
   let logs;
   if (isExecutive(req.user)) logs = await DB.getLogs({});
-  else if (role === "leader" || role === "supervisor") logs = await DB.getLogs({ department });
-  else logs = await DB.getLogs({ agent_id: id });
+  else if (role === "leader" || role === "supervisor") {
+    const deptLogType = DEPT_TO_LOGTYPE[department];
+    logs = await DB.getLogs({ department, log_type: deptLogType || undefined });
+  } else logs = await DB.getLogs({ agent_id: id });
 
   // Optional date-range filter (YYYY-MM-DD, inclusive)
   const from = typeof req.query.from === "string" ? req.query.from : "";

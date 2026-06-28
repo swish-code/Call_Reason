@@ -28,6 +28,9 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [page, setPage] = useState(1);
 
   const isAgent = currentUser.role === "agent";
+  // Only cross-department roles can pick a log type; department-scoped users (agents,
+  // team leaders, supervisors) only ever see their own department's single log type.
+  const canFilterType = ["admin", "manager", "owner"].includes(currentUser.role);
 
   // Editable while not in a final state. Complaint logs use Not Solved / Waiting Feedback as in-progress.
   const canProgress = (l: OpsLog) => l.agent_id === currentUser.id && ["Open", "In Progress", "Not Solved", "Waiting Feedback"].includes(l.status || "");
@@ -155,7 +158,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
           <Search className="w-4 h-4 text-[var(--muted)] absolute left-3.5 top-3.5" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search activity, agent, branch, order..." className="w-full pl-10 pr-4 py-3 bg-[var(--surface)] text-[var(--heading)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition" />
         </div>
-        {!isAgent && (
+        {canFilterType && (
           <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-3 bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] rounded-2xl text-xs font-bold [&>option]:bg-[var(--surface)]">
             <option value="">All Types</option>
             {(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}
