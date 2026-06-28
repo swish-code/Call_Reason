@@ -8,12 +8,40 @@ interface OpsReportsProps {
   currentUser: User;
 }
 
+const PAGE_SIZE = 20;
+
+function Pagination({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) {
+  if (total <= 1) return null;
+  const pages: (number | "…")[] = [];
+  if (total <= 7) {
+    for (let i = 1; i <= total; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (page > 3) pages.push("…");
+    for (let i = Math.max(2, page - 1); i <= Math.min(total - 1, page + 1); i++) pages.push(i);
+    if (page < total - 2) pages.push("…");
+    pages.push(total);
+  }
+  const btn = "w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold transition";
+  return (
+    <div className="flex items-center justify-center gap-1 pt-4 pb-1 print:hidden">
+      <button disabled={page === 1} onClick={() => onChange(page - 1)} className={btn + " border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)] disabled:opacity-30"}>‹</button>
+      {pages.map((p, i) =>
+        p === "…" ? <span key={`e${i}`} className="w-8 h-8 flex items-center justify-center text-[var(--muted)] text-xs">…</span>
+        : <button key={p} onClick={() => onChange(p as number)} className={btn + (p === page ? " bg-blue-600 text-white shadow" : " border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]")}>{p}</button>
+      )}
+      <button disabled={page === total} onClick={() => onChange(page + 1)} className={btn + " border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)] disabled:opacity-30"}>›</button>
+    </div>
+  );
+}
+
 export default function OpsReports({ currentUser }: OpsReportsProps) {
   const [logs, setLogs] = useState<OpsLog[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
 
   const [fStart, setFStart] = useState("");
   const [fEnd, setFEnd] = useState("");
@@ -55,7 +83,13 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
   const agents = Array.from(new Set(logs.map((l) => l.agent_name).filter(Boolean)));
   const activities = Array.from(new Set(logs.map((l) => l.activity_type).filter(Boolean)));
 
-  const reset = () => { setFStart(""); setFEnd(""); setFDept(""); setFType(""); setFAgent(""); setFBranch(""); setFBrand(""); setFStatus(""); setFActivity(""); };
+  // Reset to page 1 whenever any filter changes
+  useEffect(() => { setPage(1); }, [fStart, fEnd, fDept, fType, fAgent, fBranch, fBrand, fStatus, fActivity]);
+
+  const reset = () => { setFStart(""); setFEnd(""); setFDept(""); setFType(""); setFAgent(""); setFBranch(""); setFBrand(""); setFStatus(""); setFActivity(""); setPage(1); };
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const exportCsv = () => {
     const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
@@ -123,7 +157,9 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
         <div className="flex flex-col items-center justify-center min-h-[200px]"><div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
       ) : (
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-sm print:border print:bg-white">
-          <div className="p-4 bg-[var(--bg)] border-b border-[var(--border)] text-xs font-bold text-[var(--muted)] print:hidden">{filtered.length} record(s)</div>
+          <div className="p-4 bg-[var(--bg)] border-b border-[var(--border)] text-xs font-bold text-[var(--muted)] print:hidden">
+            {filtered.length} record(s){filtered.length > PAGE_SIZE && ` · Page ${page} of ${totalPages}`}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold border-b border-[var(--border)]">
@@ -133,7 +169,7 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {filtered.map((l) => (
+                {paginated.map((l) => (
                   <tr key={l.id} className="hover:bg-[var(--surface-2)]/40 transition">
                     <td className="p-3 font-mono text-[10px] text-[var(--muted)] whitespace-nowrap">{fmt(l.created_at)}</td>
                     <td className="p-3 text-[var(--muted)]">{LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type}</td>
@@ -146,10 +182,15 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
                     <td className="p-3 font-mono text-[11px] text-[var(--text)]">{dur(l)}</td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-[var(--muted)]">No records match the filters.</td></tr>}
+                {paginated.length === 0 && <tr><td colSpan={9} className="p-8 text-center text-[var(--muted)]">No records match the filters.</td></tr>}
               </tbody>
             </table>
           </div>
+          {totalPages > 1 && (
+            <div className="px-4 pb-3 border-t border-[var(--border)]">
+              <Pagination page={page} total={totalPages} onChange={setPage} />
+            </div>
+          )}
         </div>
       )}
     </div>
