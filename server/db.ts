@@ -732,12 +732,12 @@ export class DB {
   // Assigned tasks (manager -> agent)
   // ----------------------------------------------------
   static async getAssignedTasks(filter: { assigned_to?: string; department?: string } = {}): Promise<AssignedTask[]> {
-    const clauses: string[] = [];
+    const clauses: string[] = ["status != 'Cancelled'"];
     const values: any[] = [];
     let idx = 1;
     if (filter.assigned_to) { clauses.push(`assigned_to = $${idx++}`); values.push(filter.assigned_to); }
     if (filter.department) { clauses.push(`department = $${idx++}`); values.push(filter.department); }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const where = `WHERE ${clauses.join(" AND ")}`;
     const { rows } = await pool.query<AssignedTask>(`SELECT * FROM assigned_tasks ${where} ORDER BY created_at DESC`, values);
     return rows;
   }

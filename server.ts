@@ -999,7 +999,13 @@ app.delete("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res:
   if (req.user.role !== "admin" && task.assigned_by !== req.user.id) {
     return res.status(403).json({ error: "Only the assigner or an admin can delete this task." });
   }
-  await DB.deleteAssignedTask(req.params.id);
+  // Recurring instances must be soft-deleted (status=Cancelled) so ensureTodayInstances
+  // doesn't regenerate them — the row must remain to satisfy the unique(template_id, task_date) guard.
+  if ((task as any).template_id) {
+    await DB.updateAssignedTask(req.params.id, { status: "Cancelled" } as any);
+  } else {
+    await DB.deleteAssignedTask(req.params.id);
+  }
   res.json({ message: "Task deleted." });
 }));
 
