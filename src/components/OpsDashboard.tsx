@@ -30,7 +30,7 @@ interface DashData {
   technicalStatus: { name: string; count: number }[];
   coachingSessions: number;
   trend: { date: string; count: number }[];
-  shiftByAgent: { name: string; today: number; week: number }[];
+  shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number }[] }[];
 }
 
 export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
@@ -214,33 +214,58 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
           </div>
           <BarList title="Logs by Activity Type" data={d.byActivity} color="bg-purple-500" icon={ClipboardList} />
 
-          {/* Shift hours per agent (today / this week) */}
+          {/* Shift hours per agent — daily breakdown */}
           <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
-            <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Clock className="w-5 h-5 text-blue-400" /> Shift Hours per Agent</h2>
+            <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-blue-400" /> Shift Hours per Agent
+            </h2>
             {(!d.shiftByAgent || d.shiftByAgent.length === 0) ? (
               <div className="text-center py-6 text-[var(--muted)] text-xs">No shift activity yet.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[10px] uppercase text-[var(--muted)] font-bold border-b border-[var(--border)]">
-                      <th className="text-left py-2 px-2">Agent</th>
-                      <th className="text-right py-2 px-2">Today</th>
-                      <th className="text-right py-2 px-2">This Week</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.shiftByAgent.map((a) => (
-                      <tr key={a.name} className="border-b border-[var(--border)]/50 last:border-0">
-                        <td className="py-2.5 px-2 font-bold text-[var(--heading)] truncate">{a.name}</td>
-                        <td className="py-2.5 px-2 text-right font-mono text-emerald-400 font-bold">{fmtDur(a.today)}</td>
-                        <td className="py-2.5 px-2 text-right font-mono text-blue-400 font-bold">{fmtDur(a.week)}</td>
+            ) : (() => {
+              const days = d.shiftByAgent[0]?.days || [];
+              const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+              const todayStr = days.length > 0 ? days[days.length - 1].date : "";
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                        <th className="text-left py-2 px-3 min-w-[120px]">Agent</th>
+                        {days.map((day) => {
+                          const isToday = day.date === todayStr;
+                          const d2 = new Date(day.date + "T00:00:00");
+                          return (
+                            <th key={day.date} className={`text-center py-2 px-2 min-w-[64px] ${isToday ? "text-blue-400" : ""}`}>
+                              <div className="font-extrabold">{DAY_LABELS[d2.getDay()]}</div>
+                              <div className="font-normal opacity-70 text-[9px]">{day.date.slice(5).replace("-", "/")}</div>
+                            </th>
+                          );
+                        })}
+                        <th className="text-center py-2 px-3 min-w-[72px] text-blue-300">Total</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody>
+                      {d.shiftByAgent.map((a) => (
+                        <tr key={a.name} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30 transition">
+                          <td className="py-2.5 px-3 font-bold text-[var(--heading)] truncate max-w-[140px]">{a.name}</td>
+                          {a.days.map((day) => {
+                            const isToday = day.date === todayStr;
+                            const hrs = day.seconds / 3600;
+                            const cellColor = day.seconds === 0 ? "text-[var(--border)]" : hrs >= 7 ? "text-emerald-400" : hrs >= 4 ? "text-amber-400" : "text-rose-400";
+                            return (
+                              <td key={day.date} className={`py-2.5 px-2 text-center font-mono font-bold ${cellColor} ${isToday ? "bg-blue-500/5 rounded" : ""}`}>
+                                {day.seconds > 0 ? fmtDur(day.seconds) : <span className="text-[var(--border)]">—</span>}
+                              </td>
+                            );
+                          })}
+                          <td className="py-2.5 px-3 text-center font-mono font-extrabold text-blue-400">{fmtDur(a.week)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

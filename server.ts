@@ -688,27 +688,42 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const todaySeconds = todayLogs.reduce((a, l) => a + dur(l), 0);
   const weekSeconds = weekLogs.reduce((a, l) => a + dur(l), 0);
 
-  // Per-agent shift hours (today / this week) from logged shift sessions
-  let shiftByAgent: { name: string; today: number; week: number }[] = [];
+  // Per-agent shift hours with daily breakdown (last 7 days, Kuwait time)
+  let shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number }[] }[] = [];
   if (role !== "agent") {
     const sessions = isExecutive(req.user) ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department });
-    const kwTodayStr = kuwaitToday().date;
     const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
+    const kwTodayStr = kuwaitToday().date;
+    // Build the last-7-days array (oldest first)
+    const last7: string[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now - i * 86400000);
+      last7.push(new Date(d.getTime() + KW_OFFSET_MS).toISOString().slice(0, 10));
+    }
     const eff = (s: any) => {
       const start = new Date(s.started_at).getTime();
       const end = s.ended_at ? new Date(s.ended_at).getTime() : now;
       return Math.max(0, Math.round((end - start) / 1000));
     };
-    const map: Record<string, { name: string; today: number; week: number }> = {};
+    const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
     sessions.forEach((s: any) => {
       if (!s.started_at) return;
       const name = s.user_name || "—";
-      if (!map[name]) map[name] = { name, today: 0, week: 0 };
+      if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {} };
       const e = eff(s);
-      if (kwDate(s.started_at) === kwTodayStr) map[name].today += e;
-      if (new Date(s.started_at).getTime() >= since(7)) map[name].week += e;
+      const d = kwDate(s.started_at);
+      if (d === kwTodayStr) map[name].today += e;
+      if (new Date(s.started_at).getTime() >= since(7)) {
+        map[name].week += e;
+        map[name].dayMap[d] = (map[name].dayMap[d] || 0) + e;
+      }
     });
-    shiftByAgent = Object.values(map).sort((a, b) => b.week - a.week);
+    shiftByAgent = Object.values(map).map((e) => ({
+      name: e.name,
+      today: e.today,
+      week: e.week,
+      days: last7.map((date) => ({ date, seconds: e.dayMap[date] || 0 })),
+    })).sort((a, b) => b.week - a.week);
   }
 
   res.json({
