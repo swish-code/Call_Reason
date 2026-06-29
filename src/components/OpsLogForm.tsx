@@ -38,8 +38,11 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
   const editing = !!editLog;
 
   // Determine the log type
+  const leaderLogType: LogType = currentUser.department === "Call Center"
+    ? "team_leader"
+    : (DEPT_TO_LOGTYPE[currentUser.department || ""] as LogType || "team_leader");
   const initialType: LogType = editLog?.log_type as LogType
-    || (isLeader ? "team_leader" : canChoose ? "call_center" : (DEPT_TO_LOGTYPE[currentUser.department || ""] || "call_center"));
+    || (isLeader ? leaderLogType : canChoose ? "call_center" : (DEPT_TO_LOGTYPE[currentUser.department || ""] || "call_center"));
   const [logType, setLogType] = useState<LogType>(initialType);
   const cfg = LOG_TYPE_CONFIG[logType];
 
