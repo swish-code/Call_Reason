@@ -238,7 +238,7 @@ app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, r
 
 app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { full_name, username, email, role, status, password, team, department } = req.body;
+  const { full_name, username, email, role, status, password, team, department, level, job_title } = req.body;
 
   const targetUser = await DB.getUserById(id);
   if (!targetUser) {
@@ -267,8 +267,10 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req
     email: email || targetUser.email,
     role: role || targetUser.role,
     team: team || targetUser.team,
-    department: department || targetUser.department,
+    department: department !== undefined ? department : targetUser.department,
     status: status || targetUser.status,
+    level: level !== undefined ? level : (targetUser as any).level,
+    job_title: job_title !== undefined ? job_title : (targetUser as any).job_title,
   };
 
   if (password && password.trim() !== "") {
