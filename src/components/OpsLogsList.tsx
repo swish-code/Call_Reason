@@ -16,6 +16,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [agentFilter, setAgentFilter] = useState<string>("");
   const [editLog, setEditLog] = useState<OpsLog | null>(null);
   // Owner progress update (status + time) for Open/In Progress tasks
   const [progressLog, setProgressLog] = useState<OpsLog | null>(null);
@@ -80,10 +81,14 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
 
   useEffect(() => { fetchLogs(); }, []);
 
+  // Agent names derived from already-scoped logs (server enforces dept boundaries)
+  const agentNames = Array.from(new Set(logs.map((l) => l.agent_name).filter(Boolean))).sort() as string[];
+
   const q = search.trim().toLowerCase();
   const filtered = logs.filter((l) => {
     if (typeFilter && l.log_type !== typeFilter) return false;
     if (statusFilter && l.status !== statusFilter) return false;
+    if (agentFilter && l.agent_name !== agentFilter) return false;
     if (q) {
       const hay = [l.activity_type, l.agent_name, l.branch, l.brand, l.order_number, l.customer_name, l.complaint_id, l.target_agent_name, l.notes].map((x) => (x || "").toLowerCase()).join(" ");
       if (!hay.includes(q)) return false;
@@ -93,7 +98,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
 
   // Pagination over the filtered set
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter]); // reset on filter change
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, agentFilter]); // reset on filter change
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]); // clamp (e.g. after delete)
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = filtered.slice(pageStart, pageStart + PAGE_SIZE);
@@ -168,6 +173,12 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
           <option value="">All Statuses</option>
           {["Open", "In Progress", "Completed", "Solved", "Not Solved", "Waiting Feedback"].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        {!isAgent && agentNames.length > 0 && (
+          <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)} className="px-3 py-3 bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] rounded-2xl text-xs font-bold [&>option]:bg-[var(--surface)]">
+            <option value="">All Agents</option>
+            {agentNames.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        )}
       </div>
 
       {error && (<div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-3xl text-sm text-rose-400 flex items-center gap-2"><AlertCircle className="w-5 h-5" /> {error}</div>)}
