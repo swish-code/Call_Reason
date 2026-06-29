@@ -6,6 +6,7 @@ import OpsLogForm from "./components/OpsLogForm.tsx";
 import OpsLogsList from "./components/OpsLogsList.tsx";
 import OpsDashboard from "./components/OpsDashboard.tsx";
 import OpsReports from "./components/OpsReports.tsx";
+import PerformanceReport from "./components/PerformanceReport.tsx";
 import HistoryLogs from "./components/HistoryLogs.tsx";
 import Tasks from "./components/Tasks.tsx";
 import RecurringTasks from "./components/RecurringTasks.tsx";
@@ -49,7 +50,7 @@ import {
   Send
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks";
+type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -537,6 +538,21 @@ export default function App() {
               </button>
             )}
 
+            {/* Performance — leaders, supervisors, managers, admin */}
+            {currentUser?.role !== "agent" && (
+              <button
+                onClick={() => setActivePage("performance")}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "performance"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <BarChart2 className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Team Performance</span>}
+              </button>
+            )}
+
             {/* History Logs (audit) limited to Admin & Team Leader */}
             {(currentUser?.role === "admin" || currentUser?.role === "leader") && (
               <button
@@ -616,6 +632,7 @@ export default function App() {
             <h1 className="text-xs md:text-sm font-extrabold text-[var(--text)]">
               {activePage === "dashboard" && "Dashboard Overview"}
               {activePage === "reports" && "Reports & Export"}
+              {activePage === "performance" && "Team Performance"}
               {activePage === "users" && "User and Access Role Management"}
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
@@ -719,6 +736,9 @@ export default function App() {
           )}
           {activePage === "logs" && (
             <OpsLogsList currentUser={currentUser} />
+          )}
+          {activePage === "performance" && currentUser.role !== "agent" && (
+            <PerformanceReport currentUser={currentUser} />
           )}
         </main>
       </div>

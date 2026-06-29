@@ -559,6 +559,68 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   res.json(logs);
 }));
 
+// Performance stats per agent (scoped by role/department)
+app.get("/api/performance", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  const { role, id, department } = req.user;
+  const period = (req.query.period as string) || "month";
+  const deptFilter = (req.query.department as string) || undefined;
+
+  let logs;
+  if (isExecutive(req.user)) {
+    logs = await DB.getLogs({ department: deptFilter });
+  } else if (role === "supervisor") {
+    logs = await DB.getLogs({ department });
+  } else if (role === "leader") {
+    const deptLogType = DEPT_TO_LOGTYPE[department];
+    logs = await DB.getLogs({ department, log_type: deptLogType });
+  } else {
+    logs = await DB.getLogs({ agent_id: id });
+  }
+
+  // Date range filter
+  const now = new Date();
+  let fromDate: Date | null = null;
+  if (period === "today") fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  else if (period === "week") fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  else if (period === "month") fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  if (fromDate) logs = logs.filter((l: any) => l.created_at && new Date(l.created_at) >= fromDate!);
+
+  // Aggregate by agent
+  const agentMap = new Map<string, any>();
+  for (const log of logs) {
+    const key = (log as any).agent_id || (log as any).agent_name || "unknown";
+    if (!agentMap.has(key)) {
+      agentMap.set(key, {
+        agent_id: (log as any).agent_id,
+        agent_name: (log as any).agent_name || "Unknown",
+        department: (log as any).department,
+        total_logs: 0,
+        completed_logs: 0,
+        total_duration: 0,
+        counted_durations: 0,
+      });
+    }
+    const e = agentMap.get(key)!;
+    e.total_logs++;
+    if (["Completed", "Solved"].includes((log as any).status || "")) e.completed_logs++;
+    const dur = Number((log as any).duration_seconds || 0);
+    if (dur > 0) { e.total_duration += dur; e.counted_durations++; }
+  }
+
+  const stats = Array.from(agentMap.values()).map((e) => ({
+    agent_id: e.agent_id,
+    agent_name: e.agent_name,
+    department: e.department,
+    total_logs: e.total_logs,
+    completed_logs: e.completed_logs,
+    completion_rate: e.total_logs > 0 ? Math.round((e.completed_logs / e.total_logs) * 100) : 0,
+    total_duration: e.total_duration,
+    avg_duration: e.counted_durations > 0 ? Math.round(e.total_duration / e.counted_durations) : 0,
+  })).sort((a, b) => b.total_logs - a.total_logs);
+
+  res.json(stats);
+}));
+
 // Role-aware dashboard metrics (computed from the scoped logs)
 app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, department } = req.user;
