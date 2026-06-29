@@ -15,6 +15,13 @@ interface AgentStat {
   avg_duration: number;
 }
 
+interface ShiftAgent {
+  name: string;
+  today: number;
+  week: number;
+  days: { date: string; seconds: number }[];
+}
+
 type SortKey = keyof Pick<AgentStat, "total_logs" | "completed_logs" | "completion_rate" | "total_duration" | "avg_duration">;
 
 const PERIODS = [
@@ -54,6 +61,7 @@ function Avatar({ name }: { name: string }) {
 
 export default function PerformanceReport({ currentUser }: { currentUser: User }) {
   const [stats, setStats] = useState<AgentStat[]>([]);
+  const [shiftAgents, setShiftAgents] = useState<ShiftAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [period, setPeriod] = useState("month");
@@ -70,9 +78,16 @@ export default function PerformanceReport({ currentUser }: { currentUser: User }
         setError("");
         const params = new URLSearchParams({ period });
         if (isAdmin && deptFilter) params.set("department", deptFilter);
-        const r = await apiFetch(`/api/performance?${params}`);
-        if (!r.ok) throw new Error("Failed to load performance data.");
-        setStats(await r.json());
+        const [rPerf, rDash] = await Promise.all([
+          apiFetch(`/api/performance?${params}`),
+          apiFetch("/api/logs/dashboard"),
+        ]);
+        if (!rPerf.ok) throw new Error("Failed to load performance data.");
+        setStats(await rPerf.json());
+        if (rDash.ok) {
+          const dash = await rDash.json();
+          setShiftAgents(dash.shiftByAgent || []);
+        }
       } catch (e: any) {
         setError(e.message);
       } finally {
@@ -243,6 +258,66 @@ export default function PerformanceReport({ currentUser }: { currentUser: User }
           </div>
         </div>
       )}
+
+      {/* Shift Hours per Agent — daily breakdown */}
+      {!loading && shiftAgents.length > 0 && (() => {
+        const days = shiftAgents[0]?.days || [];
+        const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const todayStr = days.length > 0 ? days[days.length - 1].date : "";
+        return (
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-sm">
+            <div className="p-5 border-b border-[var(--border)] flex items-center gap-3">
+              <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-2xl"><Clock className="w-5 h-5" /></div>
+              <div>
+                <h3 className="text-sm font-extrabold text-[var(--heading)]">Logged Time per Agent</h3>
+                <p className="text-xs text-[var(--muted)] font-light mt-0.5">Sum of minutes entered in log forms — last 7 days</p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-[var(--bg)] border-b border-[var(--border)]">
+                  <tr className="text-[10px] text-[var(--muted)] font-bold">
+                    <th className="text-left py-2 px-4 min-w-[140px]">Agent</th>
+                    {days.map((day) => {
+                      const isToday = day.date === todayStr;
+                      const dow = new Date(day.date + "T00:00:00").getDay();
+                      return (
+                        <th key={day.date} className={`text-center py-2 px-2 min-w-[68px] ${isToday ? "text-blue-400" : ""}`}>
+                          <div className="font-extrabold">{DAY_LABELS[dow]}</div>
+                          <div className="text-[9px] font-normal opacity-70">{day.date.slice(5).replace("-", "/")}</div>
+                        </th>
+                      );
+                    })}
+                    <th className="text-center py-2 px-4 min-w-[80px] text-blue-300">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {shiftAgents.map((a) => (
+                    <tr key={a.name} className="hover:bg-[var(--surface-2)]/40 transition">
+                      <td className="py-2.5 px-4 font-bold text-[var(--heading)] truncate max-w-[160px]">{a.name}</td>
+                      {a.days.map((day) => {
+                        const isToday = day.date === todayStr;
+                        const hrs = day.seconds / 3600;
+                        const color = day.seconds === 0
+                          ? "text-[var(--border)]"
+                          : hrs >= 7 ? "text-emerald-400"
+                          : hrs >= 4 ? "text-amber-400"
+                          : "text-rose-400";
+                        return (
+                          <td key={day.date} className={`py-2.5 px-2 text-center font-mono font-bold ${color} ${isToday ? "bg-blue-500/5" : ""}`}>
+                            {day.seconds > 0 ? fmtDur(day.seconds) : <span className="text-[var(--border)]">—</span>}
+                          </td>
+                        );
+                      })}
+                      <td className="py-2.5 px-4 text-center font-mono font-extrabold text-blue-400">{fmtDur(a.week)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
