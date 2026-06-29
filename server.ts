@@ -700,23 +700,32 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
       const d = new Date(now - i * 86400000);
       last7.push(new Date(d.getTime() + KW_OFFSET_MS).toISOString().slice(0, 10));
     }
-    const eff = (s: any) => {
-      const start = new Date(s.started_at).getTime();
-      const end = s.ended_at ? new Date(s.ended_at).getTime() : now;
-      return Math.max(0, Math.round((end - start) / 1000));
-    };
+    // Pre-compute UTC boundaries for each of the 7 days (Kuwait midnight = UTC 21:00 prev day)
+    const dayBounds = last7.map((dateStr) => {
+      const [y, mo, dy] = dateStr.split("-").map(Number);
+      const kwMidnightUTC = Date.UTC(y, mo - 1, dy) - KW_OFFSET_MS;
+      return { date: dateStr, start: kwMidnightUTC, end: kwMidnightUTC + 86400000 };
+    });
+    const weekStart = since(7);
     const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
     sessions.forEach((s: any) => {
       if (!s.started_at) return;
       const name = s.user_name || "—";
       if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {} };
-      const e = eff(s);
-      const d = kwDate(s.started_at);
-      if (d === kwTodayStr) map[name].today += e;
-      if (new Date(s.started_at).getTime() >= since(7)) {
-        map[name].week += e;
-        map[name].dayMap[d] = (map[name].dayMap[d] || 0) + e;
-      }
+      const sStart = new Date(s.started_at).getTime();
+      const sEnd = s.ended_at ? new Date(s.ended_at).getTime() : now;
+      // Split session across day boundaries
+      dayBounds.forEach((b) => {
+        const overlap = Math.min(sEnd, b.end) - Math.max(sStart, b.start);
+        if (overlap > 0) {
+          const secs = Math.round(overlap / 1000);
+          map[name].dayMap[b.date] = (map[name].dayMap[b.date] || 0) + secs;
+          if (b.date === kwTodayStr) map[name].today += secs;
+        }
+      });
+      // Week total: clip session to the last-7-days window
+      const wOverlap = Math.min(sEnd, now) - Math.max(sStart, weekStart);
+      if (wOverlap > 0) map[name].week += Math.round(wOverlap / 1000);
     });
     shiftByAgent = Object.values(map).map((e) => ({
       name: e.name,
