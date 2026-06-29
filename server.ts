@@ -547,9 +547,10 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   let logs;
   if (isExecutive(req.user)) {
     logs = await DB.getLogs({ log_type: typeFilter, department: (req.query.department as string) || undefined });
-  } else if (role === "leader" || role === "supervisor") {
-    // Department-scoped managers see ONLY their own department's log type
-    // (e.g. a Call Center Team Leader sees Call Center logs only — not complaint/technical).
+  } else if (role === "supervisor") {
+    // Supervisors see ALL logs in their department (agents + team leaders)
+    logs = await DB.getLogs({ department });
+  } else if (role === "leader") {
     const deptLogType = DEPT_TO_LOGTYPE[department];
     logs = await DB.getLogs({ department, log_type: deptLogType || typeFilter });
   } else {
@@ -563,7 +564,9 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const { role, id, department } = req.user;
   let logs;
   if (isExecutive(req.user)) logs = await DB.getLogs({});
-  else if (role === "leader" || role === "supervisor") {
+  else if (role === "supervisor") {
+    logs = await DB.getLogs({ department });
+  } else if (role === "leader") {
     const deptLogType = DEPT_TO_LOGTYPE[department];
     logs = await DB.getLogs({ department, log_type: deptLogType || undefined });
   } else logs = await DB.getLogs({ agent_id: id });
