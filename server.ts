@@ -688,44 +688,28 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const todaySeconds = todayLogs.reduce((a, l) => a + dur(l), 0);
   const weekSeconds = weekLogs.reduce((a, l) => a + dur(l), 0);
 
-  // Per-agent shift hours with daily breakdown (last 7 days, Kuwait time)
+  // Per-agent logged time (duration_seconds from logs) — daily breakdown for last 7 days
   let shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number }[] }[] = [];
   if (role !== "agent") {
-    const sessions = isExecutive(req.user) ? await DB.getShiftSessions({}) : await DB.getShiftSessions({ department });
     const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
     const kwTodayStr = kuwaitToday().date;
-    // Build the last-7-days array (oldest first)
     const last7: string[] = [];
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(now - i * 86400000);
-      last7.push(new Date(d.getTime() + KW_OFFSET_MS).toISOString().slice(0, 10));
+      last7.push(new Date(new Date(now - i * 86400000).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10));
     }
-    // Pre-compute UTC boundaries for each of the 7 days (Kuwait midnight = UTC 21:00 prev day)
-    const dayBounds = last7.map((dateStr) => {
-      const [y, mo, dy] = dateStr.split("-").map(Number);
-      const kwMidnightUTC = Date.UTC(y, mo - 1, dy) - KW_OFFSET_MS;
-      return { date: dateStr, start: kwMidnightUTC, end: kwMidnightUTC + 86400000 };
-    });
-    const weekStart = since(7);
+    const last7Set = new Set(last7);
     const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
-    sessions.forEach((s: any) => {
-      if (!s.started_at) return;
-      const name = s.user_name || "—";
+    logs.forEach((l: any) => {
+      const secs = Number(l.duration_seconds || 0);
+      if (!secs || !l.created_at) return;
+      const name = l.agent_name || "—";
       if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {} };
-      const sStart = new Date(s.started_at).getTime();
-      const sEnd = s.ended_at ? new Date(s.ended_at).getTime() : now;
-      // Split session across day boundaries
-      dayBounds.forEach((b) => {
-        const overlap = Math.min(sEnd, b.end) - Math.max(sStart, b.start);
-        if (overlap > 0) {
-          const secs = Math.round(overlap / 1000);
-          map[name].dayMap[b.date] = (map[name].dayMap[b.date] || 0) + secs;
-          if (b.date === kwTodayStr) map[name].today += secs;
-        }
-      });
-      // Week total: clip session to the last-7-days window
-      const wOverlap = Math.min(sEnd, now) - Math.max(sStart, weekStart);
-      if (wOverlap > 0) map[name].week += Math.round(wOverlap / 1000);
+      const d = kwDate(l.created_at);
+      if (d === kwTodayStr) map[name].today += secs;
+      if (last7Set.has(d)) {
+        map[name].week += secs;
+        map[name].dayMap[d] = (map[name].dayMap[d] || 0) + secs;
+      }
     });
     shiftByAgent = Object.values(map).map((e) => ({
       name: e.name,
