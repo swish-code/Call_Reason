@@ -81,8 +81,10 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
 
   useEffect(() => { fetchLogs(); }, []);
 
-  // Agent names derived from already-scoped logs (server enforces dept boundaries)
-  const agentNames = Array.from(new Set(logs.map((l) => l.agent_name).filter(Boolean))).sort() as string[];
+  // Agent names filtered by selected log type (or all if no type selected)
+  const agentNames = Array.from(
+    new Set((typeFilter ? logs.filter((l) => l.log_type === typeFilter) : logs).map((l) => l.agent_name).filter(Boolean))
+  ).sort() as string[];
 
   const q = search.trim().toLowerCase();
   const filtered = logs.filter((l) => {
@@ -98,7 +100,8 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
 
   // Pagination over the filtered set
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, agentFilter]); // reset on filter change
+  useEffect(() => { setPage(1); setAgentFilter(""); }, [typeFilter]); // reset agent when type changes
+  useEffect(() => { setPage(1); }, [search, statusFilter, agentFilter]);
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]); // clamp (e.g. after delete)
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = filtered.slice(pageStart, pageStart + PAGE_SIZE);
