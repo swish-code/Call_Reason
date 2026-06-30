@@ -86,7 +86,7 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   cc_activity: ["Survey", "Review", "Follow-up CST", "Handle Customer Issue", "Handle Complaint", "Follow-up Orders", "Open Branch", "Close Branch", "Floor Tasks", "Previous Tasks Follow-up", "Other"],
   tech_activity: ["Delayed Orders Follow-up", "Aggregator Follow-up", "Missing Item Cases", "Wrong Dispatch Cases", "Big Order Confirmation", "Order Assignment", "Aggregator Comments", "Punch Orders", "Open Branch", "Busy Branch", "Close Branch", "Hide Item", "Unhide Item", "Follow-up Groups", "Cancellation Request", "Foodics / POS Issues", "Other"],
   complaint_activity: ["Validation", "Escalation", "Coupon Request", "Email Complaint", "Social Media Complaint", "Agent Inquiry", "Customer Review", "Survey Result", "Follow-up Store", "Other"],
-  quality_activity: ["Call Evaluation", "Order Audit", "Compliance Check", "Coaching Review", "Calibration Session", "Mystery Shopper", "Other"],
+  quality_activity: ["Call Monitoring & Evaluation", "Review Escalated Complaints", "Root Cause Analysis", "SOP & Policy Compliance", "Operational Accuracy", "QA Documentation", "Quality Reporting", "Calibration Management", "Coaching & Performance Follow-up", "Quality Improvement & Special Projects"],
   tl_activity: ["Agent Coaching", "One-to-One Session", "Monthly Meeting", "Floor Task", "Validation Quality Review", "Agent Mistake Review", "Performance Feedback", "Other"],
   cc_status: ["Open", "In Progress", "Completed"],
   complaint_status: ["Solved", "Not Solved", "Waiting Feedback"],
@@ -325,6 +325,23 @@ export class DB {
         ELSE 1 END
       WHERE level IS NULL
     `);
+
+    // Replace quality_activity options with the updated list
+    {
+      const newQualityActivities = ["Call Monitoring & Evaluation", "Review Escalated Complaints", "Root Cause Analysis", "SOP & Policy Compliance", "Operational Accuracy", "QA Documentation", "Quality Reporting", "Calibration Management", "Coaching & Performance Follow-up", "Quality Improvement & Special Projects"];
+      const existing = await pool.query<{ label: string }>("SELECT label FROM options WHERE list_key = 'quality_activity'");
+      const existingLabels = existing.rows.map((r) => r.label);
+      const isOldSet = existingLabels.some((l) => ["Call Evaluation", "Order Audit", "Compliance Check", "Calibration Session", "Mystery Shopper"].includes(l));
+      if (isOldSet) {
+        await pool.query("DELETE FROM options WHERE list_key = 'quality_activity'");
+        for (let i = 0; i < newQualityActivities.length; i++) {
+          await pool.query(
+            "INSERT INTO options (id, list_key, label, sort_order, active) VALUES ($1,'quality_activity',$2,$3,true) ON CONFLICT (id) DO NOTHING",
+            [`opt-quality_activity-${i}`, newQualityActivities[i], i]
+          );
+        }
+      }
+    }
 
     // Ensure the "Quality" department option exists even on databases whose
     // department list was seeded before Quality was added
