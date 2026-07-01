@@ -307,6 +307,7 @@ export class DB {
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS note TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS template_id TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS task_date TEXT;
+      ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS require_time_entry BOOLEAN DEFAULT true;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_status TEXT DEFAULT 'off';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS shift_started_at TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS level INTEGER;
@@ -766,15 +767,15 @@ export class DB {
 
   static async addAssignedTask(t: AssignedTask): Promise<AssignedTask> {
     const { rows } = await pool.query<AssignedTask>(
-      `INSERT INTO assigned_tasks (id, title, description, assigned_by, assigned_by_name, assigned_to, assigned_to_name, department, priority, due_date, status, seen, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,$12) RETURNING *`,
-      [t.id, t.title, t.description ?? null, t.assigned_by, t.assigned_by_name, t.assigned_to, t.assigned_to_name, t.department ?? null, t.priority ?? null, t.due_date ?? null, t.status || "New", t.created_at]
+      `INSERT INTO assigned_tasks (id, title, description, assigned_by, assigned_by_name, assigned_to, assigned_to_name, department, priority, due_date, status, seen, require_time_entry, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,$12,$13,$13) RETURNING *`,
+      [t.id, t.title, t.description ?? null, t.assigned_by, t.assigned_by_name, t.assigned_to, t.assigned_to_name, t.department ?? null, t.priority ?? null, t.due_date ?? null, t.status || "New", (t as any).require_time_entry !== false, t.created_at]
     );
     return rows[0];
   }
 
   static async updateAssignedTask(id: string, fields: Partial<AssignedTask>): Promise<AssignedTask | undefined> {
-    const cols = ["title", "description", "priority", "due_date", "status", "seen", "completed_at", "assigned_to", "assigned_to_name", "department", "duration_seconds", "note"] as const;
+    const cols = ["title", "description", "priority", "due_date", "status", "seen", "completed_at", "assigned_to", "assigned_to_name", "department", "duration_seconds", "note", "require_time_entry"] as const;
     const sets: string[] = [];
     const values: any[] = [];
     let idx = 1;

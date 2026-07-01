@@ -223,6 +223,7 @@ export interface AssignedTask {
   seen?: boolean;
   duration_seconds?: number;
   note?: string; // Agent's completion note
+  require_time_entry?: boolean;
   created_at: string;
   updated_at?: string;
   completed_at?: string;

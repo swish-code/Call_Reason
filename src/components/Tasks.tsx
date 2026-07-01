@@ -38,6 +38,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const [assignTo, setAssignTo] = useState("");
   const [due, setDue] = useState("");
   const [priority, setPriority] = useState("Medium");
+  const [requireTimeEntry, setRequireTimeEntry] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formMsg, setFormMsg] = useState("");
 
@@ -77,10 +78,10 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
     setSaving(true);
     const res = await apiFetch("/api/tasks", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title.trim(), description: desc, assigned_to: assignTo, due_date: due || undefined, priority }),
+      body: JSON.stringify({ title: title.trim(), description: desc, assigned_to: assignTo, due_date: due || undefined, priority, require_time_entry: requireTimeEntry }),
     });
     setSaving(false);
-    if (res.ok) { setTitle(""); setDesc(""); setAssignTo(""); setDue(""); setPriority("Medium"); setFormMsg(""); }
+    if (res.ok) { setTitle(""); setDesc(""); setAssignTo(""); setDue(""); setPriority("Medium"); setRequireTimeEntry(true); setFormMsg(""); }
     else { const d = await res.json(); setFormMsg(d.error || "Failed to assign task."); }
   };
 
@@ -94,7 +95,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   };
   const complete = async (t: AssignedTask) => {
     const m = timeInputs[t.id];
-    if (!m || Number(m) <= 0) { alert("Please enter the time spent (minutes) before completing the task."); return; }
+    if (t.require_time_entry !== false && (!m || Number(m) <= 0)) { alert("Please enter the time spent (minutes) before completing the task."); return; }
     // Early-completion warning: due date not reached yet
     if (t.due_date && new Date(t.due_date).getTime() > Date.now()) {
       if (!confirm(`This task is not due yet (Due: ${fmt(t.due_date)}). Are you sure you want to complete it now?`)) return;
@@ -196,6 +197,10 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
             <label className="text-xs font-bold text-[var(--text)]">Description:</label>
             <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} placeholder="Task details..." className={inputCls + " leading-relaxed"} />
           </div>
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input type="checkbox" checked={requireTimeEntry} onChange={(e) => setRequireTimeEntry(e.target.checked)} className="w-4 h-4 accent-blue-500 rounded" />
+            <span className="text-xs font-bold text-[var(--text)]">Require agent to enter time spent when completing this task</span>
+          </label>
           <button type="submit" disabled={saving} className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-50 text-white font-extrabold rounded-2xl text-sm transition flex items-center justify-center gap-2">
             {saving ? (<><Loader2 className="w-4 h-4 animate-spin" /> Assigning...</>) : (<><Send className="w-4 h-4" /> Assign Task</>)}
           </button>
@@ -268,7 +273,9 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
                               <option value="New">New</option>
                               <option value="In Progress">In Progress</option>
                             </select>
-                            <input type="number" min={1} value={timeInputs[t.id] || ""} onChange={(e) => setTimeInputs((p) => ({ ...p, [t.id]: e.target.value }))} placeholder="min" className={smallCls + " w-16"} title="Time spent (minutes)" />
+                            {t.require_time_entry !== false && (
+                              <input type="number" min={1} value={timeInputs[t.id] || ""} onChange={(e) => setTimeInputs((p) => ({ ...p, [t.id]: e.target.value }))} placeholder="min" className={smallCls + " w-16"} title="Time spent (minutes)" />
+                            )}
                             <input type="text" value={noteInputs[t.id] || ""} onChange={(e) => setNoteInputs((p) => ({ ...p, [t.id]: e.target.value }))} placeholder="Note (optional)" className={smallCls + " w-40"} title="Completion note" />
                             <button onClick={() => complete(t)} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 active:scale-95"><Check className="w-3.5 h-3.5" /> Complete</button>
                           </>

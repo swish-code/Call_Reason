@@ -947,7 +947,7 @@ app.post("/api/logs/:id/timer", authenticateJWT, asyncHandler(async (req: any, r
 // Create & assign — any non-agent (leader/supervisor/admin)
 app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   if (req.user.role === "agent") return res.status(403).json({ error: "Agents cannot assign tasks." });
-  const { title, description, assigned_to, due_date, priority } = req.body;
+  const { title, description, assigned_to, due_date, priority, require_time_entry } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: "Task title is required." });
   if (!assigned_to) return res.status(400).json({ error: "Please choose an employee to assign the task to." });
 
@@ -971,7 +971,8 @@ app.post("/api/tasks", authenticateJWT, asyncHandler(async (req: any, res: any) 
     due_date: due_date || undefined,
     status: "New",
     created_at: now,
-  });
+    require_time_entry: require_time_entry !== false,
+  } as any);
   await DB.addAuditLog({
     operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
     category: target.department, department: target.department, action: "Assign Task", related_ref: task.id,
@@ -1079,9 +1080,9 @@ app.put("/api/tasks/:id", authenticateJWT, asyncHandler(async (req: any, res: an
     }
   }
 
-  // Completing a task requires the time spent (can't be edited afterwards)
+  // Completing a task requires the time spent (unless supervisor disabled it)
   const finalDuration = fields.duration_seconds ?? task.duration_seconds ?? 0;
-  if (fields.status === "Completed" && Number(finalDuration) <= 0) {
+  if (fields.status === "Completed" && task.require_time_entry !== false && Number(finalDuration) <= 0) {
     return res.status(400).json({ error: "Time spent is required to complete the task." });
   }
   const newlyCompleted = fields.status === "Completed" && task.status !== "Completed";
