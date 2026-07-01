@@ -688,9 +688,12 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   const todaySeconds = todayLogs.reduce((a, l) => a + dur(l), 0);
   const weekSeconds = weekLogs.reduce((a, l) => a + dur(l), 0);
 
-  // Per-agent logged time (duration_seconds from logs) — daily breakdown for last 7 days
+  // Per-agent logged time — dynamic business day grouping.
+  // Consecutive logs with gap < GAP_THRESHOLD belong to the same business day
+  // (the date of the FIRST log in that streak). Handles agents who work past midnight.
   let shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number }[] }[] = [];
   if (role !== "agent") {
+    const GAP_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4-hour gap = new business day
     const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
     const kwTodayStr = kuwaitToday().date;
     const last7: string[] = [];
@@ -698,25 +701,47 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
       last7.push(new Date(new Date(now - i * 86400000).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10));
     }
     const last7Set = new Set(last7);
-    const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
+
+    // Group logs by agent, keeping all (even zero-duration) for gap detection
+    const byAgent: Record<string, any[]> = {};
     logs.forEach((l: any) => {
-      const secs = Number(l.duration_seconds || 0);
-      if (!secs || !l.created_at) return;
+      if (!l.created_at) return;
       const name = l.agent_name || "—";
-      if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {} };
-      const d = kwDate(l.created_at);
-      if (d === kwTodayStr) map[name].today += secs;
-      if (last7Set.has(d)) {
-        map[name].week += secs;
-        map[name].dayMap[d] = (map[name].dayMap[d] || 0) + secs;
-      }
+      if (!byAgent[name]) byAgent[name] = [];
+      byAgent[name].push(l);
     });
-    shiftByAgent = Object.values(map).map((e) => ({
-      name: e.name,
-      today: e.today,
-      week: e.week,
-      days: last7.map((date) => ({ date, seconds: e.dayMap[date] || 0 })),
-    })).sort((a, b) => b.week - a.week);
+
+    const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
+    for (const [name, agLogs] of Object.entries(byAgent)) {
+      agLogs.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      map[name] = { name, today: 0, week: 0, dayMap: {} };
+      let prevTime: number | null = null;
+      let sessionDate: string = "";
+      for (const l of agLogs) {
+        const logTime = new Date(l.created_at).getTime();
+        // New session if first log or gap exceeds threshold
+        if (prevTime === null || logTime - prevTime > GAP_THRESHOLD_MS) {
+          sessionDate = kwDate(l.created_at);
+        }
+        prevTime = logTime;
+        const secs = Number(l.duration_seconds || 0);
+        if (!secs) continue;
+        if (sessionDate === kwTodayStr) map[name].today += secs;
+        if (last7Set.has(sessionDate)) {
+          map[name].week += secs;
+          map[name].dayMap[sessionDate] = (map[name].dayMap[sessionDate] || 0) + secs;
+        }
+      }
+    }
+
+    shiftByAgent = Object.values(map)
+      .filter((e) => e.week > 0 || e.today > 0)
+      .map((e) => ({
+        name: e.name,
+        today: e.today,
+        week: e.week,
+        days: last7.map((date) => ({ date, seconds: e.dayMap[date] || 0 })),
+      })).sort((a, b) => b.week - a.week);
   }
 
   res.json({
