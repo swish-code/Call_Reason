@@ -45,6 +45,8 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
 
   const [fStart, setFStart] = useState("");
   const [fEnd, setFEnd] = useState("");
+  const [fStartTime, setFStartTime] = useState("");
+  const [fEndTime, setFEndTime] = useState("");
   const [fDept, setFDept] = useState("");
   const [fType, setFType] = useState("");
   const [fAgent, setFAgent] = useState("");
@@ -66,10 +68,19 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
     })();
   }, []);
 
+  const KW_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const kwToUtcISO = (dateStr: string, timeStr: string, endOfMinute = false) => {
+    const [y, mo, d] = dateStr.split("-").map(Number);
+    const [h, m] = timeStr.split(":").map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, h, m, endOfMinute ? 59 : 0) - KW_OFFSET_MS).toISOString();
+  };
   const dateOf = (l: OpsLog) => (l.created_at || "").split("T")[0];
   const filtered = logs.filter((l) => {
-    if (fStart && dateOf(l) < fStart) return false;
-    if (fEnd && dateOf(l) > fEnd) return false;
+    const ca = l.created_at || "";
+    if (fStart && fStartTime) { if (ca < kwToUtcISO(fStart, fStartTime)) return false; }
+    else if (fStart && dateOf(l) < fStart) return false;
+    if (fEnd && fEndTime) { if (ca > kwToUtcISO(fEnd, fEndTime, true)) return false; }
+    else if (fEnd && dateOf(l) > fEnd) return false;
     if (fDept && l.department !== fDept) return false;
     if (fType && l.log_type !== fType) return false;
     if (fAgent && l.agent_name !== fAgent) return false;
@@ -84,9 +95,9 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
   const activities = Array.from(new Set(logs.map((l) => l.activity_type).filter(Boolean)));
 
   // Reset to page 1 whenever any filter changes
-  useEffect(() => { setPage(1); }, [fStart, fEnd, fDept, fType, fAgent, fBranch, fBrand, fStatus, fActivity]);
+  useEffect(() => { setPage(1); }, [fStart, fEnd, fStartTime, fEndTime, fDept, fType, fAgent, fBranch, fBrand, fStatus, fActivity]);
 
-  const reset = () => { setFStart(""); setFEnd(""); setFDept(""); setFType(""); setFAgent(""); setFBranch(""); setFBrand(""); setFStatus(""); setFActivity(""); setPage(1); };
+  const reset = () => { setFStart(""); setFEnd(""); setFStartTime(""); setFEndTime(""); setFDept(""); setFType(""); setFAgent(""); setFBranch(""); setFBrand(""); setFStatus(""); setFActivity(""); setPage(1); };
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -133,8 +144,22 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
           <button onClick={reset} className="px-3 py-1.5 text-[11px] font-bold text-rose-400 bg-rose-500/5 border border-rose-500/20 hover:bg-rose-500/10 rounded-xl">Reset</button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">From</label><input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className={selCls + " w-full"} /></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">To</label><input type="date" value={fEnd} onChange={(e) => setFEnd(e.target.value)} className={selCls + " w-full"} /></div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">From Date</label>
+            <input type="date" value={fStart} onChange={(e) => setFStart(e.target.value)} className={selCls + " w-full"} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">From Time <span className="opacity-50">(opt)</span></label>
+            <input type="time" value={fStartTime} onChange={(e) => setFStartTime(e.target.value)} disabled={!fStart} className={selCls + " w-full disabled:opacity-40"} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">To Date</label>
+            <input type="date" value={fEnd} onChange={(e) => setFEnd(e.target.value)} className={selCls + " w-full"} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">To Time <span className="opacity-50">(opt)</span></label>
+            <input type="time" value={fEndTime} onChange={(e) => setFEndTime(e.target.value)} disabled={!fEnd} className={selCls + " w-full disabled:opacity-40"} />
+          </div>
           {currentUser.role === "admin" && <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Department</label><select value={fDept} onChange={(e) => setFDept(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}</select></div>}
           <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Log Type</label><select value={fType} onChange={(e) => setFType(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}</select></div>
           <div className="space-y-1"><label className="text-[10px] font-bold text-[var(--muted)]">Agent</label><select value={fAgent} onChange={(e) => setFAgent(e.target.value)} className={selCls + " w-full"}><option value="">All</option>{agents.map((a) => <option key={a} value={a}>{a}</option>)}</select></div>

@@ -633,11 +633,29 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     logs = await DB.getLogs({ department, log_type: deptLogType || undefined });
   } else logs = await DB.getLogs({ agent_id: id });
 
-  // Optional date-range filter (YYYY-MM-DD, inclusive)
+  // Optional date + time range filter (dates: YYYY-MM-DD, times: HH:MM in Kuwait UTC+3)
   const from = typeof req.query.from === "string" ? req.query.from : "";
   const to = typeof req.query.to === "string" ? req.query.to : "";
-  if (from) logs = logs.filter((l) => (l.created_at || "").slice(0, 10) >= from);
-  if (to) logs = logs.filter((l) => (l.created_at || "").slice(0, 10) <= to);
+  const fromTime = typeof req.query.from_time === "string" ? req.query.from_time : "";
+  const toTime = typeof req.query.to_time === "string" ? req.query.to_time : "";
+  // Convert Kuwait HH:MM on a given YYYY-MM-DD to a UTC ISO string
+  const kwToUtcISO = (dateStr: string, timeStr: string, endOfMinute = false) => {
+    const [y, mo, d] = dateStr.split("-").map(Number);
+    const [h, m] = timeStr.split(":").map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, h, m, endOfMinute ? 59 : 0) - KW_OFFSET_MS).toISOString();
+  };
+  if (from && fromTime) {
+    const fromISO = kwToUtcISO(from, fromTime);
+    logs = logs.filter((l) => (l.created_at || "") >= fromISO);
+  } else if (from) {
+    logs = logs.filter((l) => (l.created_at || "").slice(0, 10) >= from);
+  }
+  if (to && toTime) {
+    const toISO = kwToUtcISO(to, toTime, true);
+    logs = logs.filter((l) => (l.created_at || "") <= toISO);
+  } else if (to) {
+    logs = logs.filter((l) => (l.created_at || "").slice(0, 10) <= to);
+  }
 
   const OPEN = ["Open"];
   const PENDING = ["In Progress", "Waiting Feedback", "Not Solved"];
