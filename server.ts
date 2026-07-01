@@ -76,6 +76,14 @@ const requireLeaderOrAdmin = (req: any, res: any, next: any) => {
   }
 };
 
+const requireManagerOrAdmin = (req: any, res: any, next: any) => {
+  if (req.user && (req.user.role === "admin" || req.user.role === "manager")) {
+    next();
+  } else {
+    res.status(403).json({ error: "This action requires Manager or Admin privileges." });
+  }
+};
+
 // Any manager (Team Leader, Supervisor, or Admin) — i.e. not an agent
 const requireManager = (req: any, res: any, next: any) => {
   if (req.user && req.user.role !== "agent") {
@@ -165,17 +173,25 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
 // ----------------------------------------------------
 // Users Management API (Requires Admin)
 // ----------------------------------------------------
-app.get("/api/users", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
-  // Team leaders and admins can inspect users (e.g. view team)
+app.get("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(async (req, res) => {
   const users = (await DB.getUsers()).map(({ password_hash, ...u }) => u);
   res.json(users);
 }));
 
-app.post("/api/users", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
+app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(async (req, res) => {
   const { full_name, username, password, role, status, team, department } = req.body;
 
   if (!full_name || !username || !password || !role || !status) {
     return res.status(400).json({ error: "Please fill in all required fields to create the account." });
+  }
+
+  // Non-admin managers can only create users at a lower level than themselves
+  if (req.user.role !== "admin") {
+    const ut2 = USER_TYPES.find((t) => t.label === req.body.job_title);
+    const targetLevel = req.body.level != null ? Number(req.body.level) : (ut2 ? ut2.level : roleDefaultLevel(role));
+    if (targetLevel >= userLevel(req.user)) {
+      return res.status(403).json({ error: "You can only create users at a lower level than your own." });
+    }
   }
 
   // Email is optional now — derive a stable internal address from the username

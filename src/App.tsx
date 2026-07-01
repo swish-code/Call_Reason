@@ -568,8 +568,8 @@ export default function App() {
               </button>
             )}
 
-            {/* Users Management: Strictly LIMITED to Admin */}
-            {currentUser?.role === "admin" && (
+            {/* Users Management: Admin + Manager */}
+            {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
               <button
                 onClick={() => setActivePage("users")}
                 className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${

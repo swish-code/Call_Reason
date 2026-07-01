@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, USER_TYPES, UserType } from "../types.js";
+import { User, USER_TYPES, UserType, roleDefaultLevel } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 
 // Map a stored user back to its account-type label (for the edit form)
@@ -35,6 +35,11 @@ interface UsersManagementProps {
 }
 
 export default function UsersManagement({ currentUser }: UsersManagementProps) {
+  const isAdmin = currentUser.role === "admin";
+  const myLevel = currentUser.level ?? roleDefaultLevel(currentUser.role);
+  // Managers can only create users at levels below their own
+  const creatableTypes = isAdmin ? USER_TYPES : USER_TYPES.filter((t) => t.level < myLevel);
+
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -312,33 +317,38 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                     </td>
                     <td className="px-6 py-4 text-xs">
                       <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => handleOpenEdit(user)}
-                          className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-zinc-700 text-[var(--text)] border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1"
-                          title="Modify Profile"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                          Edit
-                        </button>
-                        
-                        <button
-                          onClick={() => handleOpenReset(user)}
-                          className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-amber-500/10 hover:text-amber-400 hover:border-amber-500/20 text-[var(--text)] border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1"
-                          title="Reset Credentials"
-                        >
-                          <Key className="w-3.5 h-3.5" />
-                          Password
-                        </button>
+                        {isAdmin && (
+                          <>
+                            <button
+                              onClick={() => handleOpenEdit(user)}
+                              className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-zinc-700 text-[var(--text)] border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1"
+                              title="Modify Profile"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
 
-                        <button
-                          onClick={() => handleDeleteUser(user.id, user.username)}
-                          disabled={user.id === currentUser.id}
-                          className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-rose-500/10 text-[var(--text)] hover:text-rose-400 hover:border-rose-500/20 border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none"
-                          title="Permanently Drop Record"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Delete
-                        </button>
+                            <button
+                              onClick={() => handleOpenReset(user)}
+                              className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-amber-500/10 hover:text-amber-400 hover:border-amber-500/20 text-[var(--text)] border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1"
+                              title="Reset Credentials"
+                            >
+                              <Key className="w-3.5 h-3.5" />
+                              Password
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteUser(user.id, user.username)}
+                              disabled={user.id === currentUser.id}
+                              className="p-1 px-2.5 py-1.5 bg-[var(--surface-2)] hover:bg-rose-500/10 text-[var(--text)] hover:text-rose-400 hover:border-rose-500/20 border border-[var(--border)] rounded-lg transition text-xs flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none"
+                              title="Permanently Drop Record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete
+                            </button>
+                          </>
+                        )}
+                        {!isAdmin && <span className="text-[10px] text-[var(--muted)]">View only</span>}
                       </div>
                     </td>
                   </tr>
@@ -418,9 +428,23 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                   onChange={(e) => setUserType(e.target.value)}
                   className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 >
-                  {USER_TYPES.map((t) => (<option key={t.label} value={t.label}>{t.label}</option>))}
+                  {creatableTypes.map((t) => (<option key={t.label} value={t.label}>{t.label}</option>))}
                 </select>
               </div>
+
+              {isAdmin && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--muted)] block">Status:</label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as "Active" | "Inactive")}
+                    className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                  </select>
+                </div>
+              )}
 
               <div className="pt-4 border-t border-[var(--border)] flex items-center justify-end gap-2 text-xs">
                 <button
