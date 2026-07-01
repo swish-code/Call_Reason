@@ -41,6 +41,29 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   const [to, setTo] = useState("");
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
+  const [activePeriod, setActivePeriod] = useState<"today" | "week" | "month" | "">("");
+
+  // Kuwait time helpers (UTC+3)
+  const kwToday = () => {
+    const kw = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    return kw.toISOString().slice(0, 10);
+  };
+  const kwWeekStart = () => {
+    const kw = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    kw.setUTCDate(kw.getUTCDate() - kw.getUTCDay()); // back to Sunday
+    return kw.toISOString().slice(0, 10);
+  };
+  const kwMonthStart = () => {
+    const kw = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    return kw.toISOString().slice(0, 7) + "-01";
+  };
+
+  const applyPeriod = (p: "today" | "week" | "month") => {
+    const today = kwToday();
+    const f = p === "today" ? today : p === "week" ? kwWeekStart() : kwMonthStart();
+    setFrom(f); setTo(today); setFromTime(""); setToTime(""); setActivePeriod(p);
+    load(f, today, "", "");
+  };
 
   const load = async (f = from, t = to, ft = fromTime, tt = toTime) => {
     try {
@@ -58,7 +81,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
 
   useEffect(() => { load("", "", "", ""); }, []);
 
-  const clearFilter = () => { setFrom(""); setTo(""); setFromTime(""); setToTime(""); load("", "", "", ""); };
+  const clearFilter = () => { setFrom(""); setTo(""); setFromTime(""); setToTime(""); setActivePeriod(""); load("", "", "", ""); };
 
   if (loading && !d) return <div className="flex flex-col items-center justify-center min-h-[400px]"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div><p className="mt-4 text-[var(--muted)]">Loading dashboard...</p></div>;
   if (error) return <div className="p-6 bg-rose-950/20 border border-rose-500/30 rounded-2xl text-center text-rose-300"><AlertCircle className="w-10 h-10 mx-auto text-rose-500" /><p className="mt-2 text-sm">{error}</p></div>;
@@ -183,9 +206,17 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
           {/* Date-range filter */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-lg flex flex-wrap items-end gap-3">
             <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Filter className="w-4 h-4 text-blue-400" /> Filter by date</div>
+            {/* Quick period buttons */}
+            {(["today", "week", "month"] as const).map((p) => (
+              <button key={p} onClick={() => applyPeriod(p)}
+                className={`px-3 py-2 text-xs font-bold rounded-xl border transition active:scale-95 ${activePeriod === p ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--heading)] hover:border-blue-500/40"}`}>
+                {p === "today" ? "Today" : p === "week" ? "This Week" : "This Month"}
+              </button>
+            ))}
+            <div className="w-px h-6 bg-[var(--border)] mx-1 self-center" />
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">From Date</label>
-              <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+              <input type="date" value={from} max={to || undefined} onChange={(e) => { setFrom(e.target.value); setActivePeriod(""); }} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">From Time <span className="text-[9px] opacity-60">(optional)</span></label>
@@ -193,7 +224,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">To Date</label>
-              <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+              <input type="date" value={to} min={from || undefined} onChange={(e) => { setTo(e.target.value); setActivePeriod(""); }} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">To Time <span className="text-[9px] opacity-60">(optional)</span></label>
