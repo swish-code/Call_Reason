@@ -84,6 +84,16 @@ const requireManagerOrAdmin = (req: any, res: any, next: any) => {
   }
 };
 
+// GET /api/users: leaders, supervisors, managers, admins (agents excluded)
+const requireLeaderManagerOrAdmin = (req: any, res: any, next: any) => {
+  const r = req.user?.role;
+  if (r && r !== "agent") {
+    next();
+  } else {
+    res.status(403).json({ error: "Access denied." });
+  }
+};
+
 // Any manager (Team Leader, Supervisor, or Admin) — i.e. not an agent
 const requireManager = (req: any, res: any, next: any) => {
   if (req.user && req.user.role !== "agent") {
@@ -173,7 +183,7 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
 // ----------------------------------------------------
 // Users Management API (Requires Admin)
 // ----------------------------------------------------
-app.get("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(async (req, res) => {
+app.get("/api/users", authenticateJWT, requireLeaderManagerOrAdmin, asyncHandler(async (req, res) => {
   const users = (await DB.getUsers()).map(({ password_hash, ...u }) => u);
   res.json(users);
 }));
