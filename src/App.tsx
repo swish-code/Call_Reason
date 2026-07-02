@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import { User, UserRole } from "./types.js";
 import UsersManagement from "./components/UsersManagement.tsx";
 import Configuration from "./components/Configuration.tsx";
@@ -56,6 +56,15 @@ import {
 
 type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys";
 
+// Which collapsible sidebar group each page belongs to (standalone pages omitted)
+const PAGE_GROUP: Record<string, string> = {
+  newlog: "logs", logs: "logs", history: "logs",
+  mytasks: "tasks", tasks: "tasks", pool: "tasks", tracker: "tasks", recurring: "tasks",
+  reports: "insights", performance: "insights",
+  reviews: "feedback", surveys: "feedback",
+  users: "admin", configuration: "admin",
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
@@ -78,6 +87,9 @@ export default function App() {
   const [unseenTasks, setUnseenTasks] = useState(0);
   const [taskToast, setTaskToast] = useState("");
   const prevUnseenRef = useRef(0);
+  // Which sidebar groups are expanded (collapsible nav sections)
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ tasks: true });
+  const toggleGroup = (key: string) => setOpenGroups((g) => ({ ...g, [key]: !g[key] }));
 
   const playBeep = () => {
     try {
@@ -107,7 +119,7 @@ export default function App() {
         const c = count || 0;
         if (c > prevUnseenRef.current) {
           playBeep();
-          setTaskToast("🔔 You have a new task assigned");
+          setTaskToast("ðŸ”” You have a new task assigned");
           setTimeout(() => setTaskToast(""), 6000);
           if ("Notification" in window && Notification.permission === "granted") {
             try { new Notification("Swish Tasks", { body: "You have a new task assigned to you." }); } catch (e) {}
@@ -124,12 +136,18 @@ export default function App() {
 
   const openTasks = () => { setActivePage("mytasks"); setUnseenTasks(0); prevUnseenRef.current = 0; };
 
-  // The Owner has no Dashboard / New Log / Team Logs / My Tasks — keep them off those pages
+  // The Owner has no Dashboard / New Log / Team Logs / My Tasks â€” keep them off those pages
   useEffect(() => {
     if (currentUser?.role === "owner" && ["dashboard", "newlog", "logs", "mytasks"].includes(activePage)) {
       setActivePage("tracker");
     }
   }, [currentUser, activePage]);
+
+  // Keep the group that owns the active page expanded
+  useEffect(() => {
+    const g = PAGE_GROUP[activePage];
+    if (g) setOpenGroups((prev) => (prev[g] ? prev : { ...prev, [g]: true }));
+  }, [activePage]);
 
   // Shift presence (agents): On Shift / Out of Shift
   const [shiftStatus, setShiftStatus] = useState<"on" | "off">("off");
@@ -229,7 +247,7 @@ export default function App() {
 
         <div className="w-full max-w-5xl grid lg:grid-cols-2 bg-[var(--surface)]/80 backdrop-blur-2xl border border-white/10 rounded-[2rem] overflow-hidden shadow-2xl shadow-black/60 relative z-10 animate-fade-in">
 
-          {/* Left — brand / marketing panel */}
+          {/* Left â€” brand / marketing panel */}
           <div className="hidden lg:flex flex-col justify-between p-10 relative bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 overflow-hidden">
             <div className="absolute inset-0 opacity-20" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, #fff 1px, transparent 1px)", backgroundSize: "26px 26px" }}></div>
             <div className="absolute -bottom-20 -right-20 w-72 h-72 bg-white/10 rounded-full blur-2xl"></div>
@@ -240,7 +258,7 @@ export default function App() {
               </div>
               <h2 className="text-3xl font-black text-white mt-8 leading-tight tracking-tight">Swish Tasks</h2>
               <p className="text-blue-100/80 text-sm mt-4 font-light leading-relaxed max-w-xs">
-                One workspace for your call center, technical and complaints teams — log activities, track performance, and stay in control.
+                One workspace for your call center, technical and complaints teams â€” log activities, track performance, and stay in control.
               </p>
             </div>
 
@@ -257,10 +275,10 @@ export default function App() {
               ))}
             </div>
 
-            <div className="relative z-10 text-[11px] text-blue-100/50 font-medium mt-10">© {new Date().getFullYear()} Swish Tasks · Secure Access</div>
+            <div className="relative z-10 text-[11px] text-blue-100/50 font-medium mt-10">Â© {new Date().getFullYear()} Swish Tasks Â· Secure Access</div>
           </div>
 
-          {/* Right — login form */}
+          {/* Right â€” login form */}
           <div className="p-8 sm:p-10 md:p-12 flex flex-col justify-center">
             {/* Mobile logo */}
             <div className="lg:hidden flex items-center gap-3 mb-8">
@@ -308,7 +326,7 @@ export default function App() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
+                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                     className="w-full pl-11 pr-11 py-3.5 bg-[var(--surface-2)] text-[var(--heading)] placeholder:text-zinc-600 border border-[var(--border)] rounded-2xl text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
                     dir="ltr"
                   />
@@ -331,7 +349,7 @@ export default function App() {
               </button>
             </form>
 
-            <p className="text-[11px] text-zinc-600 mt-8 text-center">Protected system · authorized personnel only</p>
+            <p className="text-[11px] text-zinc-600 mt-8 text-center">Protected system Â· authorized personnel only</p>
           </div>
         </div>
       </div>
@@ -352,6 +370,79 @@ export default function App() {
     }
   };
 
+  // ----------------------------------------------------
+  // Sidebar navigation â€” config-driven, collapsible groups
+  // ----------------------------------------------------
+  const role = currentUser.role;
+  const notOwner = role !== "owner";
+  const notAgent = role !== "agent";
+  const isAgent = role === "agent";
+  const isAdmin = role === "admin";
+  const isManager = role === "manager";
+  const isLeader = role === "leader";
+  const logsLabel = isAgent ? "My Logs" : isAdmin ? "All Logs" : "Team Logs";
+
+  type NavItem = { page: ActivePage; label: string; icon: any; visible: boolean; onClick?: () => void; badge?: number; accent?: "amber" };
+  type NavEntry =
+    | { type: "item"; item: NavItem }
+    | { type: "group"; key: string; label: string; icon: any; items: NavItem[] };
+
+  const navGroups: NavEntry[] = [
+    { type: "item", item: { page: "dashboard", label: "Dashboard", icon: BarChart3, visible: notOwner } },
+    { type: "group", key: "logs", label: "Logs", icon: ClipboardList, items: [
+      { page: "newlog", label: "New Log", icon: FilePlus2, visible: notOwner },
+      { page: "logs", label: logsLabel, icon: ClipboardList, visible: notOwner },
+      { page: "history", label: "History Logs", icon: History, visible: isAdmin || isLeader },
+    ] },
+    { type: "group", key: "tasks", label: "Tasks", icon: ClipboardCheck, items: [
+      { page: "mytasks", label: "My Tasks", icon: ClipboardCheck, visible: notOwner, onClick: openTasks, badge: unseenTasks },
+      { page: "tasks", label: "Assign Task", icon: Send, visible: notAgent },
+      { page: "pool", label: "Available Tasks", icon: Inbox, visible: isAgent },
+      { page: "tracker", label: "Task Tracker", icon: ClipboardList, visible: notAgent },
+      { page: "recurring", label: "Recurring Tasks", icon: Repeat, visible: notAgent },
+    ] },
+    { type: "group", key: "insights", label: "Reports", icon: BarChart2, items: [
+      { page: "reports", label: "Reports & Export", icon: FileText, visible: notAgent },
+      { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
+    ] },
+    { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
+      { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: notAgent },
+      { page: "surveys", label: "Surveys", icon: MessageSquare, visible: true },
+    ] },
+    { type: "group", key: "admin", label: "Administration", icon: ShieldAlert, items: [
+      { page: "users", label: "User Management", icon: ShieldAlert, visible: isAdmin || isManager, accent: "amber" },
+      { page: "configuration", label: "Configuration", icon: SlidersHorizontal, visible: isAdmin },
+    ] },
+  ];
+
+  const renderNavItem = (it: NavItem) => {
+    const active = activePage === it.page;
+    const Icon = it.icon;
+    return (
+      <button
+        key={it.page}
+        onClick={() => { if (it.onClick) it.onClick(); else setActivePage(it.page); closeSidebarOnMobile(); }}
+        className={`w-full py-2.5 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+          active
+            ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+            : it.accent === "amber"
+              ? "text-amber-300 hover:text-amber-200 hover:bg-[var(--surface-2)]"
+              : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+        }`}
+      >
+        <Icon className={`w-4 h-4 shrink-0 ${it.accent === "amber" && !active ? "text-amber-400" : ""}`} />
+        {sidebarOpen && (
+          <span className="truncate flex items-center gap-2">
+            {it.label}
+            {it.badge && it.badge > 0
+              ? <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{it.badge}</span>
+              : null}
+          </span>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[var(--bg)] flex flex-col md:flex-row relative font-sans text-[var(--text)]">
       {taskToast && (
@@ -360,7 +451,7 @@ export default function App() {
         </div>
       )}
       
-      {/* Mobile backdrop — closes the drawer when tapped */}
+      {/* Mobile backdrop â€” closes the drawer when tapped */}
       {sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-30 md:hidden" aria-hidden="true" />
       )}
@@ -404,231 +495,45 @@ export default function App() {
           </div>
 
           {/* Nav Buttons links */}
-          <nav className="flex flex-col gap-1" onClick={closeSidebarOnMobile}>
-            {/* Dashboard: hidden for the Owner */}
-            {currentUser?.role !== "owner" && (
-              <button
-                onClick={() => setActivePage("dashboard")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "dashboard"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <BarChart3 className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Dashboard</span>}
-              </button>
-            )}
-
-            {/* New Log: every role except the Owner */}
-            {currentUser?.role !== "owner" && (
-              <button
-                onClick={() => setActivePage("newlog")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "newlog"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <FilePlus2 className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">New Log</span>}
-              </button>
-            )}
-
-            {/* Logs: hidden for the Owner */}
-            {currentUser?.role !== "owner" && (
-              <button
-                onClick={() => setActivePage("logs")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "logs"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <ClipboardList className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">{currentUser.role === "agent" ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs"}</span>}
-              </button>
-            )}
-
-            {/* My Tasks — tasks assigned to me (every role except the Owner) */}
-            {currentUser?.role !== "owner" && (
-              <button
-                onClick={openTasks}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "mytasks"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <ClipboardCheck className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate flex items-center gap-2">My Tasks
-                  {unseenTasks > 0 && <span className="bg-rose-500 text-white text-[9px] font-extrabold rounded-full px-1.5 py-0.5 leading-none">{unseenTasks}</span>}
-                </span>}
-              </button>
-            )}
-
-            {/* Assign Task — anyone above agent can assign downward */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => setActivePage("tasks")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "tasks"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <Send className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Assign Task</span>}
-              </button>
-            )}
-
-            {/* Available Tasks (pool) — agents only */}
-            {currentUser?.role === "agent" && (
-              <button
-                onClick={() => setActivePage("pool")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "pool"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <Inbox className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Available Tasks</span>}
-              </button>
-            )}
-
-            {/* Task Tracker — managers only */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => setActivePage("tracker")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "tracker"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <ClipboardList className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Task Tracker</span>}
-              </button>
-            )}
-
-            {/* Recurring Tasks — managers only */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => setActivePage("recurring")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "recurring"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <Repeat className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Recurring Tasks</span>}
-              </button>
-            )}
-
-            {/* Reports limited to Admin & TL */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => setActivePage("reports")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "reports"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <FileText className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Reports & Export</span>}
-              </button>
-            )}
-
-            {/* Performance — leaders, supervisors, managers, admin */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => setActivePage("performance")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "performance"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <BarChart2 className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Team Performance</span>}
-              </button>
-            )}
-
-            {/* History Logs (audit) limited to Admin & Team Leader */}
-            {(currentUser?.role === "admin" || currentUser?.role === "leader") && (
-              <button
-                onClick={() => setActivePage("history")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "history"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <History className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">History Logs</span>}
-              </button>
-            )}
-
-            {/* Users Management: Admin + Manager */}
-            {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
-              <button
-                onClick={() => setActivePage("users")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "users"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
-                {sidebarOpen && <span className="truncate text-amber-200">User Management</span>}
-              </button>
-            )}
-
-            {/* Reviews: all non-agents */}
-            {currentUser?.role !== "agent" && (
-              <button
-                onClick={() => { setActivePage("reviews"); closeSidebarOnMobile(); }}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "reviews"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <Star className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Ratings & Reviews</span>}
-              </button>
-            )}
-
-            {/* Surveys: all roles (agents get the queue) */}
-            <button
-              onClick={() => { setActivePage("surveys"); closeSidebarOnMobile(); }}
-              className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                activePage === "surveys"
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                  : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 shrink-0" />
-              {sidebarOpen && <span className="truncate">Surveys</span>}
-            </button>
-
-            {/* Configuration: Admin only */}
-            {currentUser?.role === "admin" && (
-              <button
-                onClick={() => setActivePage("configuration")}
-                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
-                  activePage === "configuration"
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
-                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
-                }`}
-              >
-                <SlidersHorizontal className="w-4 h-4 shrink-0" />
-                {sidebarOpen && <span className="truncate">Configuration</span>}
-              </button>
-            )}
+          <nav className="flex flex-col gap-1">
+            {navGroups.map((entry) => {
+              if (entry.type === "item") {
+                return entry.item.visible ? renderNavItem(entry.item) : null;
+              }
+              const items = entry.items.filter((it) => it.visible);
+              if (!items.length) return null;
+              if (!sidebarOpen) {
+                return (
+                  <div key={entry.key} className="flex flex-col gap-1">
+                    {items.map(renderNavItem)}
+                  </div>
+                );
+              }
+              const open = !!openGroups[entry.key];
+              const hasActive = items.some((it) => it.page === activePage);
+              const GIcon = entry.icon;
+              return (
+                <div key={entry.key} className="flex flex-col">
+                  <button
+                    onClick={() => toggleGroup(entry.key)}
+                    className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                      hasActive && !open
+                        ? "text-[var(--heading)] bg-[var(--surface-2)]"
+                        : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                    }`}
+                  >
+                    <GIcon className="w-4 h-4 shrink-0" />
+                    <span className="truncate flex-1 text-left">{entry.label}</span>
+                    <ChevronRight className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+                  </button>
+                  {open && (
+                    <div className="flex flex-col gap-1 mt-1 ml-3.5 pl-2.5 border-l border-[var(--border)]">
+                      {items.map(renderNavItem)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </nav>
         </div>
 
@@ -669,7 +574,7 @@ export default function App() {
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
-              {activePage === "history" && "History Logs — Audit Trail"}
+              {activePage === "history" && "History Logs â€” Audit Trail"}
               {activePage === "mytasks" && "My Tasks"}
               {activePage === "tasks" && "Assign Tasks"}
               {activePage === "tracker" && "Task Tracker"}
@@ -696,7 +601,7 @@ export default function App() {
                     ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                     : "bg-[var(--surface)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--heading)]"
                 }`}
-                title={shiftStatus === "on" ? "You are On Shift — click to end" : "You are Out of Shift — click to start"}
+                title={shiftStatus === "on" ? "You are On Shift â€” click to end" : "You are Out of Shift â€” click to start"}
               >
                 <Power className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{shiftStatus === "on" ? "On Shift" : "Out of Shift"}</span>
