@@ -135,7 +135,8 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
     : s === "Available" ? "bg-violet-500/10 text-violet-400 border border-violet-500/20"
     : "bg-blue-500/10 text-blue-400 border border-blue-500/20";
   const prioBadge = (p?: string) => p === "High" ? "text-rose-400" : p === "Low" ? "text-[var(--muted)]" : "text-amber-400";
-  const fmt = (d?: string) => d ? d.replace("T", " ").slice(0, 16) : "—";
+  const KW_MS = 3 * 60 * 60 * 1000;
+  const fmt = (d?: string) => d ? new Date(new Date(d).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16) : "—";
   const overdue = (t: AssignedTask) => t.due_date && t.status !== "Completed" && new Date(t.due_date).getTime() < Date.now();
   const inputCls = "w-full px-4 py-3 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition";
   const smallCls = "px-2.5 py-1.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-lg text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[var(--surface)]";

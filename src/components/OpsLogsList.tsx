@@ -129,7 +129,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const exportCsv = () => {
     const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
     const rows = filtered.map((l) => [
-      (l.created_at || "").replace("T", " ").slice(0, 16), l.log_type, l.department || "", l.activity_type || "", l.status || "", fmtDur(elapsedSeconds(l)),
+      fmt(l.created_at), l.log_type, l.department || "", l.activity_type || "", l.status || "", fmtDur(elapsedSeconds(l)),
       l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", l.notes || l.action_taken || "",
     ]);
     downloadCSV(headers, rows, `Logs_${new Date().toISOString().split("T")[0]}`);
@@ -142,7 +142,11 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
     if (s === "Not Solved") return "bg-rose-500/10 text-rose-400 border border-rose-500/20";
     return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
   };
-  const fmt = (ts?: string) => (ts ? ts.replace("T", " ").slice(0, 16) : "");
+  const KW_MS = 3 * 60 * 60 * 1000;
+  const fmt = (ts?: string) => {
+    if (!ts) return "";
+    return new Date(new Date(ts).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16);
+  };
 
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">

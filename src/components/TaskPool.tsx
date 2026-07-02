@@ -25,7 +25,8 @@ export default function TaskPool({ currentUser, shiftStatus }: Props) {
     if (r.ok) fetchPool(); else { const d = await r.json(); alert(d.error || "Failed to claim."); fetchPool(); }
   };
 
-  const fmt = (d?: string) => d ? d.replace("T", " ").slice(0, 16) : "—";
+  const KW_MS = 3 * 60 * 60 * 1000;
+  const fmt = (d?: string) => d ? new Date(new Date(d).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16) : "—";
   const prioBadge = (p?: string) => p === "High" ? "text-rose-400" : p === "Low" ? "text-[var(--muted)]" : "text-amber-400";
 
   return (

@@ -105,14 +105,15 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
   const exportCsv = () => {
     const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
     const rows = filtered.map((l) => [
-      (l.created_at || "").replace("T", " ").slice(0, 16), LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type, l.department || "", l.activity_type || "", l.status || "", dur(l),
+      fmt(l.created_at), LOG_TYPE_CONFIG[l.log_type as LogType]?.title || l.log_type, l.department || "", l.activity_type || "", l.status || "", dur(l),
       l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", (l.notes || l.action_taken || "").replace(/\n/g, " "),
     ]);
     downloadCSV(headers, rows, `Operations_Report_${new Date().toISOString().split("T")[0]}`);
   };
 
   const selCls = "px-3 py-2 bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-xl text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 [&>option]:bg-[var(--surface)]";
-  const fmt = (ts?: string) => (ts ? ts.replace("T", " ").slice(0, 16) : "");
+  const KW_MS = 3 * 60 * 60 * 1000;
+  const fmt = (ts?: string) => ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16) : "";
   const dur = (l: OpsLog) => {
     let s = Number(l.duration_seconds || 0);
     if (l.running_since) s += Math.max(0, Math.round((Date.now() - new Date(l.running_since).getTime()) / 1000));
