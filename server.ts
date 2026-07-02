@@ -1832,6 +1832,347 @@ app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: 
 }));
 
 // ----------------------------------------------------
+// Surveys Module (Call Campaigns + Survey Records)
+// ----------------------------------------------------
+const DAILY_SURVEY_LIMIT = Number(process.env.DAILY_SURVEY_LIMIT || 150);
+const SURVEY_DEDUP_DAYS = Number(process.env.SURVEY_DEDUP_DAYS || 10);
+
+// Max numbers a role may request in one campaign
+const REQUEST_CAP: Record<string, number> = {
+  admin: 100000, owner: 100000, manager: 1000, supervisor: 1000, leader: 1000,
+};
+
+const addDays = (iso: string, n: number): string => {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+// Resolve a brand label to a brand id: full name, else the part before a separator
+const resolveBrand = (label: string, brandMap: Map<string, string>): string | null => {
+  if (!label) return null;
+  const full = brandMap.get(label.toLowerCase().trim());
+  if (full) return full;
+  const part = label.split(/[（(\/|\-]/)[0].trim();
+  return brandMap.get(part.toLowerCase()) || null;
+};
+
+// Heuristic: a record is "answered" if it carries a real rate / feedback / comment
+const isAnswered = (rate: number | null, productFeedback: string | null, comment: string | null): boolean => {
+  const validRate = rate != null && rate >= 1 && rate <= 5;
+  const pf = (productFeedback || "").toLowerCase().trim();
+  const realPf = !!pf && pf !== "no answer" && pf !== "noanswer" && pf !== "-";
+  const c = (comment || "").trim().toLowerCase();
+  const realComment = !!c && c !== "no answer" && c !== "-";
+  return validRate || realPf || realComment;
+};
+
+const parseRate = (raw: string): number | null => {
+  if (!raw) return null;
+  const n = Math.round(Number(String(raw).replace(/[^0-9.]/g, "")));
+  return n >= 1 && n <= 5 ? n : null;
+};
+
+// Registry of uploadable survey-record types (extensible)
+const RECORD_TYPES: Record<string, {
+  label: string; columns: string[];
+  map: (row: Record<string, any>, ctx: { brandMap: Map<string, string>; platMap: Map<string, string> }) => any;
+}> = {
+  new_items: {
+    label: "New Items Survey",
+    columns: ["Order Date", "OrderSource", "NewItemName", "New Order ID", "MobileNo", "Customer suggestion for the item", "Comment", "Complaint if needed", "Served By", "Product Feedback", "Rate", "trials"],
+    map: (row) => {
+      const rate = parseRate(pick(row, "Rate"));
+      const pf = pick(row, "Product Feedback");
+      const comment = pick(row, "Comment");
+      return {
+        record_type: "new_items",
+        brand_id: null, brand_label: "",
+        platform_id: null, platform_label: pick(row, "OrderSource", "Order Source"),
+        order_id: pick(row, "New Order ID", "Order ID"),
+        phone: normalisePhone(pick(row, "MobileNo", "Mobile No", "Phone")),
+        item_name: pick(row, "NewItemName", "New Item Name"),
+        rate, product_feedback: pf || null,
+        served_by: pick(row, "Served By"),
+        customer_suggestion: pick(row, "Customer suggestion for the item", "Customer suggestion"),
+        comment: comment || null,
+        complaint: pick(row, "Complaint if needed", "Complaint"),
+        trials: pick(row, "trials", "Trials"),
+        record_date: pick(row, "Order Date"),
+        answered: isAnswered(rate, pf, comment),
+      };
+    },
+  },
+  complaints: {
+    label: "Complaints Survey",
+    columns: ["Brand / Branch", "Platform", "Order ID", "Phone Number", "Rate", "Notes", "Served By"],
+    map: (row, ctx) => {
+      const rate = parseRate(pick(row, "Rate"));
+      const brandLabel = pick(row, "Brand / Branch", "Brand/Branch", "Brand", "Branch");
+      const platLabel = pick(row, "Platform");
+      const note = pick(row, "Notes", "Note");
+      return {
+        record_type: "complaints",
+        brand_id: resolveBrand(brandLabel, ctx.brandMap), brand_label: brandLabel,
+        platform_id: ctx.platMap.get(platLabel.toLowerCase()) || null, platform_label: platLabel,
+        order_id: pick(row, "Order ID"),
+        phone: normalisePhone(pick(row, "Phone Number", "Phone")),
+        rate, note: note || null,
+        served_by: pick(row, "Served By"),
+        answered: isAnswered(rate, null, note),
+      };
+    },
+  },
+};
+
+const canBuildTemplates = (role: string) => ["admin", "manager", "supervisor"].includes(role);
+const isLeaderLevel = (role: string) => ["admin", "owner", "manager", "supervisor", "leader"].includes(role);
+
+// ---- Templates ----
+app.get("/api/survey-templates", authenticateJWT, asyncHandler(async (_req, res) => {
+  res.json(await DB.getSurveyTemplates());
+}));
+
+app.get("/api/survey-templates/:id", authenticateJWT, asyncHandler(async (req, res) => {
+  const t = await DB.getSurveyTemplateById(req.params.id);
+  if (!t) return res.status(404).json({ error: "Template not found." });
+  res.json(t);
+}));
+
+app.post("/api/survey-templates", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!canBuildTemplates(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const { name, brand_id, active, questions } = req.body;
+  if (!name || !Array.isArray(questions) || questions.length === 0)
+    return res.status(400).json({ error: "Name and at least one question are required." });
+  const t = await DB.createSurveyTemplate({ name, brand_id: brand_id || null, created_by: req.user.id, active, questions });
+  res.status(201).json(t);
+}));
+
+app.put("/api/survey-templates/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!canBuildTemplates(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const t = await DB.updateSurveyTemplate(req.params.id, req.body);
+  if (!t) return res.status(404).json({ error: "Template not found." });
+  res.json(t);
+}));
+
+// ---- Campaigns ----
+app.get("/api/survey-campaigns", authenticateJWT, asyncHandler(async (_req, res) => {
+  res.json(await DB.getSurveyCampaigns());
+}));
+
+app.get("/api/survey-campaigns/:id", authenticateJWT, asyncHandler(async (req, res) => {
+  const c = await DB.getSurveyCampaignById(req.params.id);
+  if (!c) return res.status(404).json({ error: "Campaign not found." });
+  res.json(c);
+}));
+
+app.post("/api/survey-campaigns", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const cap = REQUEST_CAP[req.user.role];
+  if (!cap) return res.status(403).json({ error: "You are not allowed to request campaigns." });
+  const {
+    brand_id, template_id, survey_type = "daily_normal", assignment_mode = "open",
+    continuity_type = "one_time_slot", requested_count = 0, duration_days = 1, default_agent_id,
+  } = req.body;
+  if (Number(requested_count) > cap)
+    return res.status(400).json({ error: `Requested count exceeds your cap of ${cap}.` });
+  if (assignment_mode === "assigned" && !default_agent_id)
+    return res.status(400).json({ error: "An agent must be selected for assigned mode." });
+  const c = await DB.createSurveyCampaign({
+    brand_id: brand_id || null, requested_by: req.user.id, requester_role: req.user.role,
+    template_id: template_id || null, survey_type, assignment_mode, continuity_type,
+    requested_count: Number(requested_count) || 0, duration_days: Number(duration_days) || 1,
+    default_agent_id: assignment_mode === "assigned" ? default_agent_id : null,
+  });
+  res.status(201).json(c);
+}));
+
+app.patch("/api/survey-campaigns/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const c = await DB.getSurveyCampaignById(req.params.id);
+  if (!c) return res.status(404).json({ error: "Campaign not found." });
+  const canManage = isLeaderLevel(req.user.role) || c.requested_by === req.user.id;
+  if (!canManage) return res.status(403).json({ error: "Access denied." });
+  const { status } = req.body;
+  const valid = ["pending", "active", "full_today", "completed", "cancelled"];
+  if (!valid.includes(status)) return res.status(400).json({ error: "Invalid status." });
+  res.json(await DB.setSurveyCampaignStatus(req.params.id, status));
+}));
+
+// Numbers upload template
+app.get("/api/survey-campaigns/numbers/template", authenticateJWT, asyncHandler(async (_req, res) => {
+  const ws = XLSX.utils.aoa_to_sheet([["Brand", "Customer Phone"]]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Numbers");
+  res.json({ filename: "campaign_numbers_template.xlsx", file: XLSX.write(wb, { type: "base64", bookType: "xlsx" }) });
+}));
+
+// Upload numbers into a campaign (dedup + daily capacity)
+app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const campaign = await DB.getSurveyCampaignById(req.params.id);
+  if (!campaign) return res.status(404).json({ error: "Campaign not found." });
+  if (["completed", "cancelled"].includes(campaign.status))
+    return res.status(400).json({ error: "Campaign is closed." });
+  const canManage = isLeaderLevel(req.user.role) || campaign.requested_by === req.user.id;
+  if (!canManage) return res.status(403).json({ error: "Access denied." });
+
+  const { file } = req.body;
+  if (!file) return res.status(400).json({ error: "No file provided." });
+  const wb = XLSX.read(Buffer.from(file, "base64"), { type: "buffer" });
+  const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+
+  const result = { total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0, errors: [] as { row: number; message: string }[] };
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const phone = normalisePhone(pick(rows[i], "Customer Phone", "Phone", "Phone Number", "Mobile"));
+    if (!phone) { result.errors.push({ row: i + 2, message: "Missing phone." }); continue; }
+    if (seen.has(phone)) { result.duplicates_file++; continue; }
+    seen.add(phone);
+    if (await DB.wasRecentlyContacted(campaign.brand_id, phone, SURVEY_DEDUP_DAYS)) { result.duplicates_10day++; continue; }
+    if (await DB.isPhoneQueued(campaign.brand_id, phone)) { result.already_queued++; continue; }
+    candidates.push(phone);
+  }
+
+  // Distribute across days honouring the global daily capacity
+  const today = await DB.getToday();
+  const counts = await DB.getPendingCountsByDate();
+  const assignedAgent = campaign.assignment_mode === "assigned" ? (campaign.default_agent_id || null) : null;
+  const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string }[] = [];
+  let offset = 0;
+  for (const phone of candidates) {
+    let date = addDays(today, offset);
+    while ((counts.get(date) || 0) >= DAILY_SURVEY_LIMIT) { offset++; date = addDays(today, offset); }
+    counts.set(date, (counts.get(date) || 0) + 1);
+    toInsert.push({ campaign_id: campaign.id, brand_id: campaign.brand_id, customer_phone: phone, assigned_agent_id: assignedAgent, scheduled_date: date });
+  }
+  result.inserted = await DB.addSurveyAssignments(toInsert);
+  if (result.inserted > 0 && campaign.status === "pending") await DB.setSurveyCampaignStatus(campaign.id, "active");
+  res.json(result);
+}));
+
+// Daily capacity for the next 7 days
+app.get("/api/surveys/capacity", authenticateJWT, asyncHandler(async (_req, res) => {
+  res.json(await DB.getDailyCapacity(7, DAILY_SURVEY_LIMIT));
+}));
+
+// Survey-capable agents
+app.get("/api/surveys/agents", authenticateJWT, asyncHandler(async (_req, res) => {
+  res.json(await DB.getSurveyAgents());
+}));
+
+// The current user's work queue for today
+app.get("/api/surveys/queue", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const queue = await DB.getSurveyQueue(req.user.id);
+  const todaySuccess = await DB.countTodaySuccess(req.user.id);
+  res.json({ queue, todaySuccess, dailyLimit: DAILY_SURVEY_LIMIT });
+}));
+
+// Assignment detail (with template questions + attempts)
+app.get("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (req, res) => {
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  res.json(a);
+}));
+
+// Log a call attempt on an assignment (max 3)
+app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  if ((a.attempt_count || 0) >= 3) return res.status(400).json({ error: "Maximum 3 attempts reached." });
+  const { outcome, note } = req.body;
+  if (!outcome) return res.status(400).json({ error: "Outcome is required." });
+  const out = await DB.addSurveyAttempt({ assignment_id: req.params.id, agent_id: req.user.id, outcome, note });
+  res.json(out);
+}));
+
+// Record a successful response (answers)
+app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  const { answers } = req.body;
+  if (!Array.isArray(answers) || answers.length === 0) return res.status(400).json({ error: "Answers are required." });
+  const anyAnswered = answers.some((x: any) => x.answered && String(x.answer_value ?? "").trim() !== "");
+  if (!anyAnswered) return res.status(400).json({ error: "At least one question must be answered." });
+  const updated = await DB.addSurveyResponse({
+    assignment_id: req.params.id, agent_id: req.user.id,
+    answers: answers.map((x: any) => ({ question_id: x.question_id, answer_value: x.answer_value, answered: !!x.answered })),
+    brand_id: a.brand_id, customer_phone: a.customer_phone,
+  });
+  res.json(updated);
+}));
+
+// Campaign assignments + manual distribution
+app.get("/api/surveys/campaigns/:id/assignments", authenticateJWT, asyncHandler(async (req, res) => {
+  res.json(await DB.getCampaignAssignments(req.params.id));
+}));
+
+app.post("/api/surveys/campaigns/:id/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const { agent_id, count } = req.body;
+  if (!agent_id || !count) return res.status(400).json({ error: "agent_id and count are required." });
+  const n = await DB.assignCampaignNumbers(req.params.id, agent_id, Number(count));
+  res.json({ assigned: n });
+}));
+
+// ---- Survey Records (uploaded results) ----
+app.get("/api/survey-records/types", authenticateJWT, asyncHandler(async (_req, res) => {
+  res.json(Object.entries(RECORD_TYPES).map(([key, v]) => ({ key, label: v.label, columns: v.columns })));
+}));
+
+app.get("/api/survey-records/:type/template", authenticateJWT, requireUpload, asyncHandler(async (req, res) => {
+  const t = RECORD_TYPES[req.params.type];
+  if (!t) return res.status(404).json({ error: "Unknown survey type." });
+  const ws = XLSX.utils.aoa_to_sheet([t.columns]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Survey");
+  res.json({ filename: `${req.params.type}_template.xlsx`, file: XLSX.write(wb, { type: "base64", bookType: "xlsx" }) });
+}));
+
+app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asyncHandler(async (req: any, res) => {
+  const t = RECORD_TYPES[req.params.type];
+  if (!t) return res.status(404).json({ error: "Unknown survey type." });
+  const { file } = req.body;
+  if (!file) return res.status(400).json({ error: "No file provided." });
+
+  const wb = XLSX.read(Buffer.from(file, "base64"), { type: "buffer" });
+  const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+  const brands = await DB.getBrands();
+  const platforms = await DB.getPlatforms();
+  const ctx = {
+    brandMap: new Map(brands.map((b) => [b.brand_name.toLowerCase(), b.id])),
+    platMap: new Map(platforms.map((p) => [p.name.toLowerCase(), p.id])),
+  };
+
+  const result = { total: rows.length, inserted: 0, answered: 0, no_answer: 0, invalid: 0, errors: [] as { row: number; message: string }[] };
+  const records: any[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    try {
+      const rec = t.map(rows[i], ctx);
+      const hasData = rec.order_id || rec.phone || rec.item_name || rec.brand_label || rec.rate != null;
+      if (!hasData) { result.invalid++; continue; }
+      rec.uploaded_by = req.user.id;
+      records.push(rec);
+      if (rec.answered) result.answered++; else result.no_answer++;
+    } catch (e: any) {
+      result.errors.push({ row: i + 2, message: e.message || "Unknown error." });
+    }
+  }
+  result.inserted = await DB.addSurveyRecords(records);
+  res.json(result);
+}));
+
+app.get("/api/survey-records", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const { type, brand_id, answered, from, to } = req.query;
+  res.json(await DB.getSurveyRecords({
+    record_type: type || undefined,
+    brand_id: brand_id || undefined,
+    answered: answered === "true" ? true : answered === "false" ? false : undefined,
+    from: from || undefined,
+    to: to || undefined,
+  }));
+}));
+
+// ----------------------------------------------------
 // Mounting Vite Server Middleware
 // ----------------------------------------------------
 async function startServer() {

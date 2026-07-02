@@ -112,6 +112,8 @@ export interface User {
   team?: Team; // Legacy team field (kept for backward compatibility)
   department?: Department; // Department for the Operations & Logs system
   status: "Active" | "Inactive";
+  can_upload?: boolean; // Agent may upload rating/survey Excel files
+  work_type?: "calls" | "survey" | "both"; // Survey eligibility for the queue
   shift_status?: "on" | "off"; // Agent shift presence
   shift_started_at?: string | null;
   created_at: string;
@@ -267,6 +269,134 @@ export interface CallAttempt {
 export interface Brand {
   id: string;
   brand_name: string;
+}
+
+// ----------------------------------------------------
+// Surveys Module
+// ----------------------------------------------------
+export type AnswerType = 'rating_1_5' | 'yes_no' | 'multiple_choice' | 'free_text';
+export type SurveyType = 'marketing_item' | 'marketing_general' | 'daily_normal';
+export type AssignmentMode = 'assigned' | 'open';
+export type ContinuityType = 'one_time_slot' | 'continuous';
+export type CampaignStatus = 'pending' | 'active' | 'full_today' | 'completed' | 'cancelled';
+export type SurveyAssignmentStatus = 'pending' | 'in_progress' | 'successful' | 'no_answer' | 'unreachable' | 'declined';
+
+export interface SurveyQuestion {
+  id: string;
+  template_id: string;
+  text: string;
+  answer_type: AnswerType;
+  options?: string[];
+  q_order: number;
+}
+
+export interface SurveyTemplate {
+  id: string;
+  name: string;
+  brand_id?: string | null;
+  brand_name?: string;
+  created_by?: string;
+  created_by_name?: string;
+  active: boolean;
+  question_count?: number;
+  questions?: SurveyQuestion[];
+  created_at: string;
+}
+
+export interface SurveyCampaign {
+  id: string;
+  brand_id?: string | null;
+  brand_name?: string;
+  requested_by?: string;
+  requested_by_name?: string;
+  requester_role?: string;
+  template_id?: string | null;
+  template_name?: string;
+  survey_type: SurveyType;
+  assignment_mode: AssignmentMode;
+  continuity_type: ContinuityType;
+  requested_count: number;
+  duration_days: number;
+  status: CampaignStatus;
+  default_agent_id?: string | null;
+  default_agent_name?: string;
+  total_numbers?: number;
+  done_numbers?: number;
+  created_at: string;
+}
+
+export interface SurveyAssignment {
+  id: string;
+  campaign_id: string;
+  brand_id?: string | null;
+  brand_name?: string;
+  customer_phone: string;
+  assigned_agent_id?: string | null;
+  agent_name?: string;
+  attempt_count: number;
+  status: SurveyAssignmentStatus;
+  scheduled_date: string;
+  template_id?: string | null;
+  template_name?: string;
+  survey_type?: SurveyType;
+  assignment_mode?: AssignmentMode;
+  continuity_type?: ContinuityType;
+  campaign_status?: CampaignStatus;
+  questions?: SurveyQuestion[];
+  attempts?: SurveyCallAttempt[];
+  created_at: string;
+}
+
+export interface SurveyCallAttempt {
+  id: string;
+  assignment_id: string;
+  agent_id?: string;
+  agent_name?: string;
+  attempt_number: number;
+  outcome: CallOutcome;
+  note?: string;
+  created_at: string;
+}
+
+export interface SurveyRecord {
+  id: string;
+  record_type: string;
+  brand_id?: string | null;
+  brand_name?: string;
+  brand_label?: string;
+  platform_id?: string | null;
+  platform_name?: string;
+  platform_label?: string;
+  order_id?: string;
+  phone?: string;
+  customer_name?: string;
+  item_name?: string;
+  rate?: number | null;
+  product_feedback?: string;
+  served_by?: string;
+  answered: boolean;
+  customer_suggestion?: string;
+  comment?: string;
+  complaint?: string;
+  note?: string;
+  trials?: string;
+  extra?: any;
+  record_date?: string;
+  uploaded_by?: string;
+  uploaded_by_name?: string;
+  created_at: string;
+}
+
+export interface SurveyRecordType {
+  key: string;
+  label: string;
+  columns: string[];
+}
+
+export interface DailyCapacity {
+  date: string;
+  used: number;
+  limit: number;
 }
 
 export interface Category {
