@@ -230,6 +230,40 @@ export interface AssignedTask {
 }
 export const TASK_STATUSES = ["New", "In Progress", "Completed"];
 
+export type ActionStatus = 'pending' | 'in_progress' | 'resolved' | 'unreachable' | 'no_action_needed';
+export type CallOutcome = 'no_answer' | 'answered' | 'wrong_number' | 'busy' | 'declined';
+
+export interface Platform { id: string; name: string; }
+
+export interface Rating {
+  id: string;
+  brand_id: string; brand_name?: string;
+  platform_id: string; platform_name?: string;
+  order_id: string;
+  rating: number;
+  review_text?: string;
+  customer_phone?: string;
+  requires_action: boolean;
+  action_status: ActionStatus;
+  assigned_agent_id?: string; agent_name?: string;
+  action_note?: string;
+  uploaded_by?: string; uploaded_by_name?: string; uploaded_at?: string;
+  resolved_at?: string; recorded_by?: string; recorded_by_name?: string; recorded_at?: string;
+  order_date?: string; customer_name?: string; branch?: string;
+  filled_by?: string; following_date?: string; surveyed_by?: string;
+  complaint_type?: string; complaint_cases?: string; complaint_status?: string;
+  served_by?: string; note?: string;
+  attempts?: CallAttempt[];
+}
+
+export interface CallAttempt {
+  id: string; rating_id: string;
+  agent_id?: string; agent_name?: string;
+  attempt_number: number;
+  outcome: CallOutcome;
+  note?: string; created_at: string;
+}
+
 export interface Brand {
   id: string;
   brand_name: string;

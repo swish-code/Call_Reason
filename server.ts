@@ -1635,6 +1635,203 @@ app.get("/api/reports/monthly", authenticateJWT, requireLeaderOrAdmin, asyncHand
 }));
 
 // ----------------------------------------------------
+// Ratings / Reviews Module
+// ----------------------------------------------------
+import * as XLSX from "xlsx";
+
+// Excel column name fuzzy matcher (case-insensitive, accepts aliases)
+const pick = (row: Record<string, any>, ...names: string[]): string => {
+  for (const name of names) {
+    for (const key of Object.keys(row)) {
+      if (key.toLowerCase().trim() === name.toLowerCase().trim()) {
+        const v = row[key]; return v != null ? String(v).trim() : "";
+      }
+    }
+  }
+  return "";
+};
+
+const normalisePhone = (p: string): string => p ? p.replace(/[\s\-\(\)\.]/g, "").replace(/^00/, "+") : "";
+
+const computeRequiresAction = (rating: number, review: string): boolean =>
+  rating <= 3 || (rating >= 4 && review.trim().length > 0);
+
+// requireUpload: admin/supervisor/leader always; agent only if can_upload=true in DB
+const requireUpload = async (req: any, res: any, next: any) => {
+  if (!req.user) return res.status(401).json({ error: "Unauthorized." });
+  const role = req.user.role;
+  if (["admin", "supervisor", "leader"].includes(role)) return next();
+  // For agents: read can_upload live from DB
+  const u = await DB.getUserById(req.user.id);
+  if ((u as any)?.can_upload) return next();
+  return res.status(403).json({ error: "Upload permission required." });
+};
+
+// Excel template (returns base64 xlsx)
+app.get("/api/ratings/template", authenticateJWT, requireUpload, asyncHandler(async (_req, res) => {
+  const headers = ["Date","Restaurant","Platform","Customer Name","Phone Number","Branch","Order ID","Customer Comment","Rate","Served By","Following Date","Surveyed By","Type of Complaint","Complaint Cases","Note"];
+  const ws = XLSX.utils.aoa_to_sheet([headers]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Ratings");
+  const file = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+  res.json({ filename: "ratings_template.xlsx", file });
+}));
+
+// Upload ratings from Excel
+app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(async (req: any, res) => {
+  const { file, mode = "skip" } = req.body;
+  if (!file) return res.status(400).json({ error: "No file provided." });
+
+  const buf = Buffer.from(file, "base64");
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+  const brands = await DB.getBrands();
+  const platforms = await DB.getPlatforms();
+  const brandMap = new Map(brands.map((b) => [b.brand_name.toLowerCase(), b.id]));
+  const platMap = new Map(platforms.map((p) => [p.name.toLowerCase(), p.id]));
+
+  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, errors: [] as { row: number; message: string }[] };
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const lineNum = i + 2;
+    try {
+      const brandName = pick(r, "Restaurant", "Brand");
+      const platformName = pick(r, "Platform");
+      const orderId = pick(r, "Order ID", "OrderID", "Order");
+      const rateRaw = pick(r, "Rate", "Rating (1-5)", "Rating");
+      const ratingVal = Math.round(Number(String(rateRaw).replace(/[^0-9.]/g, "")));
+
+      if (!brandName) { result.errors.push({ row: lineNum, message: "Missing Restaurant/Brand." }); continue; }
+      if (!platformName) { result.errors.push({ row: lineNum, message: "Missing Platform." }); continue; }
+      if (!orderId) { result.errors.push({ row: lineNum, message: "Missing Order ID." }); continue; }
+      if (!ratingVal || ratingVal < 1 || ratingVal > 5) { result.errors.push({ row: lineNum, message: `Invalid rate: ${rateRaw}` }); continue; }
+
+      const brand_id = brandMap.get(brandName.toLowerCase());
+      if (!brand_id) { result.errors.push({ row: lineNum, message: `Unknown brand: ${brandName}` }); continue; }
+      const platform_id = platMap.get(platformName.toLowerCase());
+      if (!platform_id) { result.errors.push({ row: lineNum, message: `Unknown platform: ${platformName}` }); continue; }
+
+      const review_text = pick(r, "Customer Comment");
+      const requires_action = computeRequiresAction(ratingVal, review_text);
+      const action_status = requires_action ? "pending" : "no_action_needed";
+
+      const outcome = await DB.upsertRating({
+        brand_id, platform_id, order_id: orderId, rating: ratingVal,
+        review_text: review_text || undefined,
+        customer_phone: normalisePhone(pick(r, "Phone Number")) || undefined,
+        requires_action, action_status, uploaded_by: req.user.id,
+        order_date: pick(r, "Date") || undefined,
+        customer_name: pick(r, "Customer Name") || undefined,
+        branch: pick(r, "Branch") || undefined,
+        filled_by: pick(r, "Served By", "Filled By") || undefined,
+        following_date: pick(r, "Following Date") || undefined,
+        surveyed_by: pick(r, "Surveyed By", "Surved by") || undefined,
+        complaint_type: pick(r, "Type of Complaint", "Type of complain", "Complaint Type") || undefined,
+        complaint_cases: pick(r, "Complaint Cases") || undefined,
+        complaint_status: pick(r, "Note", "Complaint Status") || undefined,
+        served_by: pick(r, "Served By", "Filled By") || undefined,
+      }, mode as "skip" | "overwrite");
+
+      if (outcome === "inserted") result.inserted++;
+      else if (outcome === "skipped") result.duplicates++;
+      else result.overwritten++;
+    } catch (e: any) {
+      result.errors.push({ row: lineNum, message: e.message || "Unknown error." });
+    }
+  }
+  res.json(result);
+}));
+
+// List ratings with filters
+app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const { brand_id, platform_id, action_status, requires_action, assigned, min_rating, max_rating } = req.query;
+  const ratings = await DB.getRatings({
+    brand_id: brand_id as string || undefined,
+    platform_id: platform_id as string || undefined,
+    action_status: action_status as string || undefined,
+    requires_action: requires_action === "true" ? true : undefined,
+    assigned: assigned as string || undefined,
+    assigned_agent_id: assigned === "me" ? req.user.id : undefined,
+    min_rating: min_rating ? Number(min_rating) : undefined,
+    max_rating: max_rating ? Number(max_rating) : undefined,
+    limit: 200,
+  });
+  res.json(ratings);
+}));
+
+// List platforms
+app.get("/api/platforms", authenticateJWT, asyncHandler(async (_req, res) => {
+  res.json(await DB.getPlatforms());
+}));
+
+// Get single rating with attempts
+app.get("/api/ratings/:id", authenticateJWT, asyncHandler(async (req, res) => {
+  const rating = await DB.getRatingById(req.params.id);
+  if (!rating) return res.status(404).json({ error: "Rating not found." });
+  res.json(rating);
+}));
+
+// Patch rating (status / note / assignment)
+app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const rating = await DB.getRatingById(req.params.id);
+  if (!rating) return res.status(404).json({ error: "Rating not found." });
+
+  const { action_status, action_note, assigned_agent_id } = req.body;
+  const fields: any = {};
+  if (action_note !== undefined) fields.action_note = action_note;
+  if (assigned_agent_id !== undefined) {
+    const canAssign = ["admin", "supervisor", "leader"].includes(req.user.role);
+    if (!canAssign) return res.status(403).json({ error: "Only leaders/supervisors can assign ratings." });
+    fields.assigned_agent_id = assigned_agent_id || null;
+  }
+  if (action_status !== undefined) {
+    fields.action_status = action_status;
+    const closingStatuses = ["resolved", "no_action_needed", "unreachable"];
+    if (closingStatuses.includes(action_status) && !rating.resolved_at) {
+      fields.resolved_at = new Date().toISOString();
+      fields.recorded_by = req.user.id;
+      fields.recorded_at = new Date().toISOString();
+    }
+  }
+  const updated = await DB.updateRating(req.params.id, fields);
+  res.json(updated);
+}));
+
+// Log a call attempt (max 3)
+app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const rating = await DB.getRatingById(req.params.id);
+  if (!rating) return res.status(404).json({ error: "Rating not found." });
+  const attemptsCount = (rating.attempts || []).length;
+  if (attemptsCount >= 3) return res.status(400).json({ error: "Maximum 3 call attempts reached." });
+
+  const { outcome, note } = req.body;
+  if (!outcome) return res.status(400).json({ error: "Outcome is required." });
+
+  const attempt = await DB.addCallAttempt({
+    rating_id: req.params.id,
+    agent_id: req.user.id,
+    agent_name: req.user.full_name,
+    outcome,
+    note: note || undefined,
+  });
+
+  // Auto-update status
+  const newAttemptNumber = attemptsCount + 1;
+  const fields: any = { action_status: "in_progress" };
+  if (outcome !== "answered" && newAttemptNumber >= 3) {
+    fields.action_status = "unreachable";
+    fields.resolved_at = new Date().toISOString();
+    fields.recorded_by = req.user.id;
+    fields.recorded_at = new Date().toISOString();
+  }
+  await DB.updateRating(req.params.id, fields);
+  res.json(attempt);
+}));
+
+// ----------------------------------------------------
 // Mounting Vite Server Middleware
 // ----------------------------------------------------
 async function startServer() {

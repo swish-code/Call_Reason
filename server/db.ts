@@ -279,8 +279,68 @@ export class DB {
       );
     `);
 
+    // Ratings / Reviews module tables
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS platforms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE
+      );
+      CREATE TABLE IF NOT EXISTS ratings (
+        id TEXT PRIMARY KEY,
+        brand_id TEXT NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+        platform_id TEXT NOT NULL REFERENCES platforms(id) ON DELETE RESTRICT,
+        order_id TEXT NOT NULL,
+        rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        review_text TEXT,
+        customer_phone TEXT,
+        requires_action BOOLEAN DEFAULT false,
+        action_status TEXT DEFAULT 'pending',
+        assigned_agent_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        action_note TEXT,
+        uploaded_by TEXT REFERENCES users(id),
+        uploaded_at TIMESTAMPTZ DEFAULT now(),
+        resolved_at TIMESTAMPTZ,
+        recorded_by TEXT REFERENCES users(id),
+        recorded_at TIMESTAMPTZ,
+        order_date TEXT,
+        customer_name TEXT,
+        branch TEXT,
+        filled_by TEXT,
+        following_date TEXT,
+        surveyed_by TEXT,
+        complaint_type TEXT,
+        complaint_cases TEXT,
+        complaint_status TEXT,
+        served_by TEXT,
+        note TEXT,
+        UNIQUE (brand_id, platform_id, order_id)
+      );
+      CREATE TABLE IF NOT EXISTS rating_call_attempts (
+        id TEXT PRIMARY KEY,
+        rating_id TEXT NOT NULL REFERENCES ratings(id) ON DELETE CASCADE,
+        agent_id TEXT REFERENCES users(id),
+        agent_name TEXT,
+        attempt_number SMALLINT,
+        outcome TEXT NOT NULL,
+        note TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_ratings_brand ON ratings(brand_id);
+      CREATE INDEX IF NOT EXISTS idx_ratings_action ON ratings(requires_action, action_status);
+      CREATE INDEX IF NOT EXISTS idx_ratings_agent ON ratings(assigned_agent_id);
+    `);
+
+    // Seed default platforms (idempotent)
+    for (const [idx2, name] of ["Talabat", "Keeta", "Google", "Instagram", "TripAdvisor"].entries()) {
+      await pool.query(
+        "INSERT INTO platforms (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING",
+        [`plat-${idx2 + 1}`, name]
+      );
+    }
+
     // Migrations for databases created before newer features
     await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS can_upload BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS team TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS department TEXT;
@@ -990,5 +1050,141 @@ export class DB {
   static async deleteInteraction(id: string): Promise<boolean> {
     const res = await pool.query("DELETE FROM interactions WHERE id = $1", [id]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // ----------------------------------------------------
+  // Platforms
+  // ----------------------------------------------------
+  static async getPlatforms(): Promise<{ id: string; name: string }[]> {
+    const { rows } = await pool.query("SELECT * FROM platforms ORDER BY name ASC");
+    return rows;
+  }
+
+  // ----------------------------------------------------
+  // Ratings / Reviews
+  // ----------------------------------------------------
+  static async getRatings(filter: {
+    brand_id?: string; platform_id?: string; action_status?: string;
+    requires_action?: boolean; assigned?: string; assigned_agent_id?: string;
+    min_rating?: number; max_rating?: number; limit?: number; offset?: number;
+  } = {}): Promise<any[]> {
+    const clauses: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (filter.brand_id) { clauses.push(`r.brand_id = $${idx++}`); values.push(filter.brand_id); }
+    if (filter.platform_id) { clauses.push(`r.platform_id = $${idx++}`); values.push(filter.platform_id); }
+    if (filter.action_status) { clauses.push(`r.action_status = $${idx++}`); values.push(filter.action_status); }
+    if (filter.requires_action === true) { clauses.push(`r.requires_action = true`); }
+    if (filter.assigned === "me" && filter.assigned_agent_id) { clauses.push(`r.assigned_agent_id = $${idx++}`); values.push(filter.assigned_agent_id); }
+    if (filter.assigned === "unassigned") { clauses.push(`r.assigned_agent_id IS NULL`); }
+    if (filter.min_rating != null) { clauses.push(`r.rating >= $${idx++}`); values.push(filter.min_rating); }
+    if (filter.max_rating != null) { clauses.push(`r.rating <= $${idx++}`); values.push(filter.max_rating); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const lim = filter.limit || 100;
+    const off = filter.offset || 0;
+    const { rows } = await pool.query(`
+      SELECT r.*,
+        b.brand_name, p.name AS platform_name,
+        ua.full_name AS agent_name,
+        uu.full_name AS uploaded_by_name,
+        ur.full_name AS recorded_by_name
+      FROM ratings r
+      LEFT JOIN brands b ON b.id = r.brand_id
+      LEFT JOIN platforms p ON p.id = r.platform_id
+      LEFT JOIN users ua ON ua.id = r.assigned_agent_id
+      LEFT JOIN users uu ON uu.id = r.uploaded_by
+      LEFT JOIN users ur ON ur.id = r.recorded_by
+      ${where}
+      ORDER BY r.uploaded_at DESC
+      LIMIT $${idx++} OFFSET $${idx++}
+    `, [...values, lim, off]);
+    return rows;
+  }
+
+  static async getRatingById(id: string): Promise<any | undefined> {
+    const { rows } = await pool.query(`
+      SELECT r.*,
+        b.brand_name, p.name AS platform_name,
+        ua.full_name AS agent_name,
+        uu.full_name AS uploaded_by_name,
+        ur.full_name AS recorded_by_name
+      FROM ratings r
+      LEFT JOIN brands b ON b.id = r.brand_id
+      LEFT JOIN platforms p ON p.id = r.platform_id
+      LEFT JOIN users ua ON ua.id = r.assigned_agent_id
+      LEFT JOIN users uu ON uu.id = r.uploaded_by
+      LEFT JOIN users ur ON ur.id = r.recorded_by
+      WHERE r.id = $1 LIMIT 1
+    `, [id]);
+    if (!rows[0]) return undefined;
+    const attempts = await pool.query(`
+      SELECT a.*, u.full_name AS agent_name FROM rating_call_attempts a
+      LEFT JOIN users u ON u.id = a.agent_id
+      WHERE a.rating_id = $1 ORDER BY a.attempt_number ASC
+    `, [id]);
+    return { ...rows[0], attempts: attempts.rows };
+  }
+
+  static async upsertRating(data: {
+    brand_id: string; platform_id: string; order_id: string; rating: number;
+    review_text?: string; customer_phone?: string; requires_action: boolean;
+    action_status: string; uploaded_by: string;
+    order_date?: string; customer_name?: string; branch?: string;
+    filled_by?: string; following_date?: string; surveyed_by?: string;
+    complaint_type?: string; complaint_cases?: string; complaint_status?: string;
+    served_by?: string; note?: string;
+  }, mode: "skip" | "overwrite"): Promise<"inserted" | "skipped" | "overwritten"> {
+    const id = "rat-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
+    if (mode === "skip") {
+      const res = await pool.query(`
+        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        ON CONFLICT (brand_id,platform_id,order_id) DO NOTHING
+      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null]);
+      return (res.rowCount ?? 0) > 0 ? "inserted" : "skipped";
+    } else {
+      const res = await pool.query(`
+        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        ON CONFLICT (brand_id,platform_id,order_id) DO UPDATE SET
+          rating=EXCLUDED.rating,review_text=EXCLUDED.review_text,customer_phone=EXCLUDED.customer_phone,
+          requires_action=EXCLUDED.requires_action,action_status=EXCLUDED.action_status,
+          uploaded_by=EXCLUDED.uploaded_by,uploaded_at=now(),
+          order_date=EXCLUDED.order_date,customer_name=EXCLUDED.customer_name,branch=EXCLUDED.branch,
+          filled_by=EXCLUDED.filled_by,following_date=EXCLUDED.following_date,surveyed_by=EXCLUDED.surveyed_by,
+          complaint_type=EXCLUDED.complaint_type,complaint_cases=EXCLUDED.complaint_cases,
+          complaint_status=EXCLUDED.complaint_status,served_by=EXCLUDED.served_by,note=EXCLUDED.note
+        RETURNING (xmax = 0) AS inserted
+      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null]);
+      return res.rows[0]?.inserted ? "inserted" : "overwritten";
+    }
+  }
+
+  static async updateRating(id: string, fields: {
+    action_status?: string; action_note?: string; assigned_agent_id?: string | null;
+    resolved_at?: string | null; recorded_by?: string | null; recorded_at?: string | null;
+  }): Promise<any | undefined> {
+    const cols = ["action_status","action_note","assigned_agent_id","resolved_at","recorded_by","recorded_at"] as const;
+    const sets: string[] = []; const values: any[] = []; let idx = 1;
+    for (const c of cols) {
+      if (c in fields) { sets.push(`${c} = $${idx++}`); values.push((fields as any)[c]); }
+    }
+    if (!sets.length) return DB.getRatingById(id);
+    values.push(id);
+    await pool.query(`UPDATE ratings SET ${sets.join(",")} WHERE id = $${idx}`, values);
+    return DB.getRatingById(id);
+  }
+
+  static async addCallAttempt(data: {
+    rating_id: string; agent_id: string; agent_name: string; outcome: string; note?: string;
+  }): Promise<any> {
+    const cnt = await pool.query<{ count: string }>("SELECT COUNT(*)::int AS count FROM rating_call_attempts WHERE rating_id = $1", [data.rating_id]);
+    const n = Number(cnt.rows[0].count) + 1;
+    const id = "att-" + Date.now() + "-" + Math.floor(Math.random() * 999);
+    const { rows } = await pool.query(`
+      INSERT INTO rating_call_attempts (id,rating_id,agent_id,agent_name,attempt_number,outcome,note,created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,now()) RETURNING *
+    `, [id, data.rating_id, data.agent_id, data.agent_name, n, data.outcome, data.note || null]);
+    return rows[0];
   }
 }

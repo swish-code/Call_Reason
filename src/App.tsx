@@ -11,6 +11,7 @@ import HistoryLogs from "./components/HistoryLogs.tsx";
 import Tasks from "./components/Tasks.tsx";
 import RecurringTasks from "./components/RecurringTasks.tsx";
 import TaskPool from "./components/TaskPool.tsx";
+import Reviews from "./components/Reviews.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -47,10 +48,11 @@ import {
   Repeat,
   Inbox,
   Power,
-  Send
+  Send,
+  Star
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks";
+type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -583,6 +585,21 @@ export default function App() {
               </button>
             )}
 
+            {/* Reviews: all non-agents */}
+            {currentUser?.role !== "agent" && (
+              <button
+                onClick={() => { setActivePage("reviews"); closeSidebarOnMobile(); }}
+                className={`w-full py-3 px-3.5 rounded-2xl text-xs font-bold transition flex items-center gap-3 ${
+                  activePage === "reviews"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-950/40"
+                    : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"
+                }`}
+              >
+                <Star className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span className="truncate">Ratings & Reviews</span>}
+              </button>
+            )}
+
             {/* Configuration: Admin only */}
             {currentUser?.role === "admin" && (
               <button
@@ -643,6 +660,7 @@ export default function App() {
               {activePage === "tracker" && "Task Tracker"}
               {activePage === "recurring" && "Recurring Tasks"}
               {activePage === "pool" && "Available Tasks"}
+              {activePage === "reviews" && "Ratings & Reviews"}
             </h1>
           </div>
 
@@ -739,6 +757,9 @@ export default function App() {
           )}
           {activePage === "performance" && currentUser.role !== "agent" && (
             <PerformanceReport currentUser={currentUser} />
+          )}
+          {activePage === "reviews" && currentUser.role !== "agent" && (
+            <Reviews currentUser={currentUser} />
           )}
         </main>
       </div>
