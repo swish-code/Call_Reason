@@ -41,8 +41,12 @@ interface ReviewsProps { currentUser: User; }
 
 const PAGE_SIZE = 20;
 const KW_MS = 3 * 60 * 60 * 1000;
-const fmtDate = (ts?: string) =>
-  ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().replace('T', ' ').slice(0, 16) : '—';
+const fmtDate = (ts?: string) => {
+  if (!ts) return '—';
+  const t = new Date(ts).getTime();
+  if (isNaN(t)) return String(ts);
+  return new Date(t + KW_MS).toISOString().replace('T', ' ').slice(0, 16);
+};
 
 const statusLabel = (s: string) =>
   s === 'resolved' ? 'Complaint Recorded'
