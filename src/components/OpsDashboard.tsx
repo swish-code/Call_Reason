@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import * as XLSX from "xlsx";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
@@ -321,21 +321,34 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
               const todayStr = days.length > 0 ? days[days.length - 1].date : "";
               return (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="w-full text-xs border-collapse">
                     <thead>
-                      <tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
-                        <th className="text-left py-2 px-3 min-w-[120px]">Agent</th>
+                      {/* Row 1: day name + date, spanning the Time/Count pair */}
+                      <tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]/60">
+                        <th rowSpan={2} className="text-left py-2 px-3 min-w-[120px] align-bottom border-b border-[var(--border)]">Agent</th>
                         {days.map((day) => {
                           const isToday = day.date === todayStr;
                           const d2 = new Date(day.date + "T00:00:00");
                           return (
-                            <th key={day.date} className={`text-center py-2 px-2 min-w-[64px] ${isToday ? "text-blue-400" : ""}`}>
+                            <th key={day.date} colSpan={2} className={`text-center py-2 px-2 border-l border-[var(--border)]/50 ${isToday ? "text-blue-400 bg-blue-500/5" : ""}`}>
                               <div className="font-extrabold">{DAY_LABELS[d2.getDay()]}</div>
                               <div className="font-normal opacity-70 text-[9px]">{day.date.slice(5).replace("-", "/")}</div>
                             </th>
                           );
                         })}
-                        <th className="text-center py-2 px-3 min-w-[72px] text-blue-300">Total</th>
+                        <th rowSpan={2} className="text-center py-2 px-3 min-w-[72px] text-blue-300 align-bottom border-b border-[var(--border)] border-l border-[var(--border)]/50">Total</th>
+                      </tr>
+                      {/* Row 2: Time / Count sub-headers */}
+                      <tr className="text-[9px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                        {days.map((day) => {
+                          const isToday = day.date === todayStr;
+                          return (
+                            <Fragment key={day.date}>
+                              <th className={`text-center py-1 px-2 font-semibold border-l border-[var(--border)]/50 ${isToday ? "bg-blue-500/5" : ""}`}>Time</th>
+                              <th className={`text-center py-1 px-2 font-semibold ${isToday ? "bg-blue-500/5" : ""}`}>Count</th>
+                            </Fragment>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
@@ -347,17 +360,17 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
                             const hrs = day.seconds / 3600;
                             const cellColor = day.seconds === 0 ? "text-[var(--border)]" : hrs >= 7 ? "text-emerald-400" : hrs >= 4 ? "text-amber-400" : "text-rose-400";
                             return (
-                              <td key={day.date} className={`py-2.5 px-2 text-center font-mono font-bold ${cellColor} ${isToday ? "bg-blue-500/5 rounded" : ""}`}>
-                                {day.seconds > 0 ? (
-                                  <div className="flex flex-col items-center leading-tight">
-                                    <span>{fmtDur(day.seconds)}</span>
-                                    <span className="text-[9px] font-semibold text-[var(--muted)] opacity-80" title={`${day.count} log${day.count === 1 ? "" : "s"}`}>{day.count} {day.count === 1 ? "log" : "logs"}</span>
-                                  </div>
-                                ) : <span className="text-[var(--border)]">—</span>}
-                              </td>
+                              <Fragment key={day.date}>
+                                <td className={`py-2.5 px-2 text-center font-mono font-bold border-l border-[var(--border)]/40 ${cellColor} ${isToday ? "bg-blue-500/5" : ""}`}>
+                                  {day.seconds > 0 ? fmtDur(day.seconds) : <span className="text-[var(--border)]">—</span>}
+                                </td>
+                                <td className={`py-2.5 px-2 text-center font-mono text-[11px] ${day.count > 0 ? "text-[var(--muted)]" : "text-[var(--border)]"} ${isToday ? "bg-blue-500/5" : ""}`}>
+                                  {day.count > 0 ? day.count : "—"}
+                                </td>
+                              </Fragment>
                             );
                           })}
-                          <td className="py-2.5 px-3 text-center font-mono font-extrabold text-blue-400">{fmtDur(a.week)}</td>
+                          <td className="py-2.5 px-3 text-center font-mono font-extrabold text-blue-400 border-l border-[var(--border)]/40">{fmtDur(a.week)}</td>
                         </tr>
                       ))}
                     </tbody>
