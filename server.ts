@@ -755,10 +755,21 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
       byAgent[name].push(l);
     });
 
+    // Seed the table with every active agent in scope so that agents who have
+    // not logged anything still appear (as a full row of zeros).
+    const allUsers = await DB.getUsers();
+    const scopedAgents = allUsers.filter((u: any) =>
+      u.role === "agent" && u.status === "Active" &&
+      (isExecutive(req.user) || !department || u.department === department)
+    );
+    const agentNames = new Set(scopedAgents.map((u: any) => u.full_name));
+
     const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
+    for (const u of scopedAgents) map[u.full_name] = { name: u.full_name, today: 0, week: 0, dayMap: {} };
+
     for (const [name, agLogs] of Object.entries(byAgent)) {
       agLogs.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      map[name] = { name, today: 0, week: 0, dayMap: {} };
+      if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {} };
       let prevTime: number | null = null;
       let sessionDate: string = "";
       for (const l of agLogs) {
@@ -779,13 +790,15 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     }
 
     shiftByAgent = Object.values(map)
-      .filter((e) => e.week > 0 || e.today > 0)
+      // Keep every in-scope agent (even with zero hours); drop incidental
+      // non-agent names only when they have no hours in the window.
+      .filter((e) => agentNames.has(e.name) || e.week > 0 || e.today > 0)
       .map((e) => ({
         name: e.name,
         today: e.today,
         week: e.week,
         days: last7.map((date) => ({ date, seconds: e.dayMap[date] || 0 })),
-      })).sort((a, b) => b.week - a.week);
+      })).sort((a, b) => b.week - a.week || a.name.localeCompare(b.name));
   }
 
   res.json({
