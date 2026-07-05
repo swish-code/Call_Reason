@@ -735,7 +735,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   // Per-agent logged time — dynamic business day grouping.
   // Consecutive logs with gap < GAP_THRESHOLD belong to the same business day
   // (the date of the FIRST log in that streak). Handles agents who work past midnight.
-  let shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number }[] }[] = [];
+  let shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number; count: number }[] }[] = [];
   if (role !== "agent") {
     const GAP_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4-hour gap = new business day
     const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
@@ -764,12 +764,12 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     );
     const agentNames = new Set(scopedAgents.map((u: any) => u.full_name));
 
-    const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number> }> = {};
-    for (const u of scopedAgents) map[u.full_name] = { name: u.full_name, today: 0, week: 0, dayMap: {} };
+    const map: Record<string, { name: string; today: number; week: number; dayMap: Record<string, number>; dayCount: Record<string, number> }> = {};
+    for (const u of scopedAgents) map[u.full_name] = { name: u.full_name, today: 0, week: 0, dayMap: {}, dayCount: {} };
 
     for (const [name, agLogs] of Object.entries(byAgent)) {
       agLogs.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {} };
+      if (!map[name]) map[name] = { name, today: 0, week: 0, dayMap: {}, dayCount: {} };
       let prevTime: number | null = null;
       let sessionDate: string = "";
       for (const l of agLogs) {
@@ -785,6 +785,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
         if (last7Set.has(sessionDate)) {
           map[name].week += secs;
           map[name].dayMap[sessionDate] = (map[name].dayMap[sessionDate] || 0) + secs;
+          map[name].dayCount[sessionDate] = (map[name].dayCount[sessionDate] || 0) + 1;
         }
       }
     }
@@ -797,7 +798,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
         name: e.name,
         today: e.today,
         week: e.week,
-        days: last7.map((date) => ({ date, seconds: e.dayMap[date] || 0 })),
+        days: last7.map((date) => ({ date, seconds: e.dayMap[date] || 0, count: e.dayCount[date] || 0 })),
       })).sort((a, b) => b.week - a.week || a.name.localeCompare(b.name));
   }
 

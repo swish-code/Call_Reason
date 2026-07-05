@@ -31,7 +31,7 @@ interface DashData {
   technicalStatus: { name: string; count: number }[];
   coachingSessions: number;
   trend: { date: string; count: number }[];
-  shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number }[] }[];
+  shiftByAgent: { name: string; today: number; week: number; days: { date: string; seconds: number; count: number }[] }[];
 }
 
 export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
@@ -137,7 +137,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     if (d.shiftByAgent && d.shiftByAgent.length) {
       const days = d.shiftByAgent[0].days;
       const header = ["Agent", ...days.map((dd) => `${dayLabels[new Date(dd.date + "T00:00:00").getDay()]} ${dd.date.slice(5)}`), "Total"];
-      const body = d.shiftByAgent.map((a) => [a.name, ...a.days.map((dd) => fmtDur(dd.seconds)), fmtDur(a.week)]);
+      const body = d.shiftByAgent.map((a) => [a.name, ...a.days.map((dd) => dd.seconds > 0 ? `${fmtDur(dd.seconds)} (${dd.count})` : ""), fmtDur(a.week)]);
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...body]), "Shift Hours");
     }
 
@@ -348,7 +348,12 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
                             const cellColor = day.seconds === 0 ? "text-[var(--border)]" : hrs >= 7 ? "text-emerald-400" : hrs >= 4 ? "text-amber-400" : "text-rose-400";
                             return (
                               <td key={day.date} className={`py-2.5 px-2 text-center font-mono font-bold ${cellColor} ${isToday ? "bg-blue-500/5 rounded" : ""}`}>
-                                {day.seconds > 0 ? fmtDur(day.seconds) : <span className="text-[var(--border)]">—</span>}
+                                {day.seconds > 0 ? (
+                                  <div className="flex flex-col items-center leading-tight">
+                                    <span>{fmtDur(day.seconds)}</span>
+                                    <span className="text-[9px] font-semibold text-[var(--muted)] opacity-80" title={`${day.count} log${day.count === 1 ? "" : "s"}`}>{day.count} {day.count === 1 ? "log" : "logs"}</span>
+                                  </div>
+                                ) : <span className="text-[var(--border)]">—</span>}
                               </td>
                             );
                           })}
