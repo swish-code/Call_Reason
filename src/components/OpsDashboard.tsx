@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer, Filter, X } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer, Filter, X, Download } from "lucide-react";
 
 interface OpsDashboardProps {
   currentUser: User;
@@ -92,6 +93,55 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     if (!s) return "0m";
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
     return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${s}s`;
+  };
+
+  // Export the whole dashboard (respecting the active filter) to a multi-sheet Excel file
+  const exportExcel = () => {
+    if (!d) return;
+    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const rangeLabel = (from || to)
+      ? `${from || "start"}${fromTime ? " " + fromTime : ""} -> ${to || "today"}${toTime ? " " + toTime : ""}`
+      : "All time";
+    const wb = XLSX.utils.book_new();
+
+    const summary = [
+      ["Dashboard Export"],
+      ["Department", d.department || "All departments"],
+      ["Filter range", rangeLabel],
+      ["Generated", new Date().toLocaleString()],
+      [],
+      ["Metric", "Value"],
+      ["Total Logs", d.totalLogs],
+      ["Open Tasks", d.open],
+      ["Pending", d.pending],
+      ["Closed Tasks", d.completed],
+      ["Complaint Resolution %", d.complaintResolutionRate],
+      ["Coaching Sessions", d.coachingSessions],
+      ["Avg Handling Time", fmtDur(d.avgHandlingSeconds)],
+      ["Total Time Logged", fmtDur(d.totalHandlingSeconds)],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
+
+    const addBar = (name: string, rows: { name: string; count: number }[]) => {
+      const aoa: any[][] = [["Name", "Count"], ...rows.map((r) => [r.name, r.count])];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+    };
+    addBar("Agent Productivity", d.agentProductivity);
+    addBar("Department Perf", d.byDepartment);
+    addBar("Logs by Activity", d.byActivity);
+    addBar("Technical Status", d.technicalStatus);
+
+    const trend: any[][] = [["Date", "Logs"], ...d.trend.map((t) => [t.date, t.count])];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(trend), "7-Day Trend");
+
+    if (d.shiftByAgent && d.shiftByAgent.length) {
+      const days = d.shiftByAgent[0].days;
+      const header = ["Agent", ...days.map((dd) => `${dayLabels[new Date(dd.date + "T00:00:00").getDay()]} ${dd.date.slice(5)}`), "Total"];
+      const body = d.shiftByAgent.map((a) => [a.name, ...a.days.map((dd) => fmtDur(dd.seconds)), fmtDur(a.week)]);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...body]), "Shift Hours");
+    }
+
+    XLSX.writeFile(wb, `dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
   const Card = ({ label, value, icon: Icon, tone }: { label: string; value: any; icon: any; tone: string }) => (
     <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl flex items-center gap-4">
@@ -231,6 +281,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
               <input type="time" value={toTime} onChange={(e) => setToTime(e.target.value)} disabled={!to} className="px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-40" />
             </div>
             <button onClick={() => load()} disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Filter className="w-3.5 h-3.5" /> Apply</button>
+            <button onClick={exportExcel} disabled={loading} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Export Excel</button>
             {(from || to) && <button onClick={clearFilter} className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><X className="w-3.5 h-3.5" /> Clear</button>}
             {(from || to) && <span className="text-[11px] text-[var(--muted)] font-medium ml-auto">Showing {from}{fromTime ? ` ${fromTime}` : ""} → {to || "today"}{toTime ? ` ${toTime}` : ""}</span>}
           </div>
