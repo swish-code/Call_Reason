@@ -670,17 +670,15 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     const [h, m] = timeStr.split(":").map(Number);
     return new Date(Date.UTC(y, mo - 1, d, h, m, endOfMinute ? 59 : 0) - KW_OFFSET_MS).toISOString();
   };
-  if (from && fromTime) {
-    const fromISO = kwToUtcISO(from, fromTime);
+  // Date-only filters are interpreted as full Kuwait calendar days
+  // (00:00 → 23:59 Kuwait), so "Today" means Kuwait midnight-to-midnight.
+  if (from) {
+    const fromISO = kwToUtcISO(from, fromTime || "00:00");
     logs = logs.filter((l) => (l.created_at || "") >= fromISO);
-  } else if (from) {
-    logs = logs.filter((l) => (l.created_at || "").slice(0, 10) >= from);
   }
-  if (to && toTime) {
-    const toISO = kwToUtcISO(to, toTime, true);
+  if (to) {
+    const toISO = kwToUtcISO(to, toTime || "23:59", true);
     logs = logs.filter((l) => (l.created_at || "") <= toISO);
-  } else if (to) {
-    logs = logs.filter((l) => (l.created_at || "").slice(0, 10) <= to);
   }
 
   const OPEN = ["Open"];
