@@ -1775,6 +1775,20 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   res.json(ratings);
 }));
 
+// Aggregated Ratings + Surveys analytics dashboard (non-agents only)
+app.get("/api/feedback/dashboard", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "agent") return res.status(403).json({ error: "Access denied." });
+  const kwToUtc = (dateStr: string, endOfDay: boolean) => {
+    const [y, mo, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0) - KW_OFFSET_MS).toISOString();
+  };
+  const from = typeof req.query.from === "string" && req.query.from ? req.query.from : "";
+  const to = typeof req.query.to === "string" && req.query.to ? req.query.to : "";
+  const fromISO = from ? kwToUtc(from, false) : null;
+  const toISO = to ? kwToUtc(to, true) : null;
+  res.json(await DB.getFeedbackDashboard(fromISO, toISO));
+}));
+
 // Bulk-assign several reviews to one agent (assigners only)
 app.post("/api/ratings/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))

@@ -13,6 +13,7 @@ import RecurringTasks from "./components/RecurringTasks.tsx";
 import TaskPool from "./components/TaskPool.tsx";
 import Reviews from "./components/Reviews.tsx";
 import Surveys from "./components/Surveys.tsx";
+import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -54,14 +55,14 @@ import {
   MessageSquare
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys";
+type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
   newlog: "logs", logs: "logs", history: "logs",
   mytasks: "tasks", tasks: "tasks", pool: "tasks", tracker: "tasks", recurring: "tasks",
   reports: "insights", performance: "insights",
-  reviews: "feedback", surveys: "feedback",
+  reviews: "feedback", surveys: "feedback", feedbackdash: "feedback",
   users: "admin", configuration: "admin",
 };
 
@@ -406,6 +407,7 @@ export default function App() {
       { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
+      { page: "feedbackdash", label: "Feedback Dashboard", icon: BarChart2, visible: notAgent },
       { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: true },
       { page: "surveys", label: "Surveys", icon: MessageSquare, visible: true },
     ] },
@@ -582,6 +584,7 @@ export default function App() {
               {activePage === "pool" && "Available Tasks"}
               {activePage === "reviews" && "Ratings & Reviews"}
               {activePage === "surveys" && "Surveys"}
+              {activePage === "feedbackdash" && "Feedback Dashboard"}
             </h1>
           </div>
 
@@ -684,6 +687,9 @@ export default function App() {
           )}
           {activePage === "surveys" && (
             <Surveys currentUser={currentUser} />
+          )}
+          {activePage === "feedbackdash" && currentUser.role !== "agent" && (
+            <FeedbackDashboard currentUser={currentUser} />
           )}
         </main>
       </div>

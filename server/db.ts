@@ -1719,4 +1719,70 @@ export class DB {
     `, values);
     return rows;
   }
+
+  // ----------------------------------------------------
+  // Feedback dashboard — aggregated Ratings + Surveys analytics
+  // fromISO/toISO are UTC ISO strings (or null for all-time).
+  // ----------------------------------------------------
+  static async getFeedbackDashboard(fromISO: string | null, toISO: string | null): Promise<any> {
+    const dr = [fromISO, toISO];
+    const q = (sql: string) => pool.query(sql, dr);
+    const rW = `($1::timestamptz IS NULL OR r.uploaded_at >= $1) AND ($2::timestamptz IS NULL OR r.uploaded_at <= $2)`;
+    const tW = `($1::timestamptz IS NULL OR created_at >= $1) AND ($2::timestamptz IS NULL OR created_at <= $2)`;
+
+    // ---- Ratings / Reviews ----
+    const rTot = (await q(`SELECT COUNT(*)::int total, COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg_rating,
+        SUM(CASE WHEN requires_action THEN 1 ELSE 0 END)::int needs_action,
+        SUM(CASE WHEN action_status IN ('resolved','no_action_needed') THEN 1 ELSE 0 END)::int resolved,
+        SUM(CASE WHEN action_status='unreachable' THEN 1 ELSE 0 END)::int unreachable
+      FROM ratings r WHERE ${rW}`)).rows[0];
+    const rByStatus = (await q(`SELECT action_status name, COUNT(*)::int count FROM ratings r WHERE ${rW} GROUP BY action_status ORDER BY count DESC`)).rows;
+    const rByRating = (await q(`SELECT rating::text name, COUNT(*)::int count FROM ratings r WHERE ${rW} GROUP BY rating ORDER BY rating`)).rows;
+    const rByBrand = (await q(`SELECT COALESCE(b.brand_name,'—') name, COUNT(*)::int count FROM ratings r LEFT JOIN brands b ON b.id=r.brand_id WHERE ${rW} GROUP BY b.brand_name ORDER BY count DESC LIMIT 8`)).rows;
+    const rByPlatform = (await q(`SELECT COALESCE(p.name,'—') name, COUNT(*)::int count FROM ratings r LEFT JOIN platforms p ON p.id=r.platform_id WHERE ${rW} GROUP BY p.name ORDER BY count DESC LIMIT 8`)).rows;
+    const rByAgent = (await q(`SELECT ua.full_name name, COUNT(*)::int assigned,
+        SUM(CASE WHEN r.action_status IN ('resolved','no_action_needed','unreachable') THEN 1 ELSE 0 END)::int done
+      FROM ratings r JOIN users ua ON ua.id=r.assigned_agent_id WHERE ${rW} AND r.assigned_agent_id IS NOT NULL
+      GROUP BY ua.full_name ORDER BY assigned DESC LIMIT 10`)).rows;
+
+    // ---- Surveys ----
+    const campTotal = (await q(`SELECT COUNT(*)::int c FROM survey_campaigns WHERE ${tW}`)).rows[0].c;
+    const campByStatus = (await q(`SELECT status name, COUNT(*)::int count FROM survey_campaigns WHERE ${tW} GROUP BY status ORDER BY count DESC`)).rows;
+    const asgTot = (await q(`SELECT COUNT(*)::int total,
+        SUM(CASE WHEN status='successful' THEN 1 ELSE 0 END)::int successful
+      FROM survey_assignments WHERE ${tW}`)).rows[0];
+    const asgByStatus = (await q(`SELECT status name, COUNT(*)::int count FROM survey_assignments WHERE ${tW} GROUP BY status ORDER BY count DESC`)).rows;
+    const recTot = (await q(`SELECT COUNT(*)::int total,
+        SUM(CASE WHEN answered THEN 1 ELSE 0 END)::int answered,
+        SUM(CASE WHEN NOT answered THEN 1 ELSE 0 END)::int no_answer
+      FROM survey_records WHERE ${tW}`)).rows[0];
+    const recByType = (await q(`SELECT record_type name, COUNT(*)::int count FROM survey_records WHERE ${tW} GROUP BY record_type ORDER BY count DESC`)).rows;
+    const recByBrand = (await q(`SELECT COALESCE(b.brand_name, sr.brand_label, '—') name, COUNT(*)::int count
+      FROM survey_records sr LEFT JOIN brands b ON b.id=sr.brand_id
+      WHERE ($1::timestamptz IS NULL OR sr.created_at >= $1) AND ($2::timestamptz IS NULL OR sr.created_at <= $2)
+      GROUP BY COALESCE(b.brand_name, sr.brand_label, '—') ORDER BY count DESC LIMIT 8`)).rows;
+    const surveyTopAgents = (await q(`SELECT u.full_name name, COUNT(*)::int successful
+      FROM survey_responses resp JOIN users u ON u.id=resp.agent_id
+      WHERE ($1::timestamptz IS NULL OR resp.answered_at >= $1) AND ($2::timestamptz IS NULL OR resp.answered_at <= $2)
+      GROUP BY u.full_name ORDER BY successful DESC LIMIT 10`)).rows;
+
+    return {
+      ratings: {
+        total: rTot.total, avgRating: Number(rTot.avg_rating), needsAction: rTot.needs_action,
+        resolved: rTot.resolved, unreachable: rTot.unreachable,
+        resolutionRate: rTot.needs_action > 0 ? Math.round((rTot.resolved / rTot.needs_action) * 100) : 0,
+        byStatus: rByStatus, byRating: rByRating, byBrand: rByBrand, byPlatform: rByPlatform, byAgent: rByAgent,
+      },
+      surveys: {
+        campaigns: { total: campTotal, byStatus: campByStatus },
+        assignments: {
+          total: asgTot.total, successful: asgTot.successful,
+          successRate: asgTot.total > 0 ? Math.round((asgTot.successful / asgTot.total) * 100) : 0,
+          byStatus: asgByStatus,
+        },
+        records: { total: recTot.total, answered: recTot.answered, noAnswer: recTot.no_answer, byType: recByType, byBrand: recByBrand },
+        topAgents: surveyTopAgents,
+      },
+    };
+  }
 }
