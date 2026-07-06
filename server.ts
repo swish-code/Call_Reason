@@ -1775,6 +1775,17 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   res.json(ratings);
 }));
 
+// Bulk-assign several reviews to one agent (assigners only)
+app.post("/api/ratings/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!["admin", "supervisor", "leader"].includes(req.user.role))
+    return res.status(403).json({ error: "Access denied." });
+  const { ids, assigned_agent_id } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0)
+    return res.status(400).json({ error: "No reviews selected." });
+  const n = await DB.bulkAssignRatings(ids, assigned_agent_id || null);
+  res.json({ assigned: n });
+}));
+
 // Active Call Center agents — for the review assignment dropdown (assigners only)
 app.get("/api/agents", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))

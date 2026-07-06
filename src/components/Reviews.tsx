@@ -136,7 +136,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
 
   // Assignment state
   const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
-  const [assignTarget, setAssignTarget] = useState<Rating | null>(null);
+  const [assignIds, setAssignIds] = useState<string[]>([]); // reviews targeted by the open assign modal
+  const [selected, setSelected] = useState<string[]>([]);   // rows ticked for bulk assign
   const [assignAgentId, setAssignAgentId] = useState("");
   const [assignSaving, setAssignSaving] = useState(false);
 
@@ -164,6 +165,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
       if (!res.ok) throw new Error("Failed to load reviews.");
       setRatings(await res.json());
       setPage(1);
+      setSelected([]);
     } catch (e: any) {
       setError(e.message || "Connection error.");
     } finally {
@@ -245,18 +247,24 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     if (res.ok) { fetchDetail(detail.id); fetchRatings(); }
   };
 
-  const openAssign = (r: Rating) => { setAssignTarget(r); setAssignAgentId(r.assigned_agent_id || ""); };
+  const openAssign = (r: Rating) => { setAssignIds([r.id]); setAssignAgentId(r.assigned_agent_id || ""); };
+  const openBulkAssign = () => { if (!selected.length) return; setAssignIds([...selected]); setAssignAgentId(""); };
   const saveAssign = async () => {
-    if (!assignTarget) return;
+    if (!assignIds.length) return;
     setAssignSaving(true);
-    const res = await apiFetch(`/api/ratings/${assignTarget.id}`, {
-      method: 'PATCH',
+    const res = await apiFetch('/api/ratings/assign', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assigned_agent_id: assignAgentId || null }),
+      body: JSON.stringify({ ids: assignIds, assigned_agent_id: assignAgentId || null }),
     });
     setAssignSaving(false);
-    if (res.ok) { setAssignTarget(null); fetchRatings(); }
+    if (res.ok) { setAssignIds([]); setSelected([]); fetchRatings(); }
   };
+
+  // Row selection for bulk assign
+  const toggleSelect = (id: string) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const allSelected = ratings.length > 0 && selected.length === ratings.length;
+  const toggleSelectAll = () => setSelected(allSelected ? [] : ratings.map(r => r.id));
 
   const patchStatus = async (status: string) => {
     if (!detail) return;
@@ -369,6 +377,19 @@ export default function Reviews({ currentUser }: ReviewsProps) {
         </div>
       )}
 
+      {/* Bulk-assign action bar */}
+      {canAssign && selected.length > 0 && (
+        <div className="flex items-center gap-3 p-3 px-4 bg-violet-500/10 border border-violet-500/20 rounded-2xl">
+          <span className="text-xs font-extrabold text-violet-400">{selected.length} selected</span>
+          <button onClick={openBulkAssign} className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[11px] font-bold transition active:scale-95">
+            Assign selected
+          </button>
+          <button onClick={() => setSelected([])} className="px-3 py-1.5 text-[var(--muted)] hover:text-[var(--heading)] text-[11px] font-bold transition">
+            Clear
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[240px]">
@@ -380,6 +401,11 @@ export default function Reviews({ currentUser }: ReviewsProps) {
             <table className="w-full text-left text-xs">
               <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold border-b border-[var(--border)]">
                 <tr>
+                  {canAssign && (
+                    <th className="p-4">
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" title="Select all" />
+                    </th>
+                  )}
                   <th className="p-4">Date</th>
                   <th className="p-4">Source</th>
                   <th className="p-4">Rate</th>
@@ -394,7 +420,12 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
                 {paged.map(r => (
-                  <tr key={r.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
+                  <tr key={r.id} className={`hover:bg-[var(--surface-2)]/40 transition align-middle ${selected.includes(r.id) ? 'bg-violet-500/5' : ''}`}>
+                    {canAssign && (
+                      <td className="p-4">
+                        <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" />
+                      </td>
+                    )}
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.uploaded_at)}</td>
                     <td className="p-4">
                       <div className="space-y-0.5">
@@ -450,7 +481,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 ))}
                 {ratings.length === 0 && (
                   <tr>
-                    <td colSpan={isAgent ? 9 : 10} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
+                    <td colSpan={9 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
                   </tr>
                 )}
               </tbody>
@@ -497,22 +528,29 @@ export default function Reviews({ currentUser }: ReviewsProps) {
         </div>
       )}
 
-      {/* Assign Modal */}
-      {assignTarget && (
+      {/* Assign Modal (single or bulk) */}
+      {assignIds.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
               <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2">
-                <Star className="w-4 h-4 text-violet-400" /> Assign Review
+                <Star className="w-4 h-4 text-violet-400" /> {assignIds.length > 1 ? `Assign ${assignIds.length} Reviews` : 'Assign Review'}
               </h3>
-              <button onClick={() => setAssignTarget(null)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
+              <button onClick={() => setAssignIds([])} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="text-xs text-[var(--muted)] space-y-1">
-              <div><span className="font-bold text-[var(--heading)]">{assignTarget.brand_name}</span> · {assignTarget.platform_name}</div>
-              <div className="font-mono">#{assignTarget.order_id}</div>
-            </div>
+            {assignIds.length === 1 ? (() => {
+              const r = ratings.find(x => x.id === assignIds[0]);
+              return r ? (
+                <div className="text-xs text-[var(--muted)] space-y-1">
+                  <div><span className="font-bold text-[var(--heading)]">{r.brand_name}</span> · {r.platform_name}</div>
+                  <div className="font-mono">#{r.order_id}</div>
+                </div>
+              ) : null;
+            })() : (
+              <div className="text-xs text-[var(--muted)]"><span className="font-extrabold text-violet-400">{assignIds.length}</span> reviews will be assigned together.</div>
+            )}
             <div className="space-y-1.5">
               <label className="block text-[11px] font-bold text-[var(--muted)] uppercase">Agent</label>
               <select value={assignAgentId} onChange={e => setAssignAgentId(e.target.value)} className={selCls + " w-full"}>
@@ -522,7 +560,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               {agents.length === 0 && <p className="text-[10px] text-[var(--muted)]">No active agents found.</p>}
             </div>
             <div className="flex gap-2 pt-2">
-              <button onClick={() => setAssignTarget(null)} className="flex-1 px-4 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded-xl text-xs font-bold hover:bg-[var(--surface-2)] transition">Cancel</button>
+              <button onClick={() => setAssignIds([])} className="flex-1 px-4 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded-xl text-xs font-bold hover:bg-[var(--surface-2)] transition">Cancel</button>
               <button onClick={saveAssign} disabled={assignSaving} className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition">
                 {assignSaving ? 'Saving…' : assignAgentId ? 'Assign' : 'Unassign'}
               </button>

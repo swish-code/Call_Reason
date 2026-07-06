@@ -1282,6 +1282,12 @@ export class DB {
     return DB.getRatingById(id);
   }
 
+  static async bulkAssignRatings(ids: string[], agentId: string | null): Promise<number> {
+    if (!ids.length) return 0;
+    const res = await pool.query("UPDATE ratings SET assigned_agent_id = $1 WHERE id = ANY($2)", [agentId, ids]);
+    return res.rowCount ?? 0;
+  }
+
   static async addCallAttempt(data: {
     rating_id: string; agent_id: string; agent_name: string; outcome: string; note?: string;
   }): Promise<any> {
