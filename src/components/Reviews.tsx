@@ -468,7 +468,12 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      {r.requires_action && <span className="text-rose-400 text-base" title="Requires Action">🚩</span>}
+                      {(() => {
+                        const closed = ['resolved', 'no_action_needed', 'unreachable'].includes(r.action_status);
+                        if (closed) return <span className="text-emerald-400 text-base" title="Handled">✓</span>;
+                        if (r.requires_action) return <span className="text-rose-400 text-base" title="Requires Action">🚩</span>;
+                        return <span className="text-[var(--muted)]">—</span>;
+                      })()}
                     </td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{r.uploaded_by_name || '—'}</td>
                     {!isAgent && (
