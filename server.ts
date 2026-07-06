@@ -1789,6 +1789,16 @@ app.get("/api/feedback/dashboard", authenticateJWT, asyncHandler(async (req: any
   res.json(await DB.getFeedbackDashboard(fromISO, toISO));
 }));
 
+// Delete one or more reviews (admin only)
+app.post("/api/ratings/delete", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0)
+    return res.status(400).json({ error: "No reviews selected." });
+  const n = await DB.deleteRatings(ids);
+  res.json({ deleted: n });
+}));
+
 // Bulk-assign several reviews to one agent (assigners only)
 app.post("/api/ratings/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))

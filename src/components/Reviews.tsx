@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
-  Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone,
+  Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2,
 } from "lucide-react";
 
 interface Platform { id: string; name: string; }
@@ -146,6 +146,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     (currentUser as any).can_upload === true;
   const canAssign = ['admin', 'supervisor', 'leader'].includes(currentUser.role);
   const isAgent = currentUser.role === 'agent';
+  const isAdmin = currentUser.role === 'admin';
 
   const buildQuery = useCallback(() => {
     const p = new URLSearchParams();
@@ -259,6 +260,19 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     });
     setAssignSaving(false);
     if (res.ok) { setAssignIds([]); setSelected([]); fetchRatings(); }
+  };
+
+  const deleteReviews = async (ids: string[]) => {
+    if (!ids.length) return;
+    const msg = ids.length === 1 ? "Delete this review? This cannot be undone." : `Delete ${ids.length} reviews? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    const res = await apiFetch('/api/ratings/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (res.ok) { setSelected([]); fetchRatings(); }
+    else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Delete failed."); }
   };
 
   // Row selection for bulk assign
@@ -384,6 +398,11 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           <button onClick={openBulkAssign} className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[11px] font-bold transition active:scale-95">
             Assign selected
           </button>
+          {isAdmin && (
+            <button onClick={() => deleteReviews(selected)} className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[11px] font-bold transition active:scale-95 flex items-center gap-1.5">
+              <Trash2 className="w-3.5 h-3.5" /> Delete selected
+            </button>
+          )}
           <button onClick={() => setSelected([])} className="px-3 py-1.5 text-[var(--muted)] hover:text-[var(--heading)] text-[11px] font-bold transition">
             Clear
           </button>
@@ -475,6 +494,15 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                         >
                           Open
                         </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => deleteReviews([r.id])}
+                            title="Delete review"
+                            className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl transition"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

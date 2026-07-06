@@ -1288,6 +1288,12 @@ export class DB {
     return res.rowCount ?? 0;
   }
 
+  static async deleteRatings(ids: string[]): Promise<number> {
+    if (!ids.length) return 0;
+    const res = await pool.query("DELETE FROM ratings WHERE id = ANY($1)", [ids]);
+    return res.rowCount ?? 0;
+  }
+
   static async addCallAttempt(data: {
     rating_id: string; agent_id: string; agent_name: string; outcome: string; note?: string;
   }): Promise<any> {
