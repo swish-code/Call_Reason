@@ -134,9 +134,17 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [actionNote, setActionNote] = useState("");
   const [patching, setPatching] = useState(false);
 
+  // Assignment state
+  const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
+  const [assignTarget, setAssignTarget] = useState<Rating | null>(null);
+  const [assignAgentId, setAssignAgentId] = useState("");
+  const [assignSaving, setAssignSaving] = useState(false);
+
   const canUpload =
     ['admin', 'supervisor', 'leader'].includes(currentUser.role) ||
     (currentUser as any).can_upload === true;
+  const canAssign = ['admin', 'supervisor', 'leader'].includes(currentUser.role);
+  const isAgent = currentUser.role === 'agent';
 
   const buildQuery = useCallback(() => {
     const p = new URLSearchParams();
@@ -166,7 +174,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   useEffect(() => {
     apiFetch('/api/brands').then(r => r.ok ? r.json() : []).then(setBrands).catch(() => {});
     apiFetch('/api/platforms').then(r => r.ok ? r.json() : []).then(setPlatforms).catch(() => {});
-  }, []);
+    if (canAssign) apiFetch('/api/agents').then(r => r.ok ? r.json() : []).then(setAgents).catch(() => {});
+  }, [canAssign]);
 
   useEffect(() => { fetchRatings(); }, [fetchRatings]);
 
@@ -234,6 +243,19 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     });
     setAttemptSaving(false);
     if (res.ok) { fetchDetail(detail.id); fetchRatings(); }
+  };
+
+  const openAssign = (r: Rating) => { setAssignTarget(r); setAssignAgentId(r.assigned_agent_id || ""); };
+  const saveAssign = async () => {
+    if (!assignTarget) return;
+    setAssignSaving(true);
+    const res = await apiFetch(`/api/ratings/${assignTarget.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assigned_agent_id: assignAgentId || null }),
+    });
+    setAssignSaving(false);
+    if (res.ok) { setAssignTarget(null); fetchRatings(); }
   };
 
   const patchStatus = async (status: string) => {
@@ -323,11 +345,13 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           <option value="unreachable">Unreachable</option>
           <option value="no_action_needed">No Action Required</option>
         </select>
-        <select value={assigned} onChange={e => setAssigned(e.target.value)} className={selCls}>
-          <option value="">All</option>
-          <option value="me">Assigned to me</option>
-          <option value="unassigned">Unassigned</option>
-        </select>
+        {!isAgent && (
+          <select value={assigned} onChange={e => setAssigned(e.target.value)} className={selCls}>
+            <option value="">All</option>
+            <option value="me">Assigned to me</option>
+            <option value="unassigned">Unassigned</option>
+          </select>
+        )}
         <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-[var(--text)] font-bold">
           <input
             type="checkbox"
@@ -364,7 +388,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   <th className="p-4">Status</th>
                   <th className="p-4 text-center">Flag</th>
                   <th className="p-4">Uploaded By</th>
-                  <th className="p-4 text-center">Open</th>
+                  {!isAgent && <th className="p-4">Assigned To</th>}
+                  <th className="p-4 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -396,19 +421,36 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       {r.requires_action && <span className="text-rose-400 text-base" title="Requires Action">🚩</span>}
                     </td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{r.uploaded_by_name || '—'}</td>
+                    {!isAgent && (
+                      <td className="p-4 text-[11px]">
+                        {r.agent_name
+                          ? <span className="inline-block px-2 py-0.5 rounded-full font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">{r.agent_name}</span>
+                          : <span className="text-[var(--muted)]">—</span>}
+                      </td>
+                    )}
                     <td className="p-4 text-center">
-                      <button
-                        onClick={() => openDetail(r)}
-                        className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-[11px] font-bold transition"
-                      >
-                        Open
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        {canAssign && (
+                          <button
+                            onClick={() => openAssign(r)}
+                            className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded-xl text-[11px] font-bold transition"
+                          >
+                            Assign
+                          </button>
+                        )}
+                        <button
+                          onClick={() => openDetail(r)}
+                          className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-[11px] font-bold transition"
+                        >
+                          Open
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {ratings.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
+                    <td colSpan={isAgent ? 9 : 10} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
                   </tr>
                 )}
               </tbody>
@@ -452,6 +494,40 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Assign Modal */}
+      {assignTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
+              <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2">
+                <Star className="w-4 h-4 text-violet-400" /> Assign Review
+              </h3>
+              <button onClick={() => setAssignTarget(null)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="text-xs text-[var(--muted)] space-y-1">
+              <div><span className="font-bold text-[var(--heading)]">{assignTarget.brand_name}</span> · {assignTarget.platform_name}</div>
+              <div className="font-mono">#{assignTarget.order_id}</div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-[var(--muted)] uppercase">Agent</label>
+              <select value={assignAgentId} onChange={e => setAssignAgentId(e.target.value)} className={selCls + " w-full"}>
+                <option value="">— Unassigned —</option>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+              </select>
+              {agents.length === 0 && <p className="text-[10px] text-[var(--muted)]">No active agents found.</p>}
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setAssignTarget(null)} className="flex-1 px-4 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded-xl text-xs font-bold hover:bg-[var(--surface-2)] transition">Cancel</button>
+              <button onClick={saveAssign} disabled={assignSaving} className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition">
+                {assignSaving ? 'Saving…' : assignAgentId ? 'Assign' : 'Unassign'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

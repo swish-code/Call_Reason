@@ -1757,16 +1757,17 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   res.json(result);
 }));
 
-// List ratings with filters
+// List ratings with filters. Agents only ever see ratings assigned to them.
 app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const isAgent = req.user.role === "agent";
   const { brand_id, platform_id, action_status, requires_action, assigned, min_rating, max_rating } = req.query;
   const ratings = await DB.getRatings({
     brand_id: brand_id as string || undefined,
     platform_id: platform_id as string || undefined,
     action_status: action_status as string || undefined,
     requires_action: requires_action === "true" ? true : undefined,
-    assigned: assigned as string || undefined,
-    assigned_agent_id: assigned === "me" ? req.user.id : undefined,
+    assigned: isAgent ? "me" : (assigned as string || undefined),
+    assigned_agent_id: isAgent || assigned === "me" ? req.user.id : undefined,
     min_rating: min_rating ? Number(min_rating) : undefined,
     max_rating: max_rating ? Number(max_rating) : undefined,
     limit: 200,
@@ -1774,15 +1775,27 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   res.json(ratings);
 }));
 
+// Active agent-role users — for the review assignment dropdown (assigners only)
+app.get("/api/agents", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!["admin", "supervisor", "leader"].includes(req.user.role))
+    return res.status(403).json({ error: "Access denied." });
+  const users = await DB.getUsers();
+  res.json(users
+    .filter((u: any) => u.role === "agent" && u.status === "Active")
+    .map((u: any) => ({ id: u.id, full_name: u.full_name })));
+}));
+
 // List platforms
 app.get("/api/platforms", authenticateJWT, asyncHandler(async (_req, res) => {
   res.json(await DB.getPlatforms());
 }));
 
-// Get single rating with attempts
-app.get("/api/ratings/:id", authenticateJWT, asyncHandler(async (req, res) => {
+// Get single rating with attempts. Agents may only open ratings assigned to them.
+app.get("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
   const rating = await DB.getRatingById(req.params.id);
   if (!rating) return res.status(404).json({ error: "Rating not found." });
+  if (req.user.role === "agent" && rating.assigned_agent_id !== req.user.id)
+    return res.status(403).json({ error: "Access denied." });
   res.json(rating);
 }));
 
