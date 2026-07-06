@@ -1775,13 +1775,13 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   res.json(ratings);
 }));
 
-// Active agent-role users — for the review assignment dropdown (assigners only)
+// Active Call Center agents — for the review assignment dropdown (assigners only)
 app.get("/api/agents", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))
     return res.status(403).json({ error: "Access denied." });
   const users = await DB.getUsers();
   res.json(users
-    .filter((u: any) => u.role === "agent" && u.status === "Active")
+    .filter((u: any) => u.role === "agent" && u.status === "Active" && u.department === "Call Center")
     .map((u: any) => ({ id: u.id, full_name: u.full_name })));
 }));
 
