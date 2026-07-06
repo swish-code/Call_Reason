@@ -406,7 +406,7 @@ export default function App() {
       { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
-      { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: notAgent },
+      { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: true },
       { page: "surveys", label: "Surveys", icon: MessageSquare, visible: true },
     ] },
     { type: "group", key: "admin", label: "Administration", icon: ShieldAlert, items: [
@@ -679,7 +679,7 @@ export default function App() {
           {activePage === "performance" && currentUser.role !== "agent" && (
             <PerformanceReport currentUser={currentUser} />
           )}
-          {activePage === "reviews" && currentUser.role !== "agent" && (
+          {activePage === "reviews" && (
             <Reviews currentUser={currentUser} />
           )}
           {activePage === "surveys" && (
