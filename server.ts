@@ -567,6 +567,12 @@ async function ensureTodayInstances(department?: string): Promise<void> {
 }
 
 // List logs (scoped by role/department)
+// Agent ids of everyone currently assigned to a department (member-based scope)
+const departmentMemberIds = async (department: string): Promise<string[]> =>
+  (await DB.getUsers())
+    .filter((u: any) => u.department === department)
+    .map((u: any) => u.id);
+
 app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
   const { role, id, department } = req.user;
   const typeFilter = (req.query.type as string) || undefined;
@@ -574,8 +580,9 @@ app.get("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =>
   if (isExecutive(req.user)) {
     logs = await DB.getLogs({ log_type: typeFilter, department: (req.query.department as string) || undefined });
   } else if (role === "supervisor") {
-    // Supervisors see ALL logs in their department (agents + team leaders)
-    logs = await DB.getLogs({ department });
+    // Supervisors see ALL logs of their department MEMBERS (agents + team leaders),
+    // even when a member's logs are stamped under another dept (e.g. FM → Call Center).
+    logs = await DB.getLogs({ agent_ids: await departmentMemberIds(department) });
   } else if (role === "leader") {
     const deptLogType = DEPT_TO_LOGTYPE[department];
     logs = await DB.getLogs({ department, log_type: deptLogType || typeFilter });
@@ -595,7 +602,7 @@ app.get("/api/performance", authenticateJWT, asyncHandler(async (req: any, res: 
   if (isExecutive(req.user)) {
     logs = await DB.getLogs({ department: deptFilter });
   } else if (role === "supervisor") {
-    logs = await DB.getLogs({ department });
+    logs = await DB.getLogs({ agent_ids: await departmentMemberIds(department) });
   } else if (role === "leader") {
     const deptLogType = DEPT_TO_LOGTYPE[department];
     logs = await DB.getLogs({ department, log_type: deptLogType });
@@ -655,10 +662,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   else if (role === "supervisor") {
     // Scope by department MEMBERS (not the log's department stamp) so staff whose
     // logs are stamped under another dept — e.g. FM working call-center — still show.
-    const deptUserIds = (await DB.getUsers())
-      .filter((u: any) => u.department === department)
-      .map((u: any) => u.id);
-    logs = await DB.getLogs({ agent_ids: deptUserIds });
+    logs = await DB.getLogs({ agent_ids: await departmentMemberIds(department) });
   } else if (role === "leader") {
     const deptLogType = DEPT_TO_LOGTYPE[department];
     logs = await DB.getLogs({ department, log_type: deptLogType || undefined });
