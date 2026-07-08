@@ -26,6 +26,7 @@ interface DashData {
   weekSeconds: number;
   byActivity: { name: string; count: number }[];
   byDepartment: { name: string; count: number }[];
+  deptPerformance: { name: string; count: number; avgToDateSeconds: number; avgWeekSeconds: number; totalSeconds: number }[];
   agentProductivity: { name: string; count: number }[];
   complaintResolutionRate: number;
   technicalStatus: { name: string; count: number }[];
@@ -137,9 +138,12 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
     };
     addBar("Agent Productivity", d.agentProductivity);
-    addBar("Department Perf", d.byDepartment);
     addBar("Logs by Activity", d.byActivity);
     addBar("Technical Status", d.technicalStatus);
+
+    const deptAoa: any[][] = [["Department", "Staff", "Avg to date", "Avg / week"],
+      ...d.deptPerformance.map((dp) => [dp.name, dp.count, dp.count ? fmtDur(dp.avgToDateSeconds) : "—", dp.count ? fmtDur(dp.avgWeekSeconds) : "—"])];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(deptAoa), "Department Perf");
 
     const trend: any[][] = [["Date", "Logs"], ...d.trend.map((t) => [t.date, t.count])];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(trend), "7-Day Trend");
@@ -310,7 +314,32 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <BarList title="Agent Productivity" data={d.agentProductivity} color="bg-blue-500" icon={Users} />
-            <BarList title="Department Performance" data={d.byDepartment} color="bg-emerald-500" icon={Award} />
+            {/* Department performance — staff count + avg worked hours */}
+            <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+              <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Award className="w-5 h-5 text-emerald-400" /> Department Performance</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                      <th className="text-left py-2 px-2">Department</th>
+                      <th className="text-center py-2 px-2">Staff</th>
+                      <th className="text-center py-2 px-2">Avg · to date</th>
+                      <th className="text-center py-2 px-2">Avg · week</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.deptPerformance.map((dp) => (
+                      <tr key={dp.name} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30 transition">
+                        <td className="py-2.5 px-2 font-bold text-[var(--heading)]">{dp.name}</td>
+                        <td className="py-2.5 px-2 text-center font-mono text-blue-400">{dp.count}</td>
+                        <td className="py-2.5 px-2 text-center font-mono text-emerald-400">{dp.count ? fmtDur(dp.avgToDateSeconds) : "—"}</td>
+                        <td className="py-2.5 px-2 text-center font-mono text-amber-400">{dp.count ? fmtDur(dp.avgWeekSeconds) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <Trend />

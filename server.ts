@@ -817,6 +817,48 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
       })).sort((a, b) => b.week - a.week || a.name.localeCompare(b.name));
   }
 
+  // Department performance — count + avg worked hours (to-date and last week) per group.
+  // FM is split out from Quality via job_title; uses unfiltered scoped logs.
+  const deptUsers = await DB.getUsers();
+  const groupOf = (u: any): string | null => {
+    if (u.job_title === "FM" || u.job_title === "FM Team Leader") return "FM";
+    if (u.department === "Quality") return "QA";
+    if (u.department === "Call Center" || u.department === "Technical" || u.department === "Complaints") return u.department;
+    return null;
+  };
+  const scopedDeptUsers = isExecutive(req.user)
+    ? deptUsers
+    : (role === "supervisor" || role === "leader")
+      ? deptUsers.filter((u: any) => u.department === department)
+      : deptUsers.filter((u: any) => u.id === id);
+  const GKEYS = ["Technical", "Complaints", "Call Center", "QA", "FM"] as const;
+  const userGroup = new Map<string, string>();
+  const deptCount: Record<string, number> = { Technical: 0, Complaints: 0, "Call Center": 0, QA: 0, FM: 0 };
+  for (const u of scopedDeptUsers) {
+    const g = groupOf(u);
+    if (!g) continue;
+    userGroup.set(u.id, g);
+    if ((u.role === "agent" || u.role === "leader") && u.status === "Active") deptCount[g]++;
+  }
+  const totalSec: Record<string, number> = { Technical: 0, Complaints: 0, "Call Center": 0, QA: 0, FM: 0 };
+  const weekSec: Record<string, number> = { Technical: 0, Complaints: 0, "Call Center": 0, QA: 0, FM: 0 };
+  const weekCutoff = now - 7 * 86400000;
+  shiftLogs.forEach((l: any) => {
+    const g = userGroup.get(l.agent_id);
+    if (!g) return;
+    const secs = Number(l.duration_seconds || 0);
+    if (!secs) return;
+    totalSec[g] += secs;
+    if (new Date(l.created_at).getTime() >= weekCutoff) weekSec[g] += secs;
+  });
+  const deptPerformance = GKEYS.map((name) => ({
+    name,
+    count: deptCount[name],
+    avgToDateSeconds: deptCount[name] ? Math.round(totalSec[name] / deptCount[name]) : 0,
+    avgWeekSeconds: deptCount[name] ? Math.round(weekSec[name] / deptCount[name]) : 0,
+    totalSeconds: totalSec[name],
+  }));
+
   res.json({
     shiftByAgent,
     role,
@@ -836,6 +878,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     monthly: logs.filter((l) => ts(l) >= since(30)).length,
     byActivity: group((l) => l.activity_type).slice(0, 12),
     byDepartment: group((l) => l.department),
+    deptPerformance,
     agentProductivity: group((l) => l.agent_name).slice(0, 15),
     complaintResolutionRate,
     technicalStatus,
