@@ -1855,14 +1855,19 @@ app.get("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) 
   res.json(rating);
 }));
 
-// Patch rating (status / note / assignment)
+// Patch rating (status / note / assignment / customer contact)
 app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
   const rating = await DB.getRatingById(req.params.id);
   if (!rating) return res.status(404).json({ error: "Rating not found." });
+  // Agents may only edit reviews assigned to them
+  if (req.user.role === "agent" && rating.assigned_agent_id !== req.user.id)
+    return res.status(403).json({ error: "Access denied." });
 
-  const { action_status, action_note, assigned_agent_id } = req.body;
+  const { action_status, action_note, assigned_agent_id, customer_phone, customer_name } = req.body;
   const fields: any = {};
   if (action_note !== undefined) fields.action_note = action_note;
+  if (customer_phone !== undefined) fields.customer_phone = normalisePhone(String(customer_phone)) || null;
+  if (customer_name !== undefined) fields.customer_name = customer_name ? String(customer_name).trim() : null;
   if (assigned_agent_id !== undefined) {
     const canAssign = ["admin", "supervisor", "leader"].includes(req.user.role);
     if (!canAssign) return res.status(403).json({ error: "Only leaders/supervisors can assign ratings." });

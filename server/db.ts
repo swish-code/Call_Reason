@@ -1270,8 +1270,9 @@ export class DB {
   static async updateRating(id: string, fields: {
     action_status?: string; action_note?: string; assigned_agent_id?: string | null;
     resolved_at?: string | null; recorded_by?: string | null; recorded_at?: string | null;
+    customer_phone?: string | null; customer_name?: string | null;
   }): Promise<any | undefined> {
-    const cols = ["action_status","action_note","assigned_agent_id","resolved_at","recorded_by","recorded_at"] as const;
+    const cols = ["action_status","action_note","assigned_agent_id","resolved_at","recorded_by","recorded_at","customer_phone","customer_name"] as const;
     const sets: string[] = []; const values: any[] = []; let idx = 1;
     for (const c of cols) {
       if (c in fields) { sets.push(`${c} = $${idx++}`); values.push((fields as any)[c]); }

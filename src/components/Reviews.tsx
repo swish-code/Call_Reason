@@ -145,6 +145,11 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [actionNote, setActionNote] = useState("");
   const [patching, setPatching] = useState(false);
 
+  // Editable customer contact
+  const [custName, setCustName] = useState("");
+  const [custPhone, setCustPhone] = useState("");
+  const [savingContact, setSavingContact] = useState(false);
+
   // Assignment state
   const [agents, setAgents] = useState<{ id: string; full_name: string }[]>([]);
   const [assignIds, setAssignIds] = useState<string[]>([]); // reviews targeted by the open assign modal
@@ -201,6 +206,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
         const data: Rating = await res.json();
         setDetail(data);
         setActionNote(data.action_note || "");
+        setCustName(data.customer_name || "");
+        setCustPhone(data.customer_phone || "");
         setAttemptOutcome('no_answer');
         setAttemptNote("");
       }
@@ -212,9 +219,23 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const openDetail = (r: Rating) => {
     setDetail(r);
     setActionNote(r.action_note || "");
+    setCustName(r.customer_name || "");
+    setCustPhone(r.customer_phone || "");
     setAttemptOutcome('no_answer');
     setAttemptNote("");
     fetchDetail(r.id);
+  };
+
+  const saveContact = async () => {
+    if (!detail) return;
+    setSavingContact(true);
+    const res = await apiFetch(`/api/ratings/${detail.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_name: custName, customer_phone: custPhone }),
+    });
+    setSavingContact(false);
+    if (res.ok) { fetchDetail(detail.id); fetchRatings(); }
   };
 
   const handleTemplate = async () => {
@@ -737,12 +758,30 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                     )}
                   </div>
 
+                  {/* Editable customer contact */}
+                  <div className="p-4 bg-[var(--bg)] border border-[var(--border)] rounded-2xl space-y-3">
+                    <p className="text-[10px] text-[var(--muted)] font-bold uppercase tracking-wide">Customer Contact</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-[var(--muted)] font-bold">Customer Name</label>
+                        <input value={custName} onChange={e => setCustName(e.target.value)} placeholder="—" className={inputCls + " w-full"} />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-[var(--muted)] font-bold">Phone</label>
+                        <input value={custPhone} onChange={e => setCustPhone(e.target.value)} placeholder="—" className={inputCls + " w-full"} dir="ltr" />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button onClick={saveContact} disabled={savingContact} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-[11px] font-bold transition active:scale-95">
+                        {savingContact ? 'Saving…' : 'Save Customer Info'}
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Info grid */}
                   <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                     {[
                       ['Date', fmtDate(detail.order_date || detail.uploaded_at)],
-                      ['Customer', detail.customer_name],
-                      ['Phone', detail.customer_phone],
                       ['Branch', detail.branch],
                       ['Served By', detail.served_by || detail.filled_by],
                       ['Following Date', detail.following_date ? fmtDate(detail.following_date) : null],
