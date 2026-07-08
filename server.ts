@@ -659,6 +659,10 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     logs = await DB.getLogs({ department, log_type: deptLogType || undefined });
   } else logs = await DB.getLogs({ agent_id: id });
 
+  // Keep the full scoped set for the Shift Hours table so its own week
+  // navigation is independent of the KPI date filter below.
+  const shiftLogs = logs;
+
   // Optional date + time range filter (dates: YYYY-MM-DD, times: HH:MM in Kuwait UTC+3)
   const from = typeof req.query.from === "string" ? req.query.from : "";
   const to = typeof req.query.to === "string" ? req.query.to : "";
@@ -738,15 +742,19 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     const GAP_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4-hour gap = new business day
     const kwDate = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
     const kwTodayStr = kuwaitToday().date;
+    // Shift the 7-day window back by whole weeks (0 = current week)
+    const weeksAgo = Math.max(0, Math.floor(Number(req.query.shift_weeks_ago) || 0));
+    const anchor = now - weeksAgo * 7 * 86400000;
     const last7: string[] = [];
     for (let i = 6; i >= 0; i--) {
-      last7.push(new Date(new Date(now - i * 86400000).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10));
+      last7.push(new Date(anchor - i * 86400000 + KW_OFFSET_MS).toISOString().slice(0, 10));
     }
     const last7Set = new Set(last7);
 
-    // Group logs by agent, keeping all (even zero-duration) for gap detection
+    // Group logs by agent, keeping all (even zero-duration) for gap detection.
+    // Uses the unfiltered scoped logs so week navigation works regardless of filter.
     const byAgent: Record<string, any[]> = {};
-    logs.forEach((l: any) => {
+    shiftLogs.forEach((l: any) => {
       if (!l.created_at) return;
       const name = l.agent_name || "—";
       if (!byAgent[name]) byAgent[name] = [];

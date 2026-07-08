@@ -2,7 +2,7 @@ import { useEffect, useState, Fragment } from "react";
 import * as XLSX from "xlsx";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer, Filter, X, Download } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer, Filter, X, Download, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface OpsDashboardProps {
   currentUser: User;
@@ -43,6 +43,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
   const [activePeriod, setActivePeriod] = useState<"today" | "week" | "month" | "">("");
+  const [shiftWeeksAgo, setShiftWeeksAgo] = useState(0); // 0 = current week
 
   // Kuwait time helpers (UTC+3)
   const kwToday = () => {
@@ -66,7 +67,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     load(f, today, "", "");
   };
 
-  const load = async (f = from, t = to, ft = fromTime, tt = toTime) => {
+  const load = async (f = from, t = to, ft = fromTime, tt = toTime, sw = shiftWeeksAgo) => {
     try {
       setLoading(true); setError("");
       const qs = new URLSearchParams();
@@ -74,6 +75,7 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
       if (t) qs.set("to", t);
       if (f && ft) qs.set("from_time", ft);
       if (t && tt) qs.set("to_time", tt);
+      if (sw) qs.set("shift_weeks_ago", String(sw));
       const res = await apiFetch(`/api/logs/dashboard${qs.toString() ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error("Failed to load dashboard.");
       setD(await res.json());
@@ -83,6 +85,14 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
   useEffect(() => { load("", "", "", ""); }, []);
 
   const clearFilter = () => { setFrom(""); setTo(""); setFromTime(""); setToTime(""); setActivePeriod(""); load("", "", "", ""); };
+
+  // Shift Hours table week navigation (independent of the KPI date filter)
+  const changeWeek = (delta: number) => {
+    const nw = Math.max(0, shiftWeeksAgo + delta);
+    if (nw === shiftWeeksAgo) return;
+    setShiftWeeksAgo(nw);
+    load(from, to, fromTime, toTime, nw);
+  };
 
   if (loading && !d) return <div className="flex flex-col items-center justify-center min-h-[400px]"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div><p className="mt-4 text-[var(--muted)]">Loading dashboard...</p></div>;
   if (error) return <div className="p-6 bg-rose-950/20 border border-rose-500/30 rounded-2xl text-center text-rose-300"><AlertCircle className="w-10 h-10 mx-auto text-rose-500" /><p className="mt-2 text-sm">{error}</p></div>;
@@ -310,15 +320,35 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
 
           {/* Shift hours per agent — daily breakdown */}
           <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
-            <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-blue-400" /> Shift Hours per Agent
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="text-md font-bold text-[var(--heading)] flex items-center gap-2">
+                <Clock className="w-5 h-5 text-blue-400" /> Shift Hours per Agent
+              </h2>
+              <div className="flex items-center gap-2">
+                <button onClick={() => changeWeek(1)} disabled={loading} title="Older week"
+                  className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-40 transition"><ChevronLeft className="w-4 h-4" /></button>
+                <span className="text-[11px] font-bold text-[var(--muted)] min-w-[110px] text-center">
+                  {(() => {
+                    const dys = d.shiftByAgent?.[0]?.days || [];
+                    if (!dys.length) return shiftWeeksAgo === 0 ? "This Week" : `${shiftWeeksAgo}w ago`;
+                    const a = dys[0].date.slice(5).replace("-", "/"), b = dys[dys.length - 1].date.slice(5).replace("-", "/");
+                    return `${a} – ${b}`;
+                  })()}
+                </span>
+                <button onClick={() => changeWeek(-1)} disabled={loading || shiftWeeksAgo === 0} title="Newer week"
+                  className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-40 transition"><ChevronRight className="w-4 h-4" /></button>
+                {shiftWeeksAgo !== 0 && (
+                  <button onClick={() => changeWeek(-shiftWeeksAgo)} disabled={loading}
+                    className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[11px] font-bold text-[var(--muted)] hover:text-[var(--heading)] transition">This Week</button>
+                )}
+              </div>
+            </div>
             {(!d.shiftByAgent || d.shiftByAgent.length === 0) ? (
               <div className="text-center py-6 text-[var(--muted)] text-xs">No shift activity yet.</div>
             ) : (() => {
               const days = d.shiftByAgent[0]?.days || [];
               const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-              const todayStr = days.length > 0 ? days[days.length - 1].date : "";
+              const todayStr = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
               return (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
