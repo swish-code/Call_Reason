@@ -830,13 +830,17 @@ export class DB {
   // ----------------------------------------------------
   // Operations & Logs (Agent / Team Leader logs)
   // ----------------------------------------------------
-  static async getLogs(filter: { log_type?: string; department?: string; agent_id?: string } = {}): Promise<OpsLog[]> {
+  static async getLogs(filter: { log_type?: string; department?: string; agent_id?: string; agent_ids?: string[] } = {}): Promise<OpsLog[]> {
     const clauses: string[] = [];
     const values: any[] = [];
     let idx = 1;
     if (filter.log_type) { clauses.push(`log_type = $${idx++}`); values.push(filter.log_type); }
     if (filter.department) { clauses.push(`department = $${idx++}`); values.push(filter.department); }
     if (filter.agent_id) { clauses.push(`agent_id = $${idx++}`); values.push(filter.agent_id); }
+    if (filter.agent_ids) {
+      if (!filter.agent_ids.length) return []; // scoped to nobody
+      clauses.push(`agent_id = ANY($${idx++})`); values.push(filter.agent_ids);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const { rows } = await pool.query<OpsLog>(`SELECT * FROM logs ${where} ORDER BY created_at DESC`, values);
     return rows;

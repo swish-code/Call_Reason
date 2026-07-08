@@ -653,7 +653,12 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
   let logs;
   if (isExecutive(req.user)) logs = await DB.getLogs({});
   else if (role === "supervisor") {
-    logs = await DB.getLogs({ department });
+    // Scope by department MEMBERS (not the log's department stamp) so staff whose
+    // logs are stamped under another dept — e.g. FM working call-center — still show.
+    const deptUserIds = (await DB.getUsers())
+      .filter((u: any) => u.department === department)
+      .map((u: any) => u.id);
+    logs = await DB.getLogs({ agent_ids: deptUserIds });
   } else if (role === "leader") {
     const deptLogType = DEPT_TO_LOGTYPE[department];
     logs = await DB.getLogs({ department, log_type: deptLogType || undefined });
