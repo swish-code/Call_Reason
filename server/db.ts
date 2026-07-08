@@ -482,6 +482,11 @@ export class DB {
       CREATE UNIQUE INDEX IF NOT EXISTS uq_assigned_tasks_template_date ON assigned_tasks(template_id, task_date) WHERE template_id IS NOT NULL;
     `);
 
+    // FM staff are supervised by Quality — move any existing FM accounts there
+    await pool.query(
+      "UPDATE users SET department = 'Quality' WHERE job_title IN ('FM', 'FM Team Leader') AND department IS DISTINCT FROM 'Quality'"
+    );
+
     // Backfill hierarchy level from the coarse role for legacy accounts
     await pool.query(`
       UPDATE users SET level = CASE

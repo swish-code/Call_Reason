@@ -765,7 +765,7 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     // not logged anything still appear (as a full row of zeros).
     const allUsers = await DB.getUsers();
     const scopedAgents = allUsers.filter((u: any) =>
-      u.role === "agent" && u.status === "Active" &&
+      (u.role === "agent" || u.role === "leader") && u.status === "Active" &&
       (isExecutive(req.user) || !department || u.department === department)
     );
     const agentNames = new Set(scopedAgents.map((u: any) => u.full_name));
