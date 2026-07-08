@@ -1668,6 +1668,27 @@ const normalisePhone = (p: string): string => p ? p.replace(/[\s\-\(\)\.]/g, "")
 const computeRequiresAction = (rating: number, review: string): boolean =>
   rating <= 3 || (rating >= 4 && review.trim().length > 0);
 
+// Normalise a spreadsheet date cell to YYYY-MM-DD. Handles Excel serial
+// numbers (days since 1899-12-30) and ordinary date strings; leaves other
+// text untouched so free-form values survive.
+const normaliseExcelDate = (v: string): string => {
+  if (!v) return "";
+  const s = String(v).trim();
+  if (/^\d{4,6}(\.\d+)?$/.test(s)) {
+    const serial = Number(s);
+    if (serial > 20000 && serial < 90000) {
+      const d = new Date(Math.round((serial - 25569) * 86400 * 1000));
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    }
+  }
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    const y = d.getUTCFullYear();
+    if (y >= 1990 && y <= 2100) return d.toISOString().slice(0, 10);
+  }
+  return s;
+};
+
 // requireUpload: admin/supervisor/leader always; agent only if can_upload=true in DB
 const requireUpload = async (req: any, res: any, next: any) => {
   if (!req.user) return res.status(401).json({ error: "Unauthorized." });
@@ -1735,11 +1756,11 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
         review_text: review_text || undefined,
         customer_phone: normalisePhone(pick(r, "Phone Number")) || undefined,
         requires_action, action_status, uploaded_by: req.user.id,
-        order_date: pick(r, "Date") || undefined,
+        order_date: normaliseExcelDate(pick(r, "Date")) || undefined,
         customer_name: pick(r, "Customer Name") || undefined,
         branch: pick(r, "Branch") || undefined,
         filled_by: pick(r, "Served By", "Filled By") || undefined,
-        following_date: pick(r, "Following Date") || undefined,
+        following_date: normaliseExcelDate(pick(r, "Following Date")) || undefined,
         surveyed_by: pick(r, "Surveyed By", "Surved by") || undefined,
         complaint_type: pick(r, "Type of Complaint", "Type of complain", "Complaint Type") || undefined,
         complaint_cases: pick(r, "Complaint Cases") || undefined,
@@ -1958,7 +1979,7 @@ const RECORD_TYPES: Record<string, {
         comment: comment || null,
         complaint: pick(row, "Complaint if needed", "Complaint"),
         trials: pick(row, "trials", "Trials"),
-        record_date: pick(row, "Order Date"),
+        record_date: normaliseExcelDate(pick(row, "Order Date")),
         answered: isAnswered(rate, pf, comment),
       };
     },

@@ -43,8 +43,19 @@ const PAGE_SIZE = 20;
 const KW_MS = 3 * 60 * 60 * 1000;
 const fmtDate = (ts?: string) => {
   if (!ts) return '—';
-  const t = new Date(ts).getTime();
-  if (isNaN(t)) return String(ts);
+  const s = String(ts).trim();
+  // Excel serial date stored as a bare number (days since 1899-12-30)
+  if (/^\d{4,6}(\.\d+)?$/.test(s)) {
+    const serial = Number(s);
+    if (serial > 20000 && serial < 90000) {
+      const ms = Math.round((serial - 25569) * 86400 * 1000);
+      return new Date(ms + KW_MS).toISOString().replace('T', ' ').slice(0, 16);
+    }
+  }
+  const t = new Date(s).getTime();
+  if (isNaN(t)) return s;
+  const y = new Date(t).getUTCFullYear();
+  if (y < 1990 || y > 2100) return s; // absurd parse → show raw
   return new Date(t + KW_MS).toISOString().replace('T', ' ').slice(0, 16);
 };
 
