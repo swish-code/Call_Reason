@@ -28,8 +28,8 @@ export interface UserType { value: string; label: string; role: UserRole; depart
 export const USER_TYPES: UserType[] = [
   { value: "call_center_agent", label: "Call Center Agent", role: "agent", department: "Call Center", level: LEVEL.AGENT },
   { value: "call_center_leader", label: "Call Center Team Leader", role: "leader", department: "Call Center", level: LEVEL.LEADER },
-  { value: "fm_agent", label: "FM", role: "agent", department: "Call Center", level: LEVEL.AGENT },
-  { value: "fm_leader", label: "FM Team Leader", role: "leader", department: "Call Center", level: LEVEL.LEADER },
+  { value: "fm_agent", label: "FM", role: "agent", department: "Quality", level: LEVEL.AGENT },
+  { value: "fm_leader", label: "FM Team Leader", role: "leader", department: "Quality", level: LEVEL.LEADER },
   { value: "technical_agent", label: "Technical Agent", role: "agent", department: "Technical", level: LEVEL.AGENT },
   { value: "technical_leader", label: "Technical Team Leader", role: "leader", department: "Technical", level: LEVEL.LEADER },
   { value: "complaint_agent", label: "Complaint Team Agent", role: "agent", department: "Complaints", level: LEVEL.AGENT },
