@@ -1772,6 +1772,20 @@ export class DB {
     return rows;
   }
 
+  // Remove duplicate survey records — keeps the earliest row per
+  // (record_type, order_id); only dedupes rows that carry an order_id.
+  static async dedupeSurveyRecords(): Promise<number> {
+    const res = await pool.query(`
+      DELETE FROM survey_records a USING survey_records b
+      WHERE a.id > b.id
+        AND a.record_type = b.record_type
+        AND a.order_id IS NOT NULL AND a.order_id <> ''
+        AND a.order_id = b.order_id
+        AND COALESCE(a.phone,'') = COALESCE(b.phone,'')
+    `);
+    return res.rowCount ?? 0;
+  }
+
   // ----------------------------------------------------
   // Feedback dashboard — aggregated Ratings + Surveys analytics
   // fromISO/toISO are UTC ISO strings (or null for all-time).

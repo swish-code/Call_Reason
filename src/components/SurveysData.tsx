@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SurveyRecord, SurveyRecordType, Brand } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Database, RefreshCw, AlertCircle } from "lucide-react";
+import { Database, RefreshCw, AlertCircle, Copy } from "lucide-react";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 
 interface SurveysDataProps { currentUser: User; }
@@ -84,6 +84,14 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
 
   useEffect(() => { fetchRecords(); }, [fetchRecords]);
 
+  const isAdmin = currentUser.role === 'admin';
+  const dedupe = async () => {
+    if (!window.confirm("Remove duplicate survey records?\nKeeps one row per order (same type + order id).")) return;
+    const res = await apiFetch('/api/survey-records/dedupe', { method: 'POST' });
+    if (res.ok) { const d = await res.json(); fetchRecords(); alert(`${d.removed} duplicate record(s) removed.`); }
+    else { const d = await res.json().catch(() => ({})); setError(d.error || "Failed."); }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
       {/* Header */}
@@ -105,6 +113,15 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+          {isAdmin && (
+            <button
+              onClick={dedupe}
+              title="Remove duplicate records"
+              className="px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-500 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+            >
+              <Copy className="w-4 h-4" /> Remove duplicates
+            </button>
+          )}
           <SurveyDataUploadButton currentUser={currentUser} onUploaded={fetchRecords} />
         </div>
       </div>

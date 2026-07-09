@@ -2352,6 +2352,13 @@ app.get("/api/survey-records", authenticateJWT, asyncHandler(async (req: any, re
   }));
 }));
 
+// Remove duplicate survey records (admin only)
+app.post("/api/survey-records/dedupe", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
+  const removed = await DB.dedupeSurveyRecords();
+  res.json({ removed });
+}));
+
 // ----------------------------------------------------
 // Mounting Vite Server Middleware
 // ----------------------------------------------------
