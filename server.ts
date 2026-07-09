@@ -1901,6 +1901,13 @@ app.get("/api/ratings/uploaded-count", authenticateJWT, asyncHandler(async (req:
   res.json({ count: await DB.countRatingsUploadedBetween(fromISO, toISO) });
 }));
 
+// Re-apply the rate rule to existing reviews (admin only): 1-3 => Complaint Recorded, 4-5 => No Action Required
+app.post("/api/ratings/recompute-status", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
+  const n = await DB.recomputeRatingStatusByRate();
+  res.json({ updated: n });
+}));
+
 // Bulk-assign several reviews to one agent (assigners only)
 app.post("/api/ratings/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))
