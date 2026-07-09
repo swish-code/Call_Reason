@@ -1856,7 +1856,7 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
     assigned_agent_id: isAgent || assigned === "me" ? req.user.id : undefined,
     min_rating: min_rating ? Number(min_rating) : undefined,
     max_rating: max_rating ? Number(max_rating) : undefined,
-    limit: 200,
+    limit: Math.min(Number(req.query.limit) || 5000, 20000),
   });
   res.json(ratings);
 }));
