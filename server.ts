@@ -1730,9 +1730,6 @@ const pick = (row: Record<string, any>, ...names: string[]): string => {
 
 const normalisePhone = (p: string): string => p ? p.replace(/[\s\-\(\)\.]/g, "").replace(/^00/, "+") : "";
 
-const computeRequiresAction = (rating: number, review: string): boolean =>
-  rating <= 3 || (rating >= 4 && review.trim().length > 0);
-
 // Normalise a spreadsheet date cell to YYYY-MM-DD. Handles Excel serial
 // numbers (days since 1899-12-30) and ordinary date strings; leaves other
 // text untouched so free-form values survive.
@@ -1813,8 +1810,9 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       if (!platform_id) { result.errors.push({ row: lineNum, message: `Unknown platform: ${platformName}` }); continue; }
 
       const review_text = pick(r, "Customer Comment");
-      const requires_action = computeRequiresAction(ratingVal, review_text);
-      const action_status = requires_action ? "pending" : "no_action_needed";
+      // On upload: rate 1-3 => Complaint Recorded (resolved); rate 4-5 => No Action Required
+      const requires_action = ratingVal <= 3;
+      const action_status = requires_action ? "resolved" : "no_action_needed";
 
       const outcome = await DB.upsertRating({
         brand_id, platform_id, order_id: orderId, rating: ratingVal,
