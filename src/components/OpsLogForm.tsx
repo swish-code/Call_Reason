@@ -13,6 +13,7 @@ const DEPT_TO_LOGTYPE: Record<string, LogType> = {
   "Call Center": "call_center",
   "Technical": "technical",
   "Complaints": "complaint",
+  "Quality": "quality",
 };
 
 const FIELD_META: Record<string, { label: string; type: "text" | "textarea" | "date" | "brand" | "branch" | "aggregator" | "agent" }> = {
