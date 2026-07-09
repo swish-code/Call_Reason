@@ -336,8 +336,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
 
   // Row selection for bulk assign
   const toggleSelect = (id: string) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
-  const allSelected = ratings.length > 0 && selected.length === ratings.length;
-  const toggleSelectAll = () => setSelected(allSelected ? [] : ratings.map(r => r.id));
+  const selectAllFiltered = () => setSelected(ratings.map(r => r.id));
 
   const patchStatus = async (status: string) => {
     if (!detail) return;
@@ -355,6 +354,11 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const totalPages = Math.max(1, Math.ceil(ratings.length / PAGE_SIZE));
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = ratings.slice(pageStart, pageStart + PAGE_SIZE);
+
+  // Header checkbox selects the CURRENT page; selections persist across pages
+  const pageIds = paged.map(r => r.id);
+  const pageAllSelected = pageIds.length > 0 && pageIds.every(id => selected.includes(id));
+  const toggleSelectPage = () => setSelected(s => pageAllSelected ? s.filter(id => !pageIds.includes(id)) : Array.from(new Set([...s, ...pageIds])));
   const pageItems: (number | '…')[] = (() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const items: (number | '…')[] = [1];
@@ -461,8 +465,13 @@ export default function Reviews({ currentUser }: ReviewsProps) {
 
       {/* Bulk-assign action bar */}
       {canAssign && selected.length > 0 && (
-        <div className="flex items-center gap-3 p-3 px-4 bg-violet-500/10 border border-violet-500/20 rounded-2xl">
+        <div className="flex items-center gap-3 p-3 px-4 bg-violet-500/10 border border-violet-500/20 rounded-2xl flex-wrap">
           <span className="text-xs font-extrabold text-violet-400">{selected.length} selected</span>
+          {selected.length < ratings.length && (
+            <button onClick={selectAllFiltered} className="px-2.5 py-1.5 text-[11px] font-bold text-violet-500 hover:text-violet-400 underline underline-offset-2 transition">
+              Select all {ratings.length}
+            </button>
+          )}
           <button onClick={openBulkAssign} className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[11px] font-bold transition active:scale-95">
             Assign selected
           </button>
@@ -490,7 +499,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 <tr>
                   {canAssign && (
                     <th className="p-4">
-                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" title="Select all" />
+                      <input type="checkbox" checked={pageAllSelected} onChange={toggleSelectPage} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" title="Select this page" />
                     </th>
                   )}
                   <th className="p-4">Date</th>
