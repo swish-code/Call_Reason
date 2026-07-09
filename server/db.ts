@@ -45,15 +45,15 @@ const SEED_USERS: User[] = [
 
 // Company brands and the branches that belong to each (branches are per-brand)
 const BRAND_BRANCHES: Record<string, string[]> = {
-  "Yelo": ["Adaliya", "Khairan", "Jaber Al Ahmed", "Sabah Al Salem", "Vibes", "Qortuba", "Abdullah Al Salem (Dahiya)", "Fahaheel", "Jleeb Al Shuyoukh", "Egaila", "Salmiya", "Jabriya", "Ishbiliya", "Sabah Al Ahmed", "Ardhiya", "Maidan Hawally", "Yard", "Jahra", "Salwa", "Zahra", "Saad Al Abdullah", "Qurain", "Andalous"],
-  "Shakir": ["Rai", "Qurain", "Salmiya", "Kuwait City", "Jahra", "Ardhiya", "Egaila", "Hawally", "Sabah Al Ahmed", "Bayan"],
+  "Yelo Pizza": ["Adaliya", "Khairan", "Jaber Al Ahmed", "Sabah Al Salem", "Vibes", "Qortuba", "Abdullah Al Salem (Dahiya)", "Fahaheel", "Jleeb Al Shuyoukh", "Egaila", "Salmiya", "Jabriya", "Ishbiliya", "Sabah Al Ahmed", "Ardhiya", "Maidan Hawally", "Yard", "Jahra", "Salwa", "Zahra", "Saad Al Abdullah", "Qurain", "Andalous"],
+  "Shawarma Shakir": ["Rai", "Qurain", "Salmiya", "Kuwait City", "Jahra", "Ardhiya", "Egaila", "Hawally", "Sabah Al Ahmed", "Bayan"],
   "BBT": ["Shamiya", "Hilltop", "West Mishref", "Yard", "Salmiya", "Ardhiya", "Jahra", "Adaliya", "Shuhada", "Mangaf", "Saad Al Abdullah", "Sabah Al Ahmed", "Bayan", "Khairan", "Um Al Hyman"],
   "Slice": ["Mishref", "Kuwait City", "Yard", "Adaliya", "Jabriya", "Ardhiya", "Jahra", "Salmiya"],
-  "Pattie": ["Adaliya", "Mishref", "Ardhiya", "Jahra", "Salmiya", "Yard", "Hawally"],
+  "Pattie Pattie": ["Adaliya", "Mishref", "Ardhiya", "Jahra", "Salmiya", "Yard", "Hawally"],
   "Just C": ["Qortuba", "Yard"],
-  "Chili": ["Qortuba", "Yard", "Hawally"],
+  "Chili Pepper": ["Qortuba", "Yard", "Hawally"],
   "Mishmash": ["Ardhiya", "Kaifan", "Mahboula", "Jabriya", "Sabah Al Salem", "Saad Al Abdullah", "Salmiya", "Khaithan", "Mangaf", "West Abdullah Al Mubarak", "Salwa", "Qadsiya", "Qurain", "Khairan"],
-  "Table": ["Ardhiya", "Qortuba", "Hawally", "Sabah Al Salem", "Salmiya", "Bneid Al Qar", "Mahboula", "Jahra", "Ahmadi", "Khairan"],
+  "Tabel": ["Ardhiya", "Qortuba", "Hawally", "Sabah Al Salem", "Salmiya", "Bneid Al Qar", "Mahboula", "Jahra", "Ahmadi", "Khairan"],
   "FM": ["Yard", "Kuwait City", "Hawally", "Khaithan"],
 };
 
@@ -556,6 +556,22 @@ export class DB {
       for (const br of SEED_BRANCHES) {
         await pool.query("INSERT INTO branches (id, branch_name, brand) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING", [br.id, br.branch_name, br.brand ?? null]);
       }
+    }
+
+    // Rename brands to their full names (match the source review files). Safe:
+    // ratings/logs reference brands by id, so only the display name changes.
+    const brandRenames: [string, string][] = [
+      ["Shakir", "Shawarma Shakir"],
+      ["Yelo", "Yelo Pizza"],
+      ["Pattie", "Pattie Pattie"],
+      ["Chili", "Chili Pepper"],
+      ["Table", "Tabel"],
+    ];
+    for (const [oldName, newName] of brandRenames) {
+      await pool.query(
+        "UPDATE brands SET brand_name = $1 WHERE brand_name = $2 AND NOT EXISTS (SELECT 1 FROM brands WHERE brand_name = $1)",
+        [newName, oldName]
+      );
     }
 
     // Seed each dropdown list once (idempotent per list_key, so new lists added
