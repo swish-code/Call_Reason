@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SurveyCampaign, SurveyTemplate, Brand } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 import {
   Megaphone, RefreshCw, Plus, X, AlertCircle, Upload, FileDown, Users, Ban,
 } from "lucide-react";
@@ -241,6 +242,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+          <SurveyDataUploadButton currentUser={currentUser} />
           {isLeader && (
             <button
               onClick={() => { setShowRequest(true); setReqError(""); }}
