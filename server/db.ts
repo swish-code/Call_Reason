@@ -1320,17 +1320,6 @@ export class DB {
     return res.rowCount ?? 0;
   }
 
-  // Re-apply the rate rule (1-3 => resolved, 4-5 => no_action_needed) to records
-  // not yet manually recorded, so an agent's finalized work is preserved.
-  static async recomputeRatingStatusByRate(): Promise<number> {
-    const res = await pool.query(`
-      UPDATE ratings SET
-        action_status = CASE WHEN rating <= 3 THEN 'resolved' ELSE 'no_action_needed' END,
-        requires_action = (rating <= 3)
-      WHERE recorded_by IS NULL`);
-    return res.rowCount ?? 0;
-  }
-
   static async countRatingsUploadedBetween(fromISO: string, toISO: string): Promise<number> {
     const { rows } = await pool.query<{ c: string }>(
       "SELECT COUNT(*)::int AS c FROM ratings WHERE uploaded_at >= $1 AND uploaded_at <= $2", [fromISO, toISO]);

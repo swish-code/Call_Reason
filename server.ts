@@ -1730,6 +1730,19 @@ const pick = (row: Record<string, any>, ...names: string[]): string => {
 
 const normalisePhone = (p: string): string => p ? p.replace(/[\s\-\(\)\.]/g, "").replace(/^00/, "+") : "";
 
+// Map a free-text status cell from the upload file to an action_status.
+// Returns null when the cell is empty/unrecognised.
+const mapUploadStatus = (raw: string): string | null => {
+  const s = (raw || "").toLowerCase().trim();
+  if (!s) return null;
+  if (s.includes("complaint") || s.includes("record")) return "resolved";
+  if (s.includes("no action") || s.includes("no_action") || s === "none" || s === "na" || s === "n/a") return "no_action_needed";
+  if (s.includes("unreach")) return "unreachable";
+  if (s.includes("progress")) return "in_progress";
+  if (s.includes("pending")) return "pending";
+  return null;
+};
+
 // Normalise a spreadsheet date cell to YYYY-MM-DD. Handles Excel serial
 // numbers (days since 1899-12-30) and ordinary date strings; leaves other
 // text untouched so free-form values survive.
@@ -1764,7 +1777,7 @@ const requireUpload = async (req: any, res: any, next: any) => {
 
 // Excel template (returns base64 xlsx)
 app.get("/api/ratings/template", authenticateJWT, requireUpload, asyncHandler(async (_req, res) => {
-  const headers = ["Date","Restaurant","Platform","Customer Name","Phone Number","Branch","Order ID","Customer Comment","Rate","Served By","Following Date","Surveyed By","Type of Complaint","Complaint Cases","Note"];
+  const headers = ["Date","Restaurant","Platform","Customer Name","Phone Number","Branch","Order ID","Customer Comment","Rate","Served By","Status","Following Date","Surveyed By","Type of Complaint","Complaint Cases","Note"];
   const ws = XLSX.utils.aoa_to_sheet([headers]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Ratings");
@@ -1810,9 +1823,9 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       if (!platform_id) { result.errors.push({ row: lineNum, message: `Unknown platform: ${platformName}` }); continue; }
 
       const review_text = pick(r, "Customer Comment");
-      // On upload: rate 1-3 => Complaint Recorded (resolved); rate 4-5 => No Action Required
-      const requires_action = ratingVal <= 3;
-      const action_status = requires_action ? "resolved" : "no_action_needed";
+      // Status per row from the file's Status column; blank/unknown => Pending.
+      const action_status = mapUploadStatus(pick(r, "Status", "Action Status", "Case Status", "Action")) || "pending";
+      const requires_action = action_status !== "no_action_needed";
 
       const outcome = await DB.upsertRating({
         brand_id, platform_id, order_id: orderId, rating: ratingVal,
@@ -1899,13 +1912,6 @@ app.get("/api/ratings/uploaded-count", authenticateJWT, asyncHandler(async (req:
   const fromISO = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0) - KW_OFFSET_MS).toISOString();
   const toISO = new Date(Date.UTC(y, mo - 1, d, 23, 59, 59) - KW_OFFSET_MS).toISOString();
   res.json({ count: await DB.countRatingsUploadedBetween(fromISO, toISO) });
-}));
-
-// Re-apply the rate rule to existing reviews (admin only): 1-3 => Complaint Recorded, 4-5 => No Action Required
-app.post("/api/ratings/recompute-status", authenticateJWT, asyncHandler(async (req: any, res) => {
-  if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
-  const n = await DB.recomputeRatingStatusByRate();
-  res.json({ updated: n });
 }));
 
 // Bulk-assign several reviews to one agent (assigners only)

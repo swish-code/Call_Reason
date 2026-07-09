@@ -321,13 +321,6 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     if (res.ok) { const dt = await res.json(); setPurgeCount(dt.count); }
   };
   const openPurge = () => { const t = kwToday(); setPurgeDate(t); setPurgeOpen(true); fetchPurgeCount(t); };
-
-  const recomputeStatuses = async () => {
-    if (!window.confirm("Apply the rate rule to all reviews?\nRate 1-3 → Complaint Recorded, 4-5 → No Action Required.\n(Records already recorded by an agent are kept.)")) return;
-    const res = await apiFetch('/api/ratings/recompute-status', { method: 'POST' });
-    if (res.ok) { const dt = await res.json(); fetchRatings(); alert(`${dt.updated} review(s) updated.`); }
-    else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Failed."); }
-  };
   const doPurge = async () => {
     if (!purgeDate) return;
     setPurging(true);
@@ -413,22 +406,13 @@ export default function Reviews({ currentUser }: ReviewsProps) {
             </>
           )}
           {isAdmin && (
-            <>
-              <button
-                onClick={recomputeStatuses}
-                title="Apply rate rule to existing reviews"
-                className="px-4 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-500 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
-              >
-                <RefreshCw className="w-4 h-4" /> Apply status by rate
-              </button>
-              <button
-                onClick={openPurge}
-                title="Delete uploads by date"
-                className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
-              >
-                <Trash2 className="w-4 h-4" /> Purge by date
-              </button>
-            </>
+            <button
+              onClick={openPurge}
+              title="Delete uploads by date"
+              className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+            >
+              <Trash2 className="w-4 h-4" /> Purge by date
+            </button>
           )}
         </div>
       </div>
