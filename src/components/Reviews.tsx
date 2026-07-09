@@ -307,6 +307,33 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Delete failed."); }
   };
 
+  // Purge all reviews uploaded on a chosen Kuwait day (admin only)
+  const kwToday = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeDate, setPurgeDate] = useState(kwToday());
+  const [purgeCount, setPurgeCount] = useState<number | null>(null);
+  const [purging, setPurging] = useState(false);
+
+  const fetchPurgeCount = async (date: string) => {
+    setPurgeCount(null);
+    if (!date) return;
+    const res = await apiFetch(`/api/ratings/uploaded-count?date=${date}`);
+    if (res.ok) { const dt = await res.json(); setPurgeCount(dt.count); }
+  };
+  const openPurge = () => { const t = kwToday(); setPurgeDate(t); setPurgeOpen(true); fetchPurgeCount(t); };
+  const doPurge = async () => {
+    if (!purgeDate) return;
+    setPurging(true);
+    const res = await apiFetch('/api/ratings/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploaded_on: purgeDate }),
+    });
+    setPurging(false);
+    if (res.ok) { setPurgeOpen(false); setSelected([]); fetchRatings(); }
+    else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Delete failed."); }
+  };
+
   // Row selection for bulk assign
   const toggleSelect = (id: string) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const allSelected = ratings.length > 0 && selected.length === ratings.length;
@@ -377,6 +404,15 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 <Upload className="w-4 h-4" /> Upload
               </button>
             </>
+          )}
+          {isAdmin && (
+            <button
+              onClick={openPurge}
+              title="Delete uploads by date"
+              className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+            >
+              <Trash2 className="w-4 h-4" /> Purge by date
+            </button>
           )}
         </div>
       </div>
@@ -590,6 +626,39 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Purge-by-date Modal (admin) */}
+      {purgeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
+              <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-400" /> Delete Uploads by Date
+              </h3>
+              <button onClick={() => setPurgeOpen(false)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-[var(--muted)] uppercase">Upload date (Kuwait)</label>
+              <input type="date" value={purgeDate} max={kwToday()} onChange={e => { setPurgeDate(e.target.value); fetchPurgeCount(e.target.value); }} className={inputCls + " w-full"} />
+            </div>
+            <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-300">
+              {purgeCount === null
+                ? 'Counting…'
+                : purgeCount === 0
+                  ? 'No reviews were uploaded on this date.'
+                  : <>This will permanently delete <span className="font-extrabold">{purgeCount}</span> review(s) uploaded on {purgeDate}. This cannot be undone.</>}
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setPurgeOpen(false)} className="flex-1 px-4 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] rounded-xl text-xs font-bold hover:bg-[var(--surface-2)] transition">Cancel</button>
+              <button onClick={doPurge} disabled={purging || !purgeCount} className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition">
+                {purging ? 'Deleting…' : `Delete ${purgeCount || 0}`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

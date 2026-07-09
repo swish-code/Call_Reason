@@ -1870,14 +1870,32 @@ app.get("/api/feedback/dashboard", authenticateJWT, asyncHandler(async (req: any
   res.json(await DB.getFeedbackDashboard(fromISO, toISO));
 }));
 
-// Delete one or more reviews (admin only)
+// Delete reviews (admin only) — by ids, or all uploaded on a given Kuwait day
 app.post("/api/ratings/delete", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
-  const { ids } = req.body;
+  const { ids, uploaded_on } = req.body;
+  if (typeof uploaded_on === "string" && uploaded_on) {
+    const [y, mo, d] = uploaded_on.split("-").map(Number);
+    const fromISO = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0) - KW_OFFSET_MS).toISOString();
+    const toISO = new Date(Date.UTC(y, mo - 1, d, 23, 59, 59) - KW_OFFSET_MS).toISOString();
+    const n = await DB.deleteRatingsUploadedBetween(fromISO, toISO);
+    return res.json({ deleted: n });
+  }
   if (!Array.isArray(ids) || ids.length === 0)
     return res.status(400).json({ error: "No reviews selected." });
   const n = await DB.deleteRatings(ids);
   res.json({ deleted: n });
+}));
+
+// Count reviews uploaded on a given Kuwait day (admin — used to confirm bulk purge)
+app.get("/api/ratings/uploaded-count", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
+  const day = typeof req.query.date === "string" ? req.query.date : "";
+  if (!day) return res.status(400).json({ error: "date is required." });
+  const [y, mo, d] = day.split("-").map(Number);
+  const fromISO = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0) - KW_OFFSET_MS).toISOString();
+  const toISO = new Date(Date.UTC(y, mo - 1, d, 23, 59, 59) - KW_OFFSET_MS).toISOString();
+  res.json({ count: await DB.countRatingsUploadedBetween(fromISO, toISO) });
 }));
 
 // Bulk-assign several reviews to one agent (assigners only)

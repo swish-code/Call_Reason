@@ -1304,6 +1304,18 @@ export class DB {
     return res.rowCount ?? 0;
   }
 
+  static async countRatingsUploadedBetween(fromISO: string, toISO: string): Promise<number> {
+    const { rows } = await pool.query<{ c: string }>(
+      "SELECT COUNT(*)::int AS c FROM ratings WHERE uploaded_at >= $1 AND uploaded_at <= $2", [fromISO, toISO]);
+    return Number(rows[0]?.c || 0);
+  }
+
+  static async deleteRatingsUploadedBetween(fromISO: string, toISO: string): Promise<number> {
+    const res = await pool.query(
+      "DELETE FROM ratings WHERE uploaded_at >= $1 AND uploaded_at <= $2", [fromISO, toISO]);
+    return res.rowCount ?? 0;
+  }
+
   static async addCallAttempt(data: {
     rating_id: string; agent_id: string; agent_name: string; outcome: string; note?: string;
   }): Promise<any> {
