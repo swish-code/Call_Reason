@@ -914,8 +914,13 @@ app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =
     if (!log_type) return res.status(400).json({ error: "Your account is not assigned to a valid department." });
     dept = department; agent_id = id; agent_name = full_name;
   } else if (role === "leader") {
-    // Call Center TL logs coaching/management (team_leader); other dept TLs log their dept type
-    log_type = department === "Call Center" ? "team_leader" : (DEPT_TO_LOGTYPE[department] || "team_leader");
+    // Leaders may log their department type OR a Team Leader (coaching) log.
+    const deptType = DEPT_TO_LOGTYPE[department];
+    const allowed = ["team_leader", ...(deptType ? [deptType] : [])];
+    const requested = body.log_type;
+    log_type = (requested && allowed.includes(requested))
+      ? requested
+      : (department === "Call Center" ? "team_leader" : (deptType || "team_leader"));
     dept = department || "Call Center"; agent_id = id; agent_name = full_name;
   } else {
     log_type = body.log_type || "call_center";

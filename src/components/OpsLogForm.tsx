@@ -47,6 +47,12 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
   const [logType, setLogType] = useState<LogType>(initialType);
   const cfg = LOG_TYPE_CONFIG[logType];
 
+  // Leaders may switch between their department log and the Team Leader (coaching) log
+  const leaderChoices: LogType[] = isLeader
+    ? (Array.from(new Set([(DEPT_TO_LOGTYPE[currentUser.department || ""] as LogType) || "call_center", "team_leader"])) as LogType[])
+    : [];
+  const canPickType = (canChoose || (isLeader && leaderChoices.length > 1)) && !editing;
+
   const [activity, setActivity] = useState(editLog?.activity_type || "");
   const [status, setStatus] = useState(editLog?.status || "");
   const [durationMin, setDurationMin] = useState(editLog?.duration_seconds ? String(Math.round(editLog.duration_seconds / 60)) : "");
@@ -119,7 +125,7 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     if (cfg.statusKey) payload.status = status;
     payload.duration_seconds = durationMin ? Math.max(0, Math.round(Number(durationMin) * 60)) : 0;
     cfg.fields.forEach((f) => { if (values[f]) payload[f] = values[f]; });
-    if (canChoose) { payload.log_type = logType; payload.department = cfg.department || currentUser.department; }
+    if (canChoose || isLeader) { payload.log_type = logType; payload.department = cfg.department || currentUser.department; }
 
     try {
       setLoading(true);
@@ -187,12 +193,12 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
 
       {error && (<div className="flex bg-rose-500/10 border border-rose-500/20 text-rose-300 p-4 rounded-2xl text-xs gap-2 items-center"><AlertCircle className="w-5 h-5 shrink-0" /><p className="font-bold">{error}</p></div>)}
 
-      {/* Admin picks the log type */}
-      {canChoose && !editing && (
+      {/* Admin picks any log type; leaders switch between their dept log and Team Leader log */}
+      {canPickType && (
         <div className="space-y-1.5">
           <label className="text-xs font-bold text-[var(--text)]">Log Type:</label>
           <select value={logType} onChange={(e) => setLogType(e.target.value as LogType)} className={selectCls}>
-            {(Object.keys(LOG_TYPE_CONFIG) as LogType[]).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}
+            {(canChoose ? (Object.keys(LOG_TYPE_CONFIG) as LogType[]) : leaderChoices).map((t) => <option key={t} value={t}>{LOG_TYPE_CONFIG[t].title}</option>)}
           </select>
         </div>
       )}
