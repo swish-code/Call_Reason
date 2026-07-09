@@ -436,13 +436,21 @@ export class DB {
       CREATE INDEX IF NOT EXISTS idx_cc_phone ON customer_contacts(phone_number);
     `);
 
-    // Seed default platforms (idempotent)
-    for (const [idx2, name] of ["Talabat", "Keeta", "Google", "Instagram", "TripAdvisor"].entries()) {
+    // Seed default platforms (idempotent). Fixed ids so re-seeding never
+    // collides on the UNIQUE name after a platform is removed from this list.
+    for (const [id, name] of [["plat-1", "Talabat"], ["plat-2", "Keeta"], ["plat-5", "TripAdvisor"]]) {
       await pool.query(
         "INSERT INTO platforms (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING",
-        [`plat-${idx2 + 1}`, name]
+        [id, name]
       );
     }
+    // Remove platforms that were seeded before but are no longer wanted,
+    // only if no rating/survey record references them.
+    await pool.query(`
+      DELETE FROM platforms WHERE name IN ('Google','Instagram')
+        AND NOT EXISTS (SELECT 1 FROM ratings r WHERE r.platform_id = platforms.id)
+        AND NOT EXISTS (SELECT 1 FROM survey_records sr WHERE sr.platform_id = platforms.id)
+    `);
 
     // Migrations for databases created before newer features
     await pool.query(`
