@@ -171,6 +171,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     username: user.username,
     email: user.email,
     role: user.role,
+    level: user.level ?? roleDefaultLevel(user.role),
+    job_title: user.job_title,
     team: user.team,
     department: user.department,
     status: user.status,
