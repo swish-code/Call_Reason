@@ -106,56 +106,73 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
     return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${s}s`;
   };
 
-  // Export the whole dashboard (respecting the active filter) to a multi-sheet Excel file
-  const exportExcel = () => {
-    if (!d) return;
-    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const rangeLabel = (from || to)
-      ? `${from || "start"}${fromTime ? " " + fromTime : ""} -> ${to || "today"}${toTime ? " " + toTime : ""}`
-      : "All time";
-    const wb = XLSX.utils.book_new();
+  // Export the dashboard to Excel — always fetches fresh data for the CURRENT
+  // filter inputs, so the sheet reflects the filter even if Apply wasn't clicked.
+  const exportExcel = async () => {
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      if (from && fromTime) qs.set("from_time", fromTime);
+      if (to && toTime) qs.set("to_time", toTime);
+      if (shiftWeeksAgo) qs.set("shift_weeks_ago", String(shiftWeeksAgo));
+      const res = await apiFetch(`/api/logs/dashboard${qs.toString() ? `?${qs}` : ""}`);
+      if (!res.ok) throw new Error("Export failed.");
+      const ex: DashData = await res.json();
 
-    const summary = [
-      ["Dashboard Export"],
-      ["Department", d.department || "All departments"],
-      ["Filter range", rangeLabel],
-      ["Generated", new Date().toLocaleString()],
-      [],
-      ["Metric", "Value"],
-      ["Total Logs", d.totalLogs],
-      ["Open Tasks", d.open],
-      ["Pending", d.pending],
-      ["Closed Tasks", d.completed],
-      ["Complaint Resolution %", d.complaintResolutionRate],
-      ["Coaching Sessions", d.coachingSessions],
-      ["Avg Handling Time", fmtDur(d.avgHandlingSeconds)],
-      ["Total Time Logged", fmtDur(d.totalHandlingSeconds)],
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
+      const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const rangeLabel = (from || to)
+        ? `${from || "start"}${fromTime ? " " + fromTime : ""} -> ${to || "today"}${toTime ? " " + toTime : ""}`
+        : "All time";
+      const wb = XLSX.utils.book_new();
 
-    const addBar = (name: string, rows: { name: string; count: number }[]) => {
-      const aoa: any[][] = [["Name", "Count"], ...rows.map((r) => [r.name, r.count])];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
-    };
-    addBar("Agent Productivity", d.agentProductivity);
-    addBar("Logs by Activity", d.byActivity);
-    addBar("Technical Status", d.technicalStatus);
+      const summary = [
+        ["Dashboard Export"],
+        ["Department", ex.department || "All departments"],
+        ["Filter range", rangeLabel],
+        ["Generated", new Date().toLocaleString()],
+        [],
+        ["Metric", "Value"],
+        ["Total Logs", ex.totalLogs],
+        ["Open Tasks", ex.open],
+        ["Pending", ex.pending],
+        ["Closed Tasks", ex.completed],
+        ["Complaint Resolution %", ex.complaintResolutionRate],
+        ["Coaching Sessions", ex.coachingSessions],
+        ["Avg Handling Time", fmtDur(ex.avgHandlingSeconds)],
+        ["Total Time Logged", fmtDur(ex.totalHandlingSeconds)],
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
 
-    const deptAoa: any[][] = [["Department", "Staff", "Avg to date", "Avg / week"],
-      ...d.deptPerformance.map((dp) => [dp.name, dp.count, dp.count ? fmtDur(dp.avgToDateSeconds) : "—", dp.count ? fmtDur(dp.avgWeekSeconds) : "—"])];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(deptAoa), "Department Perf");
+      const addBar = (name: string, rows: { name: string; count: number }[]) => {
+        const aoa: any[][] = [["Name", "Count"], ...rows.map((r) => [r.name, r.count])];
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+      };
+      addBar("Agent Productivity", ex.agentProductivity);
+      addBar("Logs by Activity", ex.byActivity);
+      addBar("Technical Status", ex.technicalStatus);
 
-    const trend: any[][] = [["Date", "Logs"], ...d.trend.map((t) => [t.date, t.count])];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(trend), "7-Day Trend");
+      const deptAoa: any[][] = [["Department", "Staff", "Avg to date", "Avg / week"],
+        ...ex.deptPerformance.map((dp) => [dp.name, dp.count, dp.count ? fmtDur(dp.avgToDateSeconds) : "—", dp.count ? fmtDur(dp.avgWeekSeconds) : "—"])];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(deptAoa), "Department Perf");
 
-    if (d.shiftByAgent && d.shiftByAgent.length) {
-      const days = d.shiftByAgent[0].days;
-      const header = ["Agent", ...days.map((dd) => `${dayLabels[new Date(dd.date + "T00:00:00").getDay()]} ${dd.date.slice(5)}`), "Total"];
-      const body = d.shiftByAgent.map((a) => [a.name, ...a.days.map((dd) => dd.seconds > 0 ? `${fmtDur(dd.seconds)} (${dd.count})` : ""), fmtDur(a.week)]);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...body]), "Shift Hours");
+      const trend: any[][] = [["Date", "Logs"], ...ex.trend.map((t) => [t.date, t.count])];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(trend), "7-Day Trend");
+
+      if (ex.shiftByAgent && ex.shiftByAgent.length) {
+        const days = ex.shiftByAgent[0].days;
+        const header = ["Agent", ...days.map((dd) => `${dayLabels[new Date(dd.date + "T00:00:00").getDay()]} ${dd.date.slice(5)}`), "Total"];
+        const body = ex.shiftByAgent.map((a) => [a.name, ...a.days.map((dd) => dd.seconds > 0 ? `${fmtDur(dd.seconds)} (${dd.count})` : ""), fmtDur(a.week)]);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([header, ...body]), "Shift Hours");
+      }
+
+      XLSX.writeFile(wb, `dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e: any) {
+      setError(e.message || "Export failed.");
+    } finally {
+      setLoading(false);
     }
-
-    XLSX.writeFile(wb, `dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
   const Card = ({ label, value, icon: Icon, tone }: { label: string; value: any; icon: any; tone: string }) => (
     <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl flex items-center gap-4">
