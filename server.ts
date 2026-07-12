@@ -755,10 +755,15 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
     const kwTodayStr = kuwaitToday().date;
     // Shift the 7-day window back by whole weeks (0 = current week)
     const weeksAgo = Math.max(0, Math.floor(Number(req.query.shift_weeks_ago) || 0));
-    const anchor = now - weeksAgo * 7 * 86400000;
+    // Calendar week starting on SUNDAY (Kuwait), shifted back by whole weeks.
+    const wkStart = new Date(now + KW_OFFSET_MS);
+    wkStart.setUTCHours(0, 0, 0, 0);
+    wkStart.setUTCDate(wkStart.getUTCDate() - wkStart.getUTCDay() - weeksAgo * 7); // back to Sunday
     const last7: string[] = [];
-    for (let i = 6; i >= 0; i--) {
-      last7.push(new Date(anchor - i * 86400000 + KW_OFFSET_MS).toISOString().slice(0, 10));
+    for (let i = 0; i < 7; i++) {
+      const dd = new Date(wkStart);
+      dd.setUTCDate(wkStart.getUTCDate() + i);
+      last7.push(dd.toISOString().slice(0, 10));
     }
     const last7Set = new Set(last7);
 
