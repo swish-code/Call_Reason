@@ -10,7 +10,9 @@ interface SurveyCampaignsProps { currentUser: User; }
 interface Agent { id: string; full_name: string; role: string; }
 interface NumbersResult {
   total: number; inserted: number; duplicates_file: number;
-  duplicates_10day: number; already_queued: number; errors: { row: number; message: string }[];
+  duplicates_10day: number; already_queued: number;
+  scheduled?: { date: string; count: number }[]; first_date?: string; today_full?: boolean; daily_limit?: number;
+  errors: { row: number; message: string }[];
 }
 
 const KW_MS = 3 * 60 * 60 * 1000;
@@ -487,6 +489,23 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                   <span className="text-[var(--muted)]">Dup (10-day):</span><span className="font-bold">{numbersResult.duplicates_10day}</span>
                   <span className="text-[var(--muted)]">Already queued:</span><span className="font-bold">{numbersResult.already_queued}</span>
                 </div>
+                {numbersResult.today_full && (
+                  <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-[11px] text-amber-400 font-bold">
+                    Today is full ({numbersResult.daily_limit}/day). Numbers start on {numbersResult.first_date}.
+                  </div>
+                )}
+                {numbersResult.scheduled && numbersResult.scheduled.length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    <p className="text-[11px] font-bold text-[var(--muted)]">Scheduled across days</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {numbersResult.scheduled.map(s => (
+                        <span key={s.date} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          {s.date.slice(5)}: {s.count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {numbersResult.errors.length > 0 && (
                   <div className="mt-2 space-y-1">
                     <p className="text-[11px] font-bold text-rose-400">Errors ({numbersResult.errors.length})</p>

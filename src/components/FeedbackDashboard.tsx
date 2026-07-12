@@ -10,6 +10,8 @@ interface FeedbackData {
   ratings: {
     total: number; avgRating: number; needsAction: number; resolved: number; unreachable: number; resolutionRate: number;
     byStatus: NC[]; byRating: NC[]; byBrand: NC[]; byPlatform: NC[];
+    platformPerf: { name: string; count: number; avg: number }[];
+    brandPerf: { name: string; count: number; avg: number }[];
     byAgent: { name: string; assigned: number; done: number }[];
   };
   surveys: {
@@ -95,6 +97,29 @@ export default function FeedbackDashboard({ currentUser }: Props) {
     );
   };
 
+  const PerfTable = ({ title, icon: Icon, rows }: { title: string; icon: any; rows: { name: string; count: number; avg: number }[] }) => {
+    const starColor = (a: number) => a >= 4 ? 'text-emerald-400' : a >= 3 ? 'text-amber-400' : 'text-rose-400';
+    return (
+      <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+        <h3 className="text-sm font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Icon className="w-4 h-4 text-blue-400" /> {title}</h3>
+        {rows.length === 0 ? <div className="text-center py-6 text-[var(--muted)] text-xs">No data yet.</div> : (
+          <table className="w-full text-xs">
+            <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]"><th className="text-left py-2">Name</th><th className="text-center py-2">Reviews</th><th className="text-center py-2">Avg</th></tr></thead>
+            <tbody>
+              {rows.map((x) => (
+                <tr key={x.name} className="border-b border-[var(--border)]/40 last:border-0">
+                  <td className="py-2 font-bold text-[var(--heading)] truncate max-w-[160px]">{x.name}</td>
+                  <td className="py-2 text-center font-mono text-[var(--muted)]">{x.count}</td>
+                  <td className={`py-2 text-center font-mono font-bold ${starColor(x.avg)}`}>{x.avg ? `${x.avg.toFixed(1)} ★` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  };
+
   const r = d.ratings, s = d.surveys;
 
   return (
@@ -144,8 +169,8 @@ export default function FeedbackDashboard({ currentUser }: Props) {
           <Bar title="By Rating (stars)" data={r.byRating} color="bg-amber-500" icon={Star} label={(n) => `${n} ★`} />
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Bar title="By Brand" data={r.byBrand} color="bg-violet-500" icon={Megaphone} />
-          <Bar title="By Platform" data={r.byPlatform} color="bg-sky-500" icon={MessageSquare} />
+          <PerfTable title="Avg Rating by Brand" icon={Megaphone} rows={r.brandPerf} />
+          <PerfTable title="Avg Rating by Platform" icon={MessageSquare} rows={r.platformPerf} />
         </div>
         {/* Agent workload */}
         <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">

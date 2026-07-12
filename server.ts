@@ -2204,7 +2204,11 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const wb = XLSX.read(Buffer.from(file, "base64"), { type: "buffer" });
   const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
 
-  const result = { total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0, errors: [] as { row: number; message: string }[] };
+  const result = {
+    total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0,
+    scheduled: [] as { date: string; count: number }[], first_date: "", today_full: false, daily_limit: DAILY_SURVEY_LIMIT,
+    errors: [] as { row: number; message: string }[],
+  };
   const seen = new Set<string>();
   const candidates: string[] = [];
 
@@ -2224,13 +2228,19 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const assignedAgent = campaign.assignment_mode === "assigned" ? (campaign.default_agent_id || null) : null;
   const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string }[] = [];
   let offset = 0;
+  const byDay = new Map<string, number>();
   for (const phone of candidates) {
     let date = addDays(today, offset);
     while ((counts.get(date) || 0) >= DAILY_SURVEY_LIMIT) { offset++; date = addDays(today, offset); }
     counts.set(date, (counts.get(date) || 0) + 1);
+    byDay.set(date, (byDay.get(date) || 0) + 1);
     toInsert.push({ campaign_id: campaign.id, brand_id: campaign.brand_id, customer_phone: phone, assigned_agent_id: assignedAgent, scheduled_date: date });
   }
   result.inserted = await DB.addSurveyAssignments(toInsert);
+  result.scheduled = Array.from(byDay.entries()).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
+  result.first_date = result.scheduled[0]?.date || "";
+  // Today already at/over the limit → new numbers start on a later day (spec §5.2)
+  result.today_full = candidates.length > 0 && (byDay.get(today) || 0) === 0;
   if (result.inserted > 0 && campaign.status === "pending") await DB.setSurveyCampaignStatus(campaign.id, "active");
   res.json(result);
 }));

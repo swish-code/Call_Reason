@@ -438,7 +438,8 @@ export class DB {
 
     // Seed default platforms (idempotent). Fixed ids so re-seeding never
     // collides on the UNIQUE name after a platform is removed from this list.
-    for (const [id, name] of [["plat-1", "Talabat"], ["plat-2", "Keeta"], ["plat-5", "TripAdvisor"]]) {
+    for (const [id, name] of [["plat-1", "Talabat"], ["plat-2", "Keeta"], ["plat-5", "TripAdvisor"],
+      ["plat-6", "Deliveroo"], ["plat-7", "Ordable"], ["plat-8", "Jahez"], ["plat-9", "Snoonu"]]) {
       await pool.query(
         "INSERT INTO platforms (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING",
         [id, name]
@@ -1806,6 +1807,9 @@ export class DB {
     const rByRating = (await q(`SELECT rating::text name, COUNT(*)::int count FROM ratings r WHERE ${rW} GROUP BY rating ORDER BY rating`)).rows;
     const rByBrand = (await q(`SELECT COALESCE(b.brand_name,'—') name, COUNT(*)::int count FROM ratings r LEFT JOIN brands b ON b.id=r.brand_id WHERE ${rW} GROUP BY b.brand_name ORDER BY count DESC LIMIT 8`)).rows;
     const rByPlatform = (await q(`SELECT COALESCE(p.name,'—') name, COUNT(*)::int count FROM ratings r LEFT JOIN platforms p ON p.id=r.platform_id WHERE ${rW} GROUP BY p.name ORDER BY count DESC LIMIT 8`)).rows;
+    // Avg rating per platform / per brand (spec §6)
+    const platformPerf = (await q(`SELECT COALESCE(p.name,'—') name, COUNT(*)::int count, COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg FROM ratings r LEFT JOIN platforms p ON p.id=r.platform_id WHERE ${rW} GROUP BY p.name ORDER BY count DESC LIMIT 10`)).rows;
+    const brandPerf = (await q(`SELECT COALESCE(b.brand_name,'—') name, COUNT(*)::int count, COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg FROM ratings r LEFT JOIN brands b ON b.id=r.brand_id WHERE ${rW} GROUP BY b.brand_name ORDER BY count DESC LIMIT 10`)).rows;
     const rByAgent = (await q(`SELECT ua.full_name name, COUNT(*)::int assigned,
         SUM(CASE WHEN r.action_status IN ('resolved','no_action_needed','unreachable') THEN 1 ELSE 0 END)::int done
       FROM ratings r JOIN users ua ON ua.id=r.assigned_agent_id WHERE ${rW} AND r.assigned_agent_id IS NOT NULL
@@ -1838,6 +1842,7 @@ export class DB {
         resolved: rTot.resolved, unreachable: rTot.unreachable,
         resolutionRate: rTot.needs_action > 0 ? Math.round((rTot.resolved / rTot.needs_action) * 100) : 0,
         byStatus: rByStatus, byRating: rByRating, byBrand: rByBrand, byPlatform: rByPlatform, byAgent: rByAgent,
+        platformPerf, brandPerf,
       },
       surveys: {
         campaigns: { total: campTotal, byStatus: campByStatus },
