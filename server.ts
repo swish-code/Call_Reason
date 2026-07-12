@@ -908,19 +908,22 @@ app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =
   //  - Agent / Supervisor: a log in their own department
   //  - Team Leader: a coaching (team_leader) log
   //  - Management (manager / owner / admin): choose log type + department
+  // FM staff sit in the Quality department for supervision but do call-center work,
+  // so their operational log type is call_center (not quality).
+  const isFM = req.user.job_title === "FM" || req.user.job_title === "FM Team Leader";
+  const myDeptType = isFM ? "call_center" : DEPT_TO_LOGTYPE[department];
   let log_type: string, dept: string, agent_id: string, agent_name: string;
   if (role === "agent" || role === "supervisor") {
-    log_type = DEPT_TO_LOGTYPE[department];
+    log_type = myDeptType;
     if (!log_type) return res.status(400).json({ error: "Your account is not assigned to a valid department." });
     dept = department; agent_id = id; agent_name = full_name;
   } else if (role === "leader") {
     // Leaders may log their department type OR a Team Leader (coaching) log.
-    const deptType = DEPT_TO_LOGTYPE[department];
-    const allowed = ["team_leader", ...(deptType ? [deptType] : [])];
+    const allowed = ["team_leader", ...(myDeptType ? [myDeptType] : [])];
     const requested = body.log_type;
     log_type = (requested && allowed.includes(requested))
       ? requested
-      : (department === "Call Center" ? "team_leader" : (deptType || "team_leader"));
+      : (department === "Call Center" || isFM ? "team_leader" : (myDeptType || "team_leader"));
     dept = department || "Call Center"; agent_id = id; agent_name = full_name;
   } else {
     log_type = body.log_type || "call_center";

@@ -38,18 +38,23 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
   const canChoose = currentUser.role === "admin" || currentUser.role === "owner" || currentUser.role === "manager";
   const editing = !!editLog;
 
+  // FM staff live in the Quality department for supervision but do call-center
+  // work, so their operational log type is call_center (not quality).
+  const isFM = currentUser.job_title === "FM" || currentUser.job_title === "FM Team Leader";
+  const myDeptType: LogType = isFM
+    ? "call_center"
+    : ((DEPT_TO_LOGTYPE[currentUser.department || ""] as LogType) || "call_center");
+
   // Determine the log type
-  const leaderLogType: LogType = currentUser.department === "Call Center"
-    ? "team_leader"
-    : (DEPT_TO_LOGTYPE[currentUser.department || ""] as LogType || "team_leader");
+  const leaderLogType: LogType = (currentUser.department === "Call Center" || isFM) ? "team_leader" : myDeptType;
   const initialType: LogType = editLog?.log_type as LogType
-    || (isLeader ? leaderLogType : canChoose ? "call_center" : (DEPT_TO_LOGTYPE[currentUser.department || ""] || "call_center"));
+    || (isLeader ? leaderLogType : canChoose ? "call_center" : myDeptType);
   const [logType, setLogType] = useState<LogType>(initialType);
   const cfg = LOG_TYPE_CONFIG[logType];
 
   // Leaders may switch between their department log and the Team Leader (coaching) log
   const leaderChoices: LogType[] = isLeader
-    ? (Array.from(new Set([(DEPT_TO_LOGTYPE[currentUser.department || ""] as LogType) || "call_center", "team_leader"])) as LogType[])
+    ? (Array.from(new Set([myDeptType, "team_leader"])) as LogType[])
     : [];
   const canPickType = (canChoose || (isLeader && leaderChoices.length > 1)) && !editing;
 
