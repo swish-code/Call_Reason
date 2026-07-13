@@ -60,6 +60,9 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   };
 
   const elapsedSeconds = (l: OpsLog) => Number(l.duration_seconds || 0);
+  // Quality daily log: average review minutes per call (null if not applicable)
+  const avgPerCall = (l: OpsLog): number | null =>
+    (l.calls_reviewed && l.calls_reviewed > 0) ? elapsedSeconds(l) / 60 / l.calls_reviewed : null;
   const fmtDur = (s: number) => {
     if (!s) return "—";
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -127,9 +130,10 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   };
 
   const exportCsv = () => {
-    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
+    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Calls Reviewed", "Avg min/call", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
     const rows = filtered.map((l) => [
       fmt(l.created_at), l.log_type, l.department || "", l.activity_type || "", l.status || "", fmtDur(elapsedSeconds(l)),
+      l.calls_reviewed ?? "", avgPerCall(l) !== null ? avgPerCall(l)!.toFixed(1) : "",
       l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", l.notes || l.action_taken || "",
     ]);
     downloadCSV(headers, rows, `Logs_${new Date().toISOString().split("T")[0]}`);
@@ -222,6 +226,9 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                         {l.complaint_id && <div className="font-mono text-[10px] text-[var(--muted)]">CID {l.complaint_id}</div>}
                         {l.target_agent_name && <div>🎯 {l.target_agent_name}</div>}
                         {l.aggregator && <div className="text-[10px] text-[var(--muted)]">{l.aggregator}</div>}
+                        {l.log_type === "quality" && avgPerCall(l) !== null && (
+                          <div className="text-[10px] font-bold text-emerald-500">📞 {l.calls_reviewed} calls · avg {avgPerCall(l)!.toFixed(1)} min/call</div>
+                        )}
                         {(l.notes || l.action_taken) && <div className="text-[10px] text-[var(--muted)] line-clamp-2 max-w-xs">{l.notes || l.action_taken}</div>}
                       </div>
                     </td>
@@ -231,6 +238,9 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                       <span className="font-mono text-[11px] font-bold flex items-center gap-1 text-[var(--text)]">
                         <Timer className="w-3.5 h-3.5" />{fmtDur(elapsedSeconds(l))}
                       </span>
+                      {l.log_type === "quality" && avgPerCall(l) !== null && (
+                        <div className="text-[9px] font-mono text-emerald-500 mt-0.5">{avgPerCall(l)!.toFixed(1)} min/call</div>
+                      )}
                     </td>
                     <td className="p-4">
                       <div className="flex items-center justify-center gap-1.5">
