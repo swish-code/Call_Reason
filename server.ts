@@ -2115,7 +2115,7 @@ const RECORD_TYPES: Record<string, {
   },
 };
 
-const canBuildTemplates = (role: string) => ["admin", "manager", "supervisor"].includes(role);
+const canBuildTemplates = (role: string) => ["admin", "manager", "supervisor", "leader"].includes(role);
 const isLeaderLevel = (role: string) => ["admin", "owner", "manager", "supervisor", "leader"].includes(role);
 
 // ---- Templates ----

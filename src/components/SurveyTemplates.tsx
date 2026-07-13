@@ -36,7 +36,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState("");
 
-  const canManage = ['admin', 'manager', 'supervisor'].includes(currentUser.role);
+  const canManage = ['admin', 'manager', 'supervisor', 'leader'].includes(currentUser.role);
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
@@ -296,6 +296,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                                   className={selCls}
                                 >
                                   <option value="rating_1_5">Rating 1–5</option>
+                                  <option value="rating_1_10">Rating 1–10</option>
                                   <option value="yes_no">Yes / No</option>
                                   <option value="multiple_choice">Multiple Choice</option>
                                   <option value="free_text">Free Text</option>

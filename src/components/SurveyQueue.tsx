@@ -427,6 +427,24 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                                 </div>
                               )}
 
+                              {q.answer_type === 'rating_1_10' && (
+                                <div className="flex flex-wrap gap-2">
+                                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                                    <button
+                                      key={n}
+                                      onClick={() => setAnswerValue(q.id, String(n))}
+                                      className={`w-10 h-10 rounded-xl text-sm font-extrabold border transition ${
+                                        val === String(n)
+                                          ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                                          : 'bg-[var(--surface)] text-[var(--muted)] border-[var(--border)] hover:bg-[var(--surface-2)]'
+                                      }`}
+                                    >
+                                      {n}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
                               {q.answer_type === 'yes_no' && (
                                 <div className="flex gap-2">
                                   {['Yes', 'No'].map(opt => (

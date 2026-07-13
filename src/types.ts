@@ -276,7 +276,7 @@ export interface Brand {
 // ----------------------------------------------------
 // Surveys Module
 // ----------------------------------------------------
-export type AnswerType = 'rating_1_5' | 'yes_no' | 'multiple_choice' | 'free_text';
+export type AnswerType = 'rating_1_5' | 'rating_1_10' | 'yes_no' | 'multiple_choice' | 'free_text';
 export type SurveyType = 'marketing_item' | 'marketing_general' | 'daily_normal';
 export type AssignmentMode = 'assigned' | 'open';
 export type ContinuityType = 'one_time_slot' | 'continuous';
