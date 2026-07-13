@@ -947,6 +947,7 @@ app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) =
     notes: body.notes, action_taken: body.action_taken, resolution_notes: body.resolution_notes,
     action_plan: body.action_plan, follow_up_date: body.follow_up_date,
     duration_seconds: Number(body.duration_seconds) > 0 ? Math.round(Number(body.duration_seconds)) : 0,
+    calls_reviewed: Number(body.calls_reviewed) > 0 ? Math.round(Number(body.calls_reviewed)) : null,
     created_at: now, updated_at: now, created_by: id,
   });
 

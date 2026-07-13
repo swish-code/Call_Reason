@@ -58,9 +58,18 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     : [];
   const canPickType = (canChoose || (isLeader && leaderChoices.length > 1)) && !editing;
 
+  const isQuality = logType === "quality";
   const [activity, setActivity] = useState(editLog?.activity_type || "");
   const [status, setStatus] = useState(editLog?.status || "");
   const [durationMin, setDurationMin] = useState(editLog?.duration_seconds ? String(Math.round(editLog.duration_seconds / 60)) : "");
+  // Quality daily log: calls reviewed + total listening hours (avg computed)
+  const [callsReviewed, setCallsReviewed] = useState(editLog && (editLog as any).calls_reviewed ? String((editLog as any).calls_reviewed) : "");
+  const [listeningHours, setListeningHours] = useState(
+    editLog && editLog.log_type === "quality" && editLog.duration_seconds
+      ? String(+(editLog.duration_seconds / 3600).toFixed(2)) : ""
+  );
+  const avgMinutes = (Number(callsReviewed) > 0 && Number(listeningHours) > 0)
+    ? ((Number(listeningHours) * 60) / Number(callsReviewed)).toFixed(1) : "";
   const [values, setValues] = useState<Record<string, string>>(() => {
     const v: Record<string, string> = {};
     if (editLog) Object.keys(FIELD_META).forEach((k) => { v[k] = (editLog as any)[k] || ""; });
@@ -122,14 +131,20 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
     setError("");
     if (!activity) return setError("Please select an activity type.");
     if (cfg.statusKey && !status) return setError("Please select a status.");
-    if (!durationMin || Number(durationMin) <= 0) {
+    if (isQuality) {
+      if (!callsReviewed || Number(callsReviewed) <= 0) return setError("Please enter the number of calls reviewed.");
+      if (!listeningHours || Number(listeningHours) <= 0) return setError("Please enter the total listening time (hours).");
+    } else if (!durationMin || Number(durationMin) <= 0) {
       return setError("Please enter the time spent.");
     }
 
     const payload: any = { activity_type: activity };
     if (cfg.statusKey) payload.status = status;
-    payload.duration_seconds = durationMin ? Math.max(0, Math.round(Number(durationMin) * 60)) : 0;
-    cfg.fields.forEach((f) => { if (values[f]) payload[f] = values[f]; });
+    payload.duration_seconds = isQuality
+      ? Math.round(Number(listeningHours) * 3600)
+      : (durationMin ? Math.max(0, Math.round(Number(durationMin) * 60)) : 0);
+    if (isQuality) payload.calls_reviewed = Math.round(Number(callsReviewed));
+    cfg.fields.forEach((f) => { if (isQuality && f === "brand") return; if (values[f]) payload[f] = values[f]; });
     if (canChoose || isLeader) { payload.log_type = logType; payload.department = cfg.department || currentUser.department; }
 
     try {
@@ -225,19 +240,38 @@ export default function OpsLogForm({ currentUser, editLog, onDone }: OpsLogFormP
             </select>
           </div>
         )}
-        <div className="space-y-1.5">
-          <label className="text-xs font-bold text-[var(--text)]">Time Spent (minutes):</label>
-          <input type="number" min={0} value={durationMin} onChange={(e) => setDurationMin(e.target.value)} placeholder="e.g. 15" className={inputCls} />
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {[5, 10, 15, 30, 45, 60].map((m) => (
-              <button type="button" key={m} onClick={() => setDurationMin(String(m))}
-                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition ${durationMin === String(m) ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--muted)] border-[var(--border)] hover:text-white hover:border-blue-500/40"}`}>
-                {m}m
-              </button>
-            ))}
+        {isQuality ? (
+          <>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-[var(--text)]">Calls Reviewed (today):</label>
+              <input type="number" min={0} value={callsReviewed} onChange={(e) => setCallsReviewed(e.target.value)} placeholder="e.g. 40" className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-[var(--text)]">Total Listening Time (hours):</label>
+              <input type="number" min={0} step="0.25" value={listeningHours} onChange={(e) => setListeningHours(e.target.value)} placeholder="e.g. 3.5" className={inputCls} />
+            </div>
+            <div className="md:col-span-2">
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs font-bold text-emerald-500 flex items-center justify-between">
+                <span>Avg review time per call</span>
+                <span className="font-mono text-sm">{avgMinutes ? `${avgMinutes} min` : "—"}</span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-[var(--text)]">Time Spent (minutes):</label>
+            <input type="number" min={0} value={durationMin} onChange={(e) => setDurationMin(e.target.value)} placeholder="e.g. 15" className={inputCls} />
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[5, 10, 15, 30, 45, 60].map((m) => (
+                <button type="button" key={m} onClick={() => setDurationMin(String(m))}
+                  className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition ${durationMin === String(m) ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--muted)] border-[var(--border)] hover:text-white hover:border-blue-500/40"}`}>
+                  {m}m
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        {cfg.fields.map(renderField)}
+        )}
+        {(isQuality ? cfg.fields.filter((f) => f !== "brand") : cfg.fields).map(renderField)}
       </div>
 
       <button type="submit" disabled={loading} className="w-full py-4 bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-50 text-white font-extrabold rounded-2xl shadow-lg shadow-blue-600/10 transition flex items-center justify-center gap-2 text-sm">

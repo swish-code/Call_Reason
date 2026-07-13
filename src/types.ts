@@ -79,6 +79,7 @@ export interface OpsLog {
   // Task time tracking (live timer)
   started_at?: string;
   duration_seconds?: number;
+  calls_reviewed?: number; // Quality daily log: number of calls reviewed
   running_since?: string | null;
   created_at: string;
   updated_at?: string;
