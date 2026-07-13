@@ -17,7 +17,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
   const tabs: { key: Tab; label: string; icon: ReactNode; visible: boolean }[] = [
     { key: "campaigns", label: "Campaigns", icon: <Megaphone className="w-4 h-4" />, visible: !isAgent },
     { key: "queue", label: "Survey Queue", icon: <ListChecks className="w-4 h-4" />, visible: true },
-    { key: "templates", label: "Templates", icon: <ClipboardList className="w-4 h-4" />, visible: ["admin", "manager", "supervisor"].includes(role) },
+    { key: "templates", label: "Templates", icon: <ClipboardList className="w-4 h-4" />, visible: ["admin", "manager", "supervisor", "leader"].includes(role) },
     { key: "data", label: "Survey Data", icon: <Database className="w-4 h-4" />, visible: !isAgent },
   ];
 
