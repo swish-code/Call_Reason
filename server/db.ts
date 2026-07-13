@@ -1773,6 +1773,21 @@ export class DB {
     return rows;
   }
 
+  // Delete survey records (optionally scoped by the same filters as the list).
+  static async deleteSurveyRecords(filter: {
+    record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string;
+  } = {}): Promise<number> {
+    const clauses: string[] = []; const values: any[] = []; let idx = 1;
+    if (filter.record_type) { clauses.push(`record_type = $${idx++}`); values.push(filter.record_type); }
+    if (filter.brand_id) { clauses.push(`brand_id = $${idx++}`); values.push(filter.brand_id); }
+    if (filter.answered != null) { clauses.push(`answered = $${idx++}`); values.push(filter.answered); }
+    if (filter.from) { clauses.push(`created_at >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`created_at <= $${idx++}`); values.push(filter.to); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const res = await pool.query(`DELETE FROM survey_records ${where}`, values);
+    return res.rowCount ?? 0;
+  }
+
   // Remove duplicate survey records — keeps the earliest row per
   // (record_type, order_id); only dedupes rows that carry an order_id.
   static async dedupeSurveyRecords(): Promise<number> {

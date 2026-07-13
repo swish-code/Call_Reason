@@ -2379,6 +2379,20 @@ app.post("/api/survey-records/dedupe", authenticateJWT, asyncHandler(async (req:
   res.json({ removed });
 }));
 
+// Delete survey records — all, or scoped by current filters (admin only)
+app.post("/api/survey-records/delete", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
+  const { type, brand_id, answered, from, to } = req.body;
+  const deleted = await DB.deleteSurveyRecords({
+    record_type: type || undefined,
+    brand_id: brand_id || undefined,
+    answered: answered === true ? true : answered === false ? false : undefined,
+    from: from || undefined,
+    to: to || undefined,
+  });
+  res.json({ deleted });
+}));
+
 // ----------------------------------------------------
 // Mounting Vite Server Middleware
 // ----------------------------------------------------

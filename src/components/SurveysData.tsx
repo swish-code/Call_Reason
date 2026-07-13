@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SurveyRecord, SurveyRecordType, Brand } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Database, RefreshCw, AlertCircle, Copy } from "lucide-react";
+import { Database, RefreshCw, AlertCircle, Copy, Trash2 } from "lucide-react";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 
 interface SurveysDataProps { currentUser: User; }
@@ -91,6 +91,26 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     if (res.ok) { const d = await res.json(); fetchRecords(); alert(`${d.removed} duplicate record(s) removed.`); }
     else { const d = await res.json().catch(() => ({})); setError(d.error || "Failed."); }
   };
+  const anyFilter = !!(type || brandId || answered || from || to);
+  const deleteData = async () => {
+    const msg = anyFilter
+      ? "Delete the FILTERED survey records? This cannot be undone."
+      : "Delete ALL survey data? This cannot be undone.";
+    if (!window.confirm(msg)) return;
+    const res = await apiFetch('/api/survey-records/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: type || undefined,
+        brand_id: brandId || undefined,
+        answered: answered === 'answered' ? true : answered === 'no_answer' ? false : undefined,
+        from: from || undefined,
+        to: to || undefined,
+      }),
+    });
+    if (res.ok) { const d = await res.json(); fetchRecords(); alert(`${d.deleted} record(s) deleted.`); }
+    else { const d = await res.json().catch(() => ({})); setError(d.error || "Failed."); }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
@@ -120,6 +140,15 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
               className="px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-500 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
             >
               <Copy className="w-4 h-4" /> Remove duplicates
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={deleteData}
+              title={anyFilter ? "Delete filtered records" : "Delete all survey data"}
+              className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+            >
+              <Trash2 className="w-4 h-4" /> {anyFilter ? "Delete filtered" : "Delete all"}
             </button>
           )}
           <SurveyDataUploadButton currentUser={currentUser} onUploaded={fetchRecords} />
