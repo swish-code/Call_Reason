@@ -1832,11 +1832,13 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const review_text = pick(r, "Customer Comment");
       const phone = normalisePhone(pick(r, "Phone Number"));
       // Auto-triage (no manual Status column):
-      //   TASK       = (rating 1-3 OR has a comment) AND has a phone -> pending, auto-assigned to an agent
-      //   AUTO CLOSE = everything else (incl. 4-5 no comment, or any row with no phone)
+      //   TASK       = has a comment (any rating) OR (rating 1-3 AND has a phone)
+      //                -> pending, auto-assigned to an agent. A commented row with no phone is
+      //                   STILL a task: the agent contacts the aggregator to obtain the phone.
+      //   AUTO CLOSE = everything else: 4-5 with no comment, or a 1-3 with no comment and no phone
       //                -> no_action_needed, hidden from the Reviews list, counted in reports only
       const hasComment = !!(review_text && review_text.trim());
-      const isTask = (ratingVal <= 3 || hasComment) && !!phone;
+      const isTask = hasComment || (ratingVal <= 3 && !!phone);
       const action_status = isTask ? "pending" : "no_action_needed";
       const requires_action = isTask;
       // Even round-robin across active Call Center agents (task rows only).
