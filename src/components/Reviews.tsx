@@ -34,6 +34,7 @@ interface CallAttempt {
 }
 interface UploadResult {
   total: number; inserted: number; duplicates: number; overwritten: number;
+  tasks?: number; auto_closed?: number;
   errors: { row: number; message: string }[];
 }
 
@@ -437,7 +438,6 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           <option value="in_progress">In Progress</option>
           <option value="resolved">Complaint Recorded</option>
           <option value="unreachable">Unreachable</option>
-          <option value="no_action_needed">No Action Required</option>
         </select>
         {!isAgent && (
           <select value={assigned} onChange={e => setAssigned(e.target.value)} className={selCls}>
@@ -768,6 +768,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   <span className="text-[var(--muted)]">Inserted:</span><span className="font-bold text-emerald-400">{uploadResult.inserted}</span>
                   <span className="text-[var(--muted)]">Duplicates:</span><span className="font-bold">{uploadResult.duplicates}</span>
                   <span className="text-[var(--muted)]">Overwritten:</span><span className="font-bold">{uploadResult.overwritten}</span>
+                  <span className="text-[var(--muted)]">Tasks (assigned):</span><span className="font-bold text-amber-400">{uploadResult.tasks ?? 0}</span>
+                  <span className="text-[var(--muted)]">Auto-closed:</span><span className="font-bold text-zinc-400">{uploadResult.auto_closed ?? 0}</span>
                 </div>
                 {uploadResult.errors.length > 0 && (
                   <div className="mt-2 space-y-1">

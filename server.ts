@@ -1743,17 +1743,6 @@ const normalisePhone = (p: string): string => p ? p.replace(/[\s\-\(\)\.]/g, "")
 
 // Map a free-text status cell from the upload file to an action_status.
 // Returns null when the cell is empty/unrecognised.
-const mapUploadStatus = (raw: string): string | null => {
-  const s = (raw || "").toLowerCase().trim();
-  if (!s) return null;
-  if (s.includes("complaint") || s.includes("record")) return "resolved";
-  if (s.includes("no action") || s.includes("no_action") || s === "none" || s === "na" || s === "n/a") return "no_action_needed";
-  if (s.includes("unreach")) return "unreachable";
-  if (s.includes("progress")) return "in_progress";
-  if (s.includes("pending")) return "pending";
-  return null;
-};
-
 // Normalise a spreadsheet date cell to YYYY-MM-DD. Handles Excel serial
 // numbers (days since 1899-12-30) and ordinary date strings; leaves other
 // text untouched so free-form values survive.
@@ -1788,7 +1777,7 @@ const requireUpload = async (req: any, res: any, next: any) => {
 
 // Excel template (returns base64 xlsx)
 app.get("/api/ratings/template", authenticateJWT, requireUpload, asyncHandler(async (_req, res) => {
-  const headers = ["Date","Restaurant","Platform","Customer Name","Phone Number","Branch","Order ID","Customer Comment","Rate","Served By","Status","Following Date","Surveyed By","Type of Complaint","Complaint Cases","Note"];
+  const headers = ["Date","Restaurant","Platform","Customer Name","Phone Number","Branch","Order ID","Customer Comment","Rate","Served By","Following Date","Surveyed By","Type of Complaint","Complaint Cases","Note"];
   const ws = XLSX.utils.aoa_to_sheet([headers]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Ratings");
@@ -1811,7 +1800,14 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   const brandMap = new Map(brands.map((b) => [b.brand_name.toLowerCase(), b.id]));
   const platMap = new Map(platforms.map((p) => [p.name.toLowerCase(), p.id]));
 
-  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, errors: [] as { row: number; message: string }[] };
+  // Eligible agents for auto-assign: active Call Center agents, distributed even round-robin.
+  const allUsers = await DB.getUsers();
+  const ccAgentIds = allUsers
+    .filter((u: any) => u.role === "agent" && u.status === "Active" && u.department === "Call Center")
+    .map((u: any) => u.id);
+  let rrPointer = 0;
+
+  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, errors: [] as { row: number; message: string }[] };
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -1834,15 +1830,27 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       if (!platform_id) { result.errors.push({ row: lineNum, message: `Unknown platform: ${platformName}` }); continue; }
 
       const review_text = pick(r, "Customer Comment");
-      // Status per row from the file's Status column; blank/unknown => Pending.
-      const action_status = mapUploadStatus(pick(r, "Status", "Action Status", "Case Status", "Action")) || "pending";
-      const requires_action = action_status !== "no_action_needed";
+      const phone = normalisePhone(pick(r, "Phone Number"));
+      // Auto-triage (no manual Status column):
+      //   TASK       = (rating 1-3 OR has a comment) AND has a phone -> pending, auto-assigned to an agent
+      //   AUTO CLOSE = everything else (incl. 4-5 no comment, or any row with no phone)
+      //                -> no_action_needed, hidden from the Reviews list, counted in reports only
+      const hasComment = !!(review_text && review_text.trim());
+      const isTask = (ratingVal <= 3 || hasComment) && !!phone;
+      const action_status = isTask ? "pending" : "no_action_needed";
+      const requires_action = isTask;
+      // Even round-robin across active Call Center agents (task rows only).
+      let assigned_agent_id: string | null = null;
+      if (isTask && ccAgentIds.length) {
+        assigned_agent_id = ccAgentIds[rrPointer % ccAgentIds.length];
+        rrPointer++;
+      }
 
       const outcome = await DB.upsertRating({
         brand_id, platform_id, order_id: orderId, rating: ratingVal,
         review_text: review_text || undefined,
-        customer_phone: normalisePhone(pick(r, "Phone Number")) || undefined,
-        requires_action, action_status, uploaded_by: req.user.id,
+        customer_phone: phone || undefined,
+        requires_action, action_status, assigned_agent_id, uploaded_by: req.user.id,
         order_date: normaliseExcelDate(pick(r, "Date")) || undefined,
         customer_name: pick(r, "Customer Name") || undefined,
         branch: pick(r, "Branch") || undefined,
@@ -1858,6 +1866,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       if (outcome === "inserted") result.inserted++;
       else if (outcome === "skipped") result.duplicates++;
       else result.overwritten++;
+      if (outcome !== "skipped") { if (isTask) result.tasks++; else result.auto_closed++; }
     } catch (e: any) {
       result.errors.push({ row: lineNum, message: e.message || "Unknown error." });
     }

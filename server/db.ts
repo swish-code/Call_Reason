@@ -1216,6 +1216,8 @@ export class DB {
     if (filter.brand_id) { clauses.push(`r.brand_id = $${idx++}`); values.push(filter.brand_id); }
     if (filter.platform_id) { clauses.push(`r.platform_id = $${idx++}`); values.push(filter.platform_id); }
     if (filter.action_status) { clauses.push(`r.action_status = $${idx++}`); values.push(filter.action_status); }
+    // Auto-closed rows are report-only — they must never surface in the Reviews list for any role.
+    clauses.push(`r.action_status <> 'no_action_needed'`);
     if (filter.requires_action === true) { clauses.push(`r.requires_action = true`); }
     if (filter.assigned === "me" && filter.assigned_agent_id) { clauses.push(`r.assigned_agent_id = $${idx++}`); values.push(filter.assigned_agent_id); }
     if (filter.assigned === "unassigned") { clauses.push(`r.assigned_agent_id IS NULL`); }
@@ -1274,20 +1276,20 @@ export class DB {
     order_date?: string; customer_name?: string; branch?: string;
     filled_by?: string; following_date?: string; surveyed_by?: string;
     complaint_type?: string; complaint_cases?: string; complaint_status?: string;
-    served_by?: string; note?: string;
+    served_by?: string; note?: string; assigned_agent_id?: string | null;
   }, mode: "skip" | "overwrite"): Promise<"inserted" | "skipped" | "overwritten"> {
     const id = "rat-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
     if (mode === "skip") {
       const res = await pool.query(`
-        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note,assigned_agent_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
         ON CONFLICT (brand_id,platform_id,order_id) DO NOTHING
-      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null]);
+      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null,data.assigned_agent_id??null]);
       return (res.rowCount ?? 0) > 0 ? "inserted" : "skipped";
     } else {
       const res = await pool.query(`
-        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note,assigned_agent_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
         ON CONFLICT (brand_id,platform_id,order_id) DO UPDATE SET
           rating=EXCLUDED.rating,review_text=EXCLUDED.review_text,customer_phone=EXCLUDED.customer_phone,
           requires_action=EXCLUDED.requires_action,action_status=EXCLUDED.action_status,
@@ -1297,7 +1299,7 @@ export class DB {
           complaint_type=EXCLUDED.complaint_type,complaint_cases=EXCLUDED.complaint_cases,
           complaint_status=EXCLUDED.complaint_status,served_by=EXCLUDED.served_by,note=EXCLUDED.note
         RETURNING (xmax = 0) AS inserted
-      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null]);
+      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null,data.assigned_agent_id??null]);
       return res.rows[0]?.inserted ? "inserted" : "overwritten";
     }
   }
