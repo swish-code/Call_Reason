@@ -612,6 +612,12 @@ app.get("/api/performance", authenticateJWT, asyncHandler(async (req: any, res: 
     logs = await DB.getLogs({ agent_id: id });
   }
 
+  // Team Performance covers AGENTS only — drop logs written by leaders /
+  // supervisors / managers / admins so they don't appear as team members.
+  const perfUsers = await DB.getUsers();
+  const agentIdSet = new Set(perfUsers.filter((u: any) => u.role === "agent").map((u: any) => u.id));
+  logs = logs.filter((l: any) => agentIdSet.has(l.agent_id));
+
   // Date range filter
   const now = new Date();
   let fromDate: Date | null = null;
