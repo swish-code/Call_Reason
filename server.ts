@@ -603,11 +603,11 @@ app.get("/api/performance", authenticateJWT, asyncHandler(async (req: any, res: 
   let logs;
   if (isExecutive(req.user)) {
     logs = await DB.getLogs({ department: deptFilter });
-  } else if (role === "supervisor") {
+  } else if (role === "supervisor" || role === "leader") {
+    // Scope by department MEMBERS (not the log's department/type stamp) so staff
+    // whose logs carry another type — e.g. FM in Quality logging call_center —
+    // still appear with their real numbers.
     logs = await DB.getLogs({ agent_ids: await departmentMemberIds(department) });
-  } else if (role === "leader") {
-    const deptLogType = DEPT_TO_LOGTYPE[department];
-    logs = await DB.getLogs({ department, log_type: deptLogType });
   } else {
     logs = await DB.getLogs({ agent_id: id });
   }
