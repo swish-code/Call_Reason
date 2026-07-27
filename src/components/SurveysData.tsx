@@ -37,6 +37,7 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
   const [types, setTypes] = useState<SurveyRecordType[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [records, setRecords] = useState<SurveyRecord[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -69,7 +70,10 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     try {
       const res = await apiFetch(`/api/survey-records?${buildQuery()}`);
       if (!res.ok) throw new Error("Failed to load survey data.");
-      setRecords(await res.json());
+      const data = await res.json();
+      // Endpoint now returns { records, total, cap }; keep back-compat with a bare array.
+      if (Array.isArray(data)) { setRecords(data); setTotal(data.length); }
+      else { setRecords(data.records || []); setTotal(data.total ?? (data.records?.length || 0)); }
     } catch (e: any) {
       setError(e.message || "Connection error.");
     } finally {
@@ -122,7 +126,10 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
           </div>
           <div>
             <h2 className="text-md font-extrabold text-[var(--heading)]">Survey Data</h2>
-            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{records.length} record(s)</p>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">
+              {total.toLocaleString()} record(s)
+              {total > records.length && <span className="text-amber-400"> — showing latest {records.length.toLocaleString()}</span>}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">

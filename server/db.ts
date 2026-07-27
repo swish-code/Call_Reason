@@ -1757,7 +1757,7 @@ export class DB {
 
   static async getSurveyRecords(filter: {
     record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string;
-  } = {}): Promise<any[]> {
+  } = {}): Promise<{ records: any[]; total: number; cap: number }> {
     const clauses: string[] = []; const values: any[] = []; let idx = 1;
     if (filter.record_type) { clauses.push(`r.record_type = $${idx++}`); values.push(filter.record_type); }
     if (filter.brand_id) { clauses.push(`r.brand_id = $${idx++}`); values.push(filter.brand_id); }
@@ -1765,6 +1765,7 @@ export class DB {
     if (filter.from) { clauses.push(`r.created_at >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`r.created_at <= $${idx++}`); values.push(filter.to); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const LIST_CAP = 1000;
     const { rows } = await pool.query(`
       SELECT r.*, b.brand_name, p.name AS platform_name, u.full_name AS uploaded_by_name
       FROM survey_records r
@@ -1772,9 +1773,10 @@ export class DB {
       LEFT JOIN platforms p ON p.id = r.platform_id
       LEFT JOIN users u ON u.id = r.uploaded_by
       ${where}
-      ORDER BY r.created_at DESC LIMIT 300
+      ORDER BY r.created_at DESC LIMIT ${LIST_CAP}
     `, values);
-    return rows;
+    const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int AS total FROM survey_records r ${where}`, values);
+    return { records: rows, total: cnt[0]?.total ?? rows.length, cap: LIST_CAP };
   }
 
   // Delete survey records (optionally scoped by the same filters as the list).
