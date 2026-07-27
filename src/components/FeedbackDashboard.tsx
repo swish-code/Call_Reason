@@ -17,7 +17,8 @@ interface FeedbackData {
   surveys: {
     campaigns: { total: number; byStatus: NC[] };
     assignments: { total: number; successful: number; successRate: number; byStatus: NC[] };
-    records: { total: number; answered: number; noAnswer: number; byType: NC[]; byBrand: NC[] };
+    records: { total: number; answered: number; noAnswer: number; byType: NC[]; byBrand: NC[];
+      byAgent: { name: string; count: number; answered: number; avg: number }[] };
     topAgents: { name: string; successful: number }[];
   };
 }
@@ -224,6 +225,33 @@ export default function FeedbackDashboard({ currentUser }: Props) {
         </div>
         {/* Top survey agents */}
         <Bar title="Top Survey Agents (successful calls)" data={s.topAgents.map((a) => ({ name: a.name, count: a.successful }))} color="bg-violet-500" icon={Users} />
+
+        {/* Survey records per employee (Served By) — includes historical imports */}
+        <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+          <h3 className="text-sm font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Users className="w-4 h-4 text-violet-400" /> Survey Records by Employee (Served By)</h3>
+          {(!s.records.byAgent || s.records.byAgent.length === 0) ? <div className="text-center py-6 text-[var(--muted)] text-xs">No survey records yet.</div> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                  <th className="text-left py-2 px-2">Employee</th>
+                  <th className="text-center py-2 px-2">Records</th>
+                  <th className="text-center py-2 px-2">Answered</th>
+                  <th className="text-center py-2 px-2">Avg Rate</th>
+                </tr></thead>
+                <tbody>
+                  {s.records.byAgent.map((a) => (
+                    <tr key={a.name} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30 transition">
+                      <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.name}</td>
+                      <td className="py-2 px-2 text-center font-mono text-blue-400">{a.count}</td>
+                      <td className="py-2 px-2 text-center font-mono text-emerald-400">{a.answered}</td>
+                      <td className="py-2 px-2 text-center font-mono text-amber-400">{a.avg ? a.avg.toFixed(1) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

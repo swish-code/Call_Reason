@@ -1854,6 +1854,13 @@ export class DB {
       FROM survey_responses resp JOIN users u ON u.id=resp.agent_id
       WHERE ($1::timestamptz IS NULL OR resp.answered_at >= $1) AND ($2::timestamptz IS NULL OR resp.answered_at <= $2)
       GROUP BY u.full_name ORDER BY successful DESC LIMIT 10`)).rows;
+    // Survey records per employee (Served By) — includes historical imports.
+    const recByAgent = (await q(`SELECT COALESCE(NULLIF(TRIM(served_by),''),'—') name,
+        COUNT(*)::int count,
+        SUM(CASE WHEN answered THEN 1 ELSE 0 END)::int answered,
+        COALESCE(ROUND(AVG(rate)::numeric,2),0)::float avg
+      FROM survey_records WHERE ${tW} GROUP BY COALESCE(NULLIF(TRIM(served_by),''),'—')
+      ORDER BY count DESC LIMIT 30`)).rows;
 
     return {
       ratings: {
@@ -1870,7 +1877,7 @@ export class DB {
           successRate: asgTot.total > 0 ? Math.round((asgTot.successful / asgTot.total) * 100) : 0,
           byStatus: asgByStatus,
         },
-        records: { total: recTot.total, answered: recTot.answered, noAnswer: recTot.no_answer, byType: recByType, byBrand: recByBrand },
+        records: { total: recTot.total, answered: recTot.answered, noAnswer: recTot.no_answer, byType: recByType, byBrand: recByBrand, byAgent: recByAgent },
         topAgents: surveyTopAgents,
       },
     };

@@ -2131,6 +2131,46 @@ const RECORD_TYPES: Record<string, {
       };
     },
   },
+  // Historical survey import — keeps EVERY column (main fields + the rest in `extra`).
+  survey_history: {
+    label: "Survey (History)",
+    columns: ["Order Date", "Restaurant", "Branch", "Platform", "Order ID", "Phone Number", "Customer Name", "Order time", "Completion time", "Rate", "Recommending", "Action", "Reachability", "Comment", "Served By"],
+    map: (row, ctx) => {
+      const rate = parseRate(pick(row, "Rate"));
+      const brandLabel = pick(row, "Restaurant", "Restaurant name", "Brand");
+      const branch = pick(row, "Branch");
+      const platLabel = pick(row, "Platform");
+      const comment = pick(row, "Comment");
+      const reach = pick(row, "Reachability");
+      const action = pick(row, "Action");
+      const recommending = pick(row, "Recommending", "Recomending");
+      // "Reached" => answered; but "Not Reached" must NOT count as reached.
+      const reached = /reach/i.test(reach) && !/not\s*reach/i.test(reach);
+      return {
+        record_type: "survey_history",
+        brand_id: resolveBrand(brandLabel, ctx.brandMap), brand_label: brandLabel,
+        platform_id: ctx.platMap.get(platLabel.toLowerCase()) || null, platform_label: platLabel,
+        order_id: pick(row, "Order ID"),
+        phone: normalisePhone(pick(row, "Phone Number", "Number", "Phone")),
+        customer_name: pick(row, "Customer Name") || null,
+        rate,
+        product_feedback: recommending || null,
+        served_by: pick(row, "Served By"),
+        comment: comment || null,
+        note: action || null,
+        record_date: normaliseExcelDate(pick(row, "Order Date", "Date")),
+        answered: reached || isAnswered(rate, recommending, comment),
+        extra: {
+          branch: branch || undefined,
+          order_time: pick(row, "Order time") || undefined,
+          completion_time: pick(row, "Completion time") || undefined,
+          recommending: recommending || undefined,
+          reachability: reach || undefined,
+          action: action || undefined,
+        },
+      };
+    },
+  },
 };
 
 const canBuildTemplates = (role: string) => ["admin", "manager", "supervisor", "leader"].includes(role);
