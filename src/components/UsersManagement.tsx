@@ -27,7 +27,8 @@ import {
   Shield, 
   Save, 
   Key,
-  FileCheck2
+  FileCheck2,
+  Download
 } from "lucide-react";
 
 interface UsersManagementProps {
@@ -225,6 +226,21 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
   };
 
+  // Export the roster to CSV — all users, or Call Center agents only
+  const exportCsv = (ccAgentsOnly: boolean) => {
+    const list = ccAgentsOnly
+      ? users.filter((u) => u.role === "agent" && (u.department || "") === "Call Center")
+      : users;
+    const headers = ["Full Name", "Username", "Account Type", "Role", "Department", "Status"];
+    const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = list.map((u) => [u.full_name || u.name || "", u.username || "", userTypeLabel(u), u.role, u.department || "", u.status].map(esc).join(","));
+    const csv = "﻿" + [headers.map(esc).join(","), ...rows].join("\r\n");
+    const a = document.createElement("a");
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    a.download = `${ccAgentsOnly ? "call_center_agents" : "users"}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+  };
+
   return (
     <div className="space-y-6 font-sans select-none animate-fadeIn" id="users-management-root">
       
@@ -239,13 +255,29 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
           </p>
         </div>
 
-        <button
-          onClick={handleOpenAdd}
-          className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition duration-150 flex items-center gap-2 shadow-lg shadow-blue-900/10 self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          Create New User
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={() => exportCsv(true)}
+            title="Export Call Center agents to CSV"
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" /> Export CC Agents
+          </button>
+          <button
+            onClick={() => exportCsv(false)}
+            title="Export all users to CSV"
+            className="px-4 py-2.5 bg-[var(--bg)] hover:bg-[var(--surface-2)] border border-[var(--border)] text-[var(--text)] font-bold rounded-xl text-xs transition flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" /> Export All
+          </button>
+          <button
+            onClick={handleOpenAdd}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition duration-150 flex items-center gap-2 shadow-lg shadow-blue-900/10"
+          >
+            <Plus className="w-4 h-4" />
+            Create New User
+          </button>
+        </div>
       </div>
 
       {/* Notifications banner */}
