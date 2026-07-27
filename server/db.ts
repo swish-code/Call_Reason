@@ -479,6 +479,7 @@ export class DB {
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS started_at TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS calls_reviewed INTEGER;
+      ALTER TABLE survey_questions ADD COLUMN IF NOT EXISTS segment TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS note TEXT;
@@ -1387,7 +1388,7 @@ export class DB {
 
   static async createSurveyTemplate(data: {
     name: string; brand_id?: string | null; created_by: string; active?: boolean;
-    questions: { text: string; answer_type: string; options?: any; q_order?: number }[];
+    questions: { text: string; answer_type: string; options?: any; q_order?: number; segment?: string | null }[];
   }): Promise<any> {
     const client = await pool.connect();
     try {
@@ -1401,8 +1402,8 @@ export class DB {
         const q = data.questions[i];
         const qid = "sq-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(
-          "INSERT INTO survey_questions (id,template_id,text,answer_type,options,q_order) VALUES ($1,$2,$3,$4,$5,$6)",
-          [qid, id, q.text, q.answer_type || "free_text", q.options ? JSON.stringify(q.options) : null, q.q_order ?? i]
+          "INSERT INTO survey_questions (id,template_id,text,answer_type,options,q_order,segment) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+          [qid, id, q.text, q.answer_type || "free_text", q.options ? JSON.stringify(q.options) : null, q.q_order ?? i, q.segment || null]
         );
       }
       await client.query("COMMIT");
@@ -1417,7 +1418,7 @@ export class DB {
 
   static async updateSurveyTemplate(id: string, data: {
     name?: string; brand_id?: string | null; active?: boolean;
-    questions?: { text: string; answer_type: string; options?: any; q_order?: number }[];
+    questions?: { text: string; answer_type: string; options?: any; q_order?: number; segment?: string | null }[];
   }): Promise<any | undefined> {
     const client = await pool.connect();
     try {
@@ -1433,8 +1434,8 @@ export class DB {
           const q = data.questions[i];
           const qid = "sq-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
           await client.query(
-            "INSERT INTO survey_questions (id,template_id,text,answer_type,options,q_order) VALUES ($1,$2,$3,$4,$5,$6)",
-            [qid, id, q.text, q.answer_type || "free_text", q.options ? JSON.stringify(q.options) : null, q.q_order ?? i]
+            "INSERT INTO survey_questions (id,template_id,text,answer_type,options,q_order,segment) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+            [qid, id, q.text, q.answer_type || "free_text", q.options ? JSON.stringify(q.options) : null, q.q_order ?? i, q.segment || null]
           );
         }
       }

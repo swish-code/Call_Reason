@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { User, SurveyTemplate, SurveyQuestion, AnswerType, Brand } from "../types.js";
+import { User, SurveyTemplate, SurveyQuestion, AnswerType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
   ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2,
@@ -18,7 +18,7 @@ const fmtDate = (ts?: string) => {
 const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none";
 const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
-interface QRow { text: string; answer_type: AnswerType; optionsText: string; }
+interface QRow { text: string; answer_type: AnswerType; optionsText: string; segment: string; }
 
 export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
   const [templates, setTemplates] = useState<SurveyTemplate[]>([]);
@@ -31,7 +31,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
   const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [brandId, setBrandId] = useState("");
-  const [rows, setRows] = useState<QRow[]>([{ text: "", answer_type: "rating_1_5", optionsText: "" }]);
+  const [rows, setRows] = useState<QRow[]>([{ text: "", answer_type: "rating_1_5", optionsText: "", segment: "" }]);
   const [modalLoading, setModalLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState("");
@@ -62,7 +62,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
     setEditId(null);
     setName("");
     setBrandId("");
-    setRows([{ text: "", answer_type: "rating_1_5", optionsText: "" }]);
+    setRows([{ text: "", answer_type: "rating_1_5", optionsText: "", segment: "" }]);
     setModalError("");
   };
 
@@ -88,6 +88,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
             text: q.text || "",
             answer_type: q.answer_type,
             optionsText: (q.options || []).join(", "),
+            segment: q.segment || "",
           })));
         }
       }
@@ -96,7 +97,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
     }
   };
 
-  const addRow = () => setRows(rs => [...rs, { text: "", answer_type: "rating_1_5", optionsText: "" }]);
+  const addRow = () => setRows(rs => [...rs, { text: "", answer_type: "rating_1_5", optionsText: "", segment: "" }]);
   const removeRow = (i: number) => setRows(rs => rs.filter((_, idx) => idx !== i));
   const updateRow = (i: number, patch: Partial<QRow>) =>
     setRows(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
@@ -107,7 +108,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
     const cleaned = rows.filter(r => r.text.trim());
     if (cleaned.length === 0) { setModalError("Add at least one question."); return; }
     const questions = cleaned.map((r, i) => {
-      const q: any = { text: r.text.trim(), answer_type: r.answer_type, q_order: i + 1 };
+      const q: any = { text: r.text.trim(), answer_type: r.answer_type, q_order: i + 1, segment: r.segment || null };
       if (r.answer_type === 'multiple_choice') {
         q.options = r.optionsText.split(',').map(s => s.trim()).filter(Boolean);
       }
@@ -300,6 +301,15 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                                   <option value="yes_no">Yes / No</option>
                                   <option value="multiple_choice">Multiple Choice</option>
                                   <option value="free_text">Free Text</option>
+                                </select>
+                                <select
+                                  value={r.segment}
+                                  onChange={e => updateRow(i, { segment: e.target.value })}
+                                  className={selCls}
+                                  title="Show this question only for a customer segment"
+                                >
+                                  <option value="">All segments</option>
+                                  {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
                                 </select>
                                 {r.answer_type === 'multiple_choice' && (
                                   <input

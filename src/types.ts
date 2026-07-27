@@ -284,6 +284,9 @@ export type ContinuityType = 'one_time_slot' | 'continuous';
 export type CampaignStatus = 'pending' | 'active' | 'full_today' | 'completed' | 'cancelled';
 export type SurveyAssignmentStatus = 'pending' | 'in_progress' | 'successful' | 'no_answer' | 'unreachable' | 'declined';
 
+// Customer segments — a question can target one segment, or be shared (empty = All)
+export const SURVEY_SEGMENTS = ["Loyal", "Occasional", "Low-Frequency", "High-Value Churned"] as const;
+
 export interface SurveyQuestion {
   id: string;
   template_id: string;
@@ -291,6 +294,7 @@ export interface SurveyQuestion {
   answer_type: AnswerType;
   options?: string[];
   q_order: number;
+  segment?: string | null; // "" / null = shows for all segments
 }
 
 export interface SurveyTemplate {

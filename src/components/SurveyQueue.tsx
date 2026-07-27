@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ReactNode } from "react";
-import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacity } from "../types.js";
+import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacity, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
   ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox,
@@ -73,6 +73,9 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
   const [answers, setAnswers] = useState<Record<string, AnswerState>>({});
   const [responseSaving, setResponseSaving] = useState(false);
   const [modalError, setModalError] = useState("");
+  const [segment, setSegment] = useState(""); // agent-chosen customer segment
+  // Questions shown = shared (no segment) + the chosen segment's questions
+  const visibleQuestions = questions.filter(q => !q.segment || q.segment === segment);
 
   const fetchQueue = useCallback(async () => {
     setLoading(true);
@@ -111,6 +114,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
     setAttemptOutcome('no_answer');
     setAttemptNote("");
     setAnswers({});
+    setSegment("");
     setModalError("");
     setDetailLoading(true);
     try {
@@ -170,7 +174,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
   const saveResponse = async () => {
     if (!workId) return;
     setModalError("");
-    const list = questions.map(q => answers[q.id] || { question_id: q.id, answer_value: "", answered: false });
+    const list = visibleQuestions.map(q => answers[q.id] || { question_id: q.id, answer_value: "", answered: false });
     const hasAnswered = list.some(a => a.answered && a.answer_value.trim() !== "");
     if (!hasAnswered) { setModalError("Answer at least one question."); return; }
     setResponseSaving(true);
@@ -395,13 +399,24 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
 
                   {/* Section B: Answers */}
                   <div className="space-y-3 border-t border-[var(--border)] pt-4">
-                    <p className="text-xs font-extrabold text-[var(--heading)]">Answers</p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-extrabold text-[var(--heading)]">Answers</p>
+                      {questions.some(q => q.segment) && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-[11px] font-bold text-[var(--muted)]">Customer Segment:</label>
+                          <select value={segment} onChange={e => setSegment(e.target.value)} className="px-3 py-1.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs font-bold focus:ring-1 focus:ring-blue-500 focus:outline-none [&>option]:bg-[var(--surface)]">
+                            <option value="">— Select —</option>
+                            {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
 
-                    {questions.length === 0 ? (
-                      <p className="text-[11px] text-[var(--muted)]">No questions defined for this survey.</p>
+                    {visibleQuestions.length === 0 ? (
+                      <p className="text-[11px] text-[var(--muted)]">{questions.some(q => q.segment) ? "Select the customer segment to load its questions." : "No questions defined for this survey."}</p>
                     ) : (
                       <div className="space-y-4">
-                        {questions.map((q, i) => {
+                        {visibleQuestions.map((q, i) => {
                           const val = answers[q.id]?.answer_value || "";
                           return (
                             <div key={q.id} className="p-4 bg-[var(--bg)] border border-[var(--border)] rounded-2xl space-y-3">
