@@ -49,6 +49,7 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
   const [to, setTo] = useState("");
 
   const typeLabel = useCallback((key?: string) => {
+    if (key === 'survey_live') return 'Survey (Live)';
     const t = types.find(x => x.key === key);
     return t?.label || key || '—';
   }, [types]);

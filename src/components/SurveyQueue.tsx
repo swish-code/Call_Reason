@@ -72,6 +72,8 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
 
   const [answers, setAnswers] = useState<Record<string, AnswerState>>({});
   const [responseSaving, setResponseSaving] = useState(false);
+  const [actionType, setActionType] = useState<'no_action' | 'complaint'>('no_action');
+  const [notReachedSaving, setNotReachedSaving] = useState(false);
   const [modalError, setModalError] = useState("");
   const [segment, setSegment] = useState(""); // agent-chosen customer segment
   // Questions shown = shared (no segment) + the chosen segment's questions
@@ -115,6 +117,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
     setAttemptNote("");
     setAnswers({});
     setSegment("");
+    setActionType('no_action');
     setModalError("");
     setDetailLoading(true);
     try {
@@ -182,7 +185,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
       const res = await apiFetch(`/api/surveys/assignments/${workId}/response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: list }),
+        body: JSON.stringify({ answers: list, reachability: 'reached', action_type: actionType }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setModalError(data.error || "Failed to save response."); return; }
@@ -193,6 +196,30 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
       setModalError(e.message || "Response error.");
     } finally {
       setResponseSaving(false);
+    }
+  };
+
+  // Close the survey as Not Reached (No Action) — no answers required
+  const markNotReached = async () => {
+    if (!workId) return;
+    if (!window.confirm("Mark this survey as Not Reached (No Action)?\nIt will stay available for reporting.")) return;
+    setModalError("");
+    setNotReachedSaving(true);
+    try {
+      const res = await apiFetch(`/api/surveys/assignments/${workId}/response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reachability: 'not_reached', action_type: 'no_action' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setModalError(data.error || "Failed to update."); return; }
+      closeWork();
+      fetchQueue();
+      fetchCapacity();
+    } catch (e: any) {
+      setModalError(e.message || "Update error.");
+    } finally {
+      setNotReachedSaving(false);
     }
   };
 
@@ -507,23 +534,42 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                     )}
                   </div>
 
+                  {/* Action type for a reached/completed survey */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wide">Action</span>
+                    <select value={actionType} onChange={e => setActionType(e.target.value as 'no_action' | 'complaint')} className={selCls}>
+                      <option value="no_action">No Action</option>
+                      <option value="complaint">Complaint</option>
+                    </select>
+                  </div>
+
                   {modalError && (
                     <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400 flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {modalError}
                     </div>
                   )}
 
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button onClick={closeWork} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">
-                      Close
-                    </button>
+                  <div className="flex justify-between gap-2 pt-1">
                     <button
-                      onClick={saveResponse}
-                      disabled={responseSaving || questions.length === 0}
-                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
+                      onClick={markNotReached}
+                      disabled={notReachedSaving || responseSaving}
+                      className="px-4 py-2 bg-rose-600/90 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+                      title="Customer did not answer — mark as Not Reached (No Action)"
                     >
-                      {responseSaving ? 'Saving…' : 'Save Response'}
+                      {notReachedSaving ? 'Saving…' : 'Not Reached (No Action)'}
                     </button>
+                    <div className="flex gap-2">
+                      <button onClick={closeWork} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">
+                        Close
+                      </button>
+                      <button
+                        onClick={saveResponse}
+                        disabled={responseSaving || questions.length === 0}
+                        className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
+                      >
+                        {responseSaving ? 'Saving…' : 'Reached — Save Response'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

@@ -1885,16 +1885,25 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
 // List ratings with filters. Agents only ever see ratings assigned to them.
 app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   const isAgent = req.user.role === "agent";
-  const { brand_id, platform_id, action_status, requires_action, assigned, min_rating, max_rating } = req.query;
+  const { brand_id, platform_id, action_status, requires_action, assigned, min_rating, max_rating, has_comment } = req.query;
+  // Resolve the "assigned" filter: agents are always scoped to themselves; managers can pick
+  // "me", "unassigned", or a specific agent id.
+  let assignedParam: string | undefined;
+  let assignedAgentId: string | undefined;
+  if (isAgent) { assignedParam = "me"; assignedAgentId = req.user.id; }
+  else if (assigned === "me") { assignedParam = "me"; assignedAgentId = req.user.id; }
+  else if (assigned === "unassigned") { assignedParam = "unassigned"; }
+  else if (assigned) { assignedAgentId = assigned as string; }
   const ratings = await DB.getRatings({
     brand_id: brand_id as string || undefined,
     platform_id: platform_id as string || undefined,
     action_status: action_status as string || undefined,
     requires_action: requires_action === "true" ? true : undefined,
-    assigned: isAgent ? "me" : (assigned as string || undefined),
-    assigned_agent_id: isAgent || assigned === "me" ? req.user.id : undefined,
+    assigned: assignedParam,
+    assigned_agent_id: assignedAgentId,
     min_rating: min_rating ? Number(min_rating) : undefined,
     max_rating: max_rating ? Number(max_rating) : undefined,
+    has_comment: has_comment === "true" ? true : has_comment === "false" ? false : undefined,
     limit: Math.min(Number(req.query.limit) || 5000, 20000),
   });
   res.json(ratings);
@@ -2343,20 +2352,47 @@ app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(a
   res.json(out);
 }));
 
-// Record a successful response (answers)
+// Record an outcome: Reached (with answers) or Not Reached (No Action)
 app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(async (req: any, res) => {
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
-  const { answers } = req.body;
-  if (!Array.isArray(answers) || answers.length === 0) return res.status(400).json({ error: "Answers are required." });
-  const anyAnswered = answers.some((x: any) => x.answered && String(x.answer_value ?? "").trim() !== "");
-  if (!anyAnswered) return res.status(400).json({ error: "At least one question must be answered." });
+  const { answers, reachability, action_type } = req.body;
+  const notReached = reachability === "not_reached";
+  if (!notReached) {
+    if (!Array.isArray(answers) || answers.length === 0) return res.status(400).json({ error: "Answers are required." });
+    const anyAnswered = answers.some((x: any) => x.answered && String(x.answer_value ?? "").trim() !== "");
+    if (!anyAnswered) return res.status(400).json({ error: "At least one question must be answered." });
+  }
   const updated = await DB.addSurveyResponse({
     assignment_id: req.params.id, agent_id: req.user.id,
-    answers: answers.map((x: any) => ({ question_id: x.question_id, answer_value: x.answer_value, answered: !!x.answered })),
+    answers: notReached ? [] : answers.map((x: any) => ({ question_id: x.question_id, answer_value: x.answer_value, answered: !!x.answered })),
     brand_id: a.brand_id, customer_phone: a.customer_phone,
+    reachability: notReached ? "not_reached" : "reached",
+    action_type: action_type === "complaint" ? "complaint" : "no_action",
   });
   res.json(updated);
+}));
+
+// View All Surveys — every assignment across campaigns, with filters (for reporting + supervision)
+app.get("/api/surveys/all", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const { brand_id, agent_id, status, action_type, from, to } = req.query;
+  res.json(await DB.getAllSurveyAssignments({
+    brand_id: brand_id as string || undefined,
+    agent_id: agent_id as string || undefined,
+    status: status as string || undefined,
+    action_type: action_type as string || undefined,
+    from: from as string || undefined,
+    to: to as string || undefined,
+  }));
+}));
+
+// Manually assign / reassign / unassign a single survey to any active agent (supervisors+)
+app.post("/api/surveys/assignments/:id/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  const { agent_id } = req.body;
+  res.json(await DB.assignSurveyAssignment(req.params.id, agent_id || null));
 }));
 
 // Campaign assignments + manual distribution

@@ -1,14 +1,15 @@
 import { useState, type ReactNode } from "react";
 import { User } from "../types.js";
-import { Megaphone, ListChecks, ClipboardList, Database } from "lucide-react";
+import { Megaphone, ListChecks, ClipboardList, Database, LayoutList } from "lucide-react";
 import SurveyCampaigns from "./SurveyCampaigns.tsx";
 import SurveyQueue from "./SurveyQueue.tsx";
 import SurveyTemplates from "./SurveyTemplates.tsx";
 import SurveysData from "./SurveysData.tsx";
+import AllSurveys from "./AllSurveys.tsx";
 
 interface SurveysProps { currentUser: User; }
 
-type Tab = "campaigns" | "queue" | "templates" | "data";
+type Tab = "campaigns" | "queue" | "all" | "templates" | "data";
 
 export default function Surveys({ currentUser }: SurveysProps) {
   const role = currentUser.role;
@@ -17,6 +18,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
   const tabs: { key: Tab; label: string; icon: ReactNode; visible: boolean }[] = [
     { key: "campaigns", label: "Campaigns", icon: <Megaphone className="w-4 h-4" />, visible: !isAgent },
     { key: "queue", label: "Survey Queue", icon: <ListChecks className="w-4 h-4" />, visible: true },
+    { key: "all", label: "All Surveys", icon: <LayoutList className="w-4 h-4" />, visible: !isAgent },
     { key: "templates", label: "Templates", icon: <ClipboardList className="w-4 h-4" />, visible: ["admin", "manager", "supervisor", "leader"].includes(role) },
     { key: "data", label: "Survey Data", icon: <Database className="w-4 h-4" />, visible: !isAgent },
   ];
@@ -49,6 +51,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
       {/* Content */}
       {activeTab === "campaigns" && <SurveyCampaigns currentUser={currentUser} />}
       {activeTab === "queue" && <SurveyQueue currentUser={currentUser} />}
+      {activeTab === "all" && <AllSurveys currentUser={currentUser} />}
       {activeTab === "templates" && <SurveyTemplates currentUser={currentUser} />}
       {activeTab === "data" && <SurveysData currentUser={currentUser} />}
     </div>

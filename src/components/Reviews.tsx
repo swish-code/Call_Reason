@@ -126,6 +126,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [actionStatus, setActionStatus] = useState("");
   const [assigned, setAssigned] = useState("");
   const [requiresAction, setRequiresAction] = useState(false);
+  const [ratingFilter, setRatingFilter] = useState(""); // "", "1".."5"
+  const [commentFilter, setCommentFilter] = useState(""); // "", "with", "without"
 
   // Modals
   const [showUpload, setShowUpload] = useState(false);
@@ -172,8 +174,10 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     if (actionStatus) p.set('action_status', actionStatus);
     if (assigned) p.set('assigned', assigned);
     if (requiresAction) p.set('requires_action', 'true');
+    if (ratingFilter) { p.set('min_rating', ratingFilter); p.set('max_rating', ratingFilter); }
+    if (commentFilter) p.set('has_comment', commentFilter === 'with' ? 'true' : 'false');
     return p.toString();
-  }, [brandId, platformId, actionStatus, assigned, requiresAction]);
+  }, [brandId, platformId, actionStatus, assigned, requiresAction, ratingFilter, commentFilter]);
 
   const fetchRatings = useCallback(async () => {
     setLoading(true);
@@ -439,11 +443,26 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           <option value="resolved">Complaint Recorded</option>
           <option value="unreachable">Unreachable</option>
         </select>
+        <select value={ratingFilter} onChange={e => setRatingFilter(e.target.value)} className={selCls}>
+          <option value="">All Ratings</option>
+          <option value="5">★ 5</option>
+          <option value="4">★ 4</option>
+          <option value="3">★ 3</option>
+          <option value="2">★ 2</option>
+          <option value="1">★ 1</option>
+        </select>
+        <select value={commentFilter} onChange={e => setCommentFilter(e.target.value)} className={selCls}>
+          <option value="">All Comments</option>
+          <option value="with">With comment</option>
+          <option value="without">Without comment</option>
+        </select>
         {!isAgent && (
           <select value={assigned} onChange={e => setAssigned(e.target.value)} className={selCls}>
-            <option value="">All</option>
+            <option value="">All Agents</option>
             <option value="me">Assigned to me</option>
             <option value="unassigned">Unassigned</option>
+            {agents.length > 0 && <option disabled>──────────</option>}
+            {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
           </select>
         )}
         <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-[var(--text)] font-bold">

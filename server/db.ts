@@ -480,6 +480,9 @@ export class DB {
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS calls_reviewed INTEGER;
       ALTER TABLE survey_questions ADD COLUMN IF NOT EXISTS segment TEXT;
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS reachability TEXT;
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS action_type TEXT DEFAULT 'no_action';
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS note TEXT;
@@ -1209,7 +1212,7 @@ export class DB {
   static async getRatings(filter: {
     brand_id?: string; platform_id?: string; action_status?: string;
     requires_action?: boolean; assigned?: string; assigned_agent_id?: string;
-    min_rating?: number; max_rating?: number; limit?: number; offset?: number;
+    min_rating?: number; max_rating?: number; has_comment?: boolean; limit?: number; offset?: number;
   } = {}): Promise<any[]> {
     const clauses: string[] = [];
     const values: any[] = [];
@@ -1221,9 +1224,12 @@ export class DB {
     clauses.push(`r.action_status <> 'no_action_needed'`);
     if (filter.requires_action === true) { clauses.push(`r.requires_action = true`); }
     if (filter.assigned === "me" && filter.assigned_agent_id) { clauses.push(`r.assigned_agent_id = $${idx++}`); values.push(filter.assigned_agent_id); }
-    if (filter.assigned === "unassigned") { clauses.push(`r.assigned_agent_id IS NULL`); }
+    else if (filter.assigned === "unassigned") { clauses.push(`r.assigned_agent_id IS NULL`); }
+    else if (filter.assigned_agent_id) { clauses.push(`r.assigned_agent_id = $${idx++}`); values.push(filter.assigned_agent_id); }
     if (filter.min_rating != null) { clauses.push(`r.rating >= $${idx++}`); values.push(filter.min_rating); }
     if (filter.max_rating != null) { clauses.push(`r.rating <= $${idx++}`); values.push(filter.max_rating); }
+    if (filter.has_comment === true) { clauses.push(`(r.review_text IS NOT NULL AND btrim(r.review_text) <> '')`); }
+    else if (filter.has_comment === false) { clauses.push(`(r.review_text IS NULL OR btrim(r.review_text) = '')`); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const lim = filter.limit || 100;
     const off = filter.offset || 0;
@@ -1627,8 +1633,10 @@ export class DB {
     // Determine new status
     const sets: string[] = ["attempt_count = $1"]; const vals: any[] = [n]; let idx = 2;
     let newStatus = "in_progress";
+    let becameNotReached = false;
     if (data.outcome === "declined") {
       newStatus = "declined";
+      becameNotReached = true;
     } else if (data.outcome !== "answered" && n >= 3) {
       if (asg.continuity_type === "continuous") {
         // Reschedule to next day, reset attempts, keep pending
@@ -1637,11 +1645,30 @@ export class DB {
         sets.push(`scheduled_date = CURRENT_DATE + 1`);
       } else {
         newStatus = "unreachable";
+        becameNotReached = true;
       }
     }
     sets.push(`status = $${idx++}`); vals.push(newStatus);
+    // When the call reaches a terminal "Not Reached (No Action)" state, stamp reachability + completion time
+    if (becameNotReached) {
+      sets.push(`reachability = 'not_reached'`);
+      sets.push(`action_type = 'no_action'`);
+      sets.push(`completed_at = now()`);
+    }
     vals.push(data.assignment_id);
     await pool.query(`UPDATE survey_assignments SET ${sets.join(",")} WHERE id = $${idx}`, vals);
+
+    // Mirror a Not Reached (No Action) outcome into Survey Data so it stays available for reporting
+    if (becameNotReached) {
+      const agentName = asg.agent_name || (await pool.query("SELECT full_name FROM users WHERE id = $1", [data.agent_id])).rows[0]?.full_name || null;
+      const srid = "srec-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
+      await pool.query(
+        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,answered,note,extra,record_date,uploaded_by,created_at)
+         VALUES ($1,'survey_live',$2,$3,$4,$5,false,'no_action',$6, to_char(now() + interval '3 hours','YYYY-MM-DD'),$7, now())`,
+        [srid, asg.brand_id || null, asg.brand_name || null, asg.customer_phone || null, agentName,
+         JSON.stringify({ reachability: "not_reached", action_type: "no_action", campaign_id: asg.campaign_id, outcome: data.outcome }), data.agent_id]
+      );
+    }
 
     return { attempt: rows[0], assignment: await DB.getSurveyAssignmentById(data.assignment_id) };
   }
@@ -1650,24 +1677,62 @@ export class DB {
     assignment_id: string; agent_id: string;
     answers: { question_id: string; answer_value?: string; answered: boolean }[];
     brand_id: string | null; customer_phone: string;
+    reachability?: string; action_type?: string;
   }): Promise<any> {
+    const reachability = data.reachability === "not_reached" ? "not_reached" : "reached";
+    const action_type = data.action_type === "complaint" ? "complaint" : "no_action";
+    const answered = reachability === "reached";
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const asg = await DB.getSurveyAssignmentById(data.assignment_id);
       const rid = "sresp-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
       await client.query(
         "INSERT INTO survey_responses (id,assignment_id,agent_id,answered_at) VALUES ($1,$2,$3,now())",
         [rid, data.assignment_id, data.agent_id]
       );
-      for (let i = 0; i < data.answers.length; i++) {
-        const a = data.answers[i];
+      // Derive a headline rate + comment for the Survey Data record from the answers
+      let rate: number | null = null;
+      let comment: string | null = null;
+      const answers = answered ? data.answers : [];
+      for (let i = 0; i < answers.length; i++) {
+        const a = answers[i];
         const aid = "sans-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(
           "INSERT INTO survey_answers (id,response_id,question_id,answer_value,answered) VALUES ($1,$2,$3,$4,$5)",
           [aid, rid, a.question_id, a.answer_value || null, !!a.answered]
         );
       }
-      await client.query("UPDATE survey_assignments SET status = 'successful' WHERE id = $1", [data.assignment_id]);
+      if (answered && answers.length) {
+        const qids = answers.map((a) => a.question_id).filter(Boolean);
+        const { rows: qs } = await client.query("SELECT id, answer_type FROM survey_questions WHERE id = ANY($1)", [qids]);
+        const qtype = new Map(qs.map((q: any) => [q.id, q.answer_type]));
+        for (const a of answers) {
+          const t = qtype.get(a.question_id);
+          if ((t === "rating_1_5" || t === "rating_1_10") && rate == null) {
+            const n = parseInt(String(a.answer_value), 10);
+            if (!isNaN(n)) rate = t === "rating_1_10" ? Math.max(1, Math.round(n / 2)) : n;
+          } else if (t === "free_text" && a.answer_value && !comment) {
+            comment = String(a.answer_value);
+          }
+        }
+      }
+      // Terminal status: successful when reached, unreachable when not
+      const newStatus = answered ? "successful" : "unreachable";
+      await client.query(
+        "UPDATE survey_assignments SET status = $2, reachability = $3, action_type = $4, completed_at = now() WHERE id = $1",
+        [data.assignment_id, newStatus, reachability, action_type]
+      );
+      // Mirror the outcome into Survey Data (survey_records) so it shows in reports/history
+      const agentName = asg?.agent_name || (await client.query("SELECT full_name FROM users WHERE id = $1", [data.agent_id])).rows[0]?.full_name || null;
+      const complaint = action_type === "complaint" ? (comment || "Complaint") : null;
+      const srid = "srec-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
+      await client.query(
+        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,rate,answered,comment,complaint,note,extra,record_date,uploaded_by,created_at)
+         VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, to_char(now() + interval '3 hours','YYYY-MM-DD'), $12, now())`,
+        [srid, data.brand_id, asg?.brand_name || null, data.customer_phone, agentName, rate, answered,
+         comment, complaint, action_type, JSON.stringify({ reachability, action_type, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id]
+      );
       // Update contact recency
       const ccid = "cc-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
       await client.query(
@@ -1684,6 +1749,43 @@ export class DB {
     } finally {
       client.release();
     }
+  }
+
+  // Manually assign (or reassign, or clear) a single survey assignment
+  static async assignSurveyAssignment(assignmentId: string, agentId: string | null): Promise<any> {
+    await pool.query("UPDATE survey_assignments SET assigned_agent_id = $1 WHERE id = $2", [agentId, assignmentId]);
+    return DB.getSurveyAssignmentById(assignmentId);
+  }
+
+  // All survey assignments across campaigns, for the "View All Surveys" page + reporting
+  static async getAllSurveyAssignments(filter: {
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
+  } = {}): Promise<{ records: any[]; total: number; cap: number }> {
+    const clauses: string[] = []; const values: any[] = []; let idx = 1;
+    if (filter.brand_id) { clauses.push(`a.brand_id = $${idx++}`); values.push(filter.brand_id); }
+    if (filter.agent_id === "unassigned") { clauses.push(`a.assigned_agent_id IS NULL`); }
+    else if (filter.agent_id) { clauses.push(`a.assigned_agent_id = $${idx++}`); values.push(filter.agent_id); }
+    // Status buckets: pending (pending+in_progress), completed (successful), not_reached (unreachable+declined)
+    if (filter.status === "pending") { clauses.push(`a.status IN ('pending','in_progress')`); }
+    else if (filter.status === "completed") { clauses.push(`a.status = 'successful'`); }
+    else if (filter.status === "not_reached") { clauses.push(`a.status IN ('unreachable','declined')`); }
+    if (filter.action_type) { clauses.push(`a.action_type = $${idx++}`); values.push(filter.action_type); }
+    if (filter.from) { clauses.push(`a.created_at >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`a.created_at <= $${idx++}`); values.push(filter.to); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const CAP = 1000;
+    const { rows } = await pool.query(`
+      SELECT a.*, b.brand_name, u.full_name AS agent_name, c.assignment_mode, t.name AS template_name
+      FROM survey_assignments a
+      LEFT JOIN brands b ON b.id = a.brand_id
+      LEFT JOIN users u ON u.id = a.assigned_agent_id
+      LEFT JOIN survey_campaigns c ON c.id = a.campaign_id
+      LEFT JOIN survey_templates t ON t.id = c.template_id
+      ${where}
+      ORDER BY a.created_at DESC LIMIT ${CAP}
+    `, values);
+    const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int AS total FROM survey_assignments a ${where}`, values);
+    return { records: rows, total: cnt[0]?.total ?? rows.length, cap: CAP };
   }
 
   static async getCampaignAssignments(campaignId: string): Promise<any[]> {
