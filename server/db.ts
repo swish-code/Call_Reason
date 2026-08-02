@@ -483,6 +483,7 @@ export class DB {
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS reachability TEXT;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS action_type TEXT DEFAULT 'no_action';
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS segment TEXT;
       ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS segment TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
@@ -1541,7 +1542,7 @@ export class DB {
     return m;
   }
 
-  static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string }[]): Promise<number> {
+  static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment?: string | null }[]): Promise<number> {
     if (!rows.length) return 0;
     const client = await pool.connect();
     try {
@@ -1550,9 +1551,9 @@ export class DB {
         const a = rows[i];
         const id = "sasg-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(
-          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,created_at)
-           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,now())`,
-          [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date]
+          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at)
+           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now())`,
+          [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date, a.segment || null]
         );
       }
       await client.query("COMMIT");

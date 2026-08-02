@@ -2056,7 +2056,7 @@ const SURVEY_DEDUP_DAYS = Number(process.env.SURVEY_DEDUP_DAYS || 10);
 
 // Max numbers a role may request in one campaign
 const REQUEST_CAP: Record<string, number> = {
-  admin: 100000, owner: 100000, manager: 1000, supervisor: 1000, leader: 1000,
+  admin: 100000, owner: 100000, manager: 100000, supervisor: 100000, leader: 100000,
 };
 
 const addDays = (iso: string, n: number): string => {
@@ -2259,7 +2259,7 @@ app.patch("/api/survey-campaigns/:id", authenticateJWT, asyncHandler(async (req:
 
 // Numbers upload template
 app.get("/api/survey-campaigns/numbers/template", authenticateJWT, asyncHandler(async (_req, res) => {
-  const ws = XLSX.utils.aoa_to_sheet([["Brand", "Customer Phone"]]);
+  const ws = XLSX.utils.aoa_to_sheet([["Brand", "Customer Phone", "Segment"]]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Numbers");
   res.json({ filename: "campaign_numbers_template.xlsx", file: XLSX.write(wb, { type: "base64", bookType: "xlsx" }) });
@@ -2285,7 +2285,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     errors: [] as { row: number; message: string }[],
   };
   const seen = new Set<string>();
-  const candidates: string[] = [];
+  const candidates: { phone: string; segment: string | null }[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const phone = normalisePhone(pick(rows[i], "Customer Phone", "Phone", "Phone Number", "Mobile"));
@@ -2294,22 +2294,23 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     seen.add(phone);
     if (await DB.wasRecentlyContacted(campaign.brand_id, phone, SURVEY_DEDUP_DAYS)) { result.duplicates_10day++; continue; }
     if (await DB.isPhoneQueued(campaign.brand_id, phone)) { result.already_queued++; continue; }
-    candidates.push(phone);
+    const segment = pick(rows[i], "Segment", "Customer Segment") || null;
+    candidates.push({ phone, segment });
   }
 
   // Distribute across days honouring the global daily capacity
   const today = await DB.getToday();
   const counts = await DB.getPendingCountsByDate();
   const assignedAgent = campaign.assignment_mode === "assigned" ? (campaign.default_agent_id || null) : null;
-  const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string }[] = [];
+  const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment: string | null }[] = [];
   let offset = 0;
   const byDay = new Map<string, number>();
-  for (const phone of candidates) {
+  for (const cand of candidates) {
     let date = addDays(today, offset);
     while ((counts.get(date) || 0) >= DAILY_SURVEY_LIMIT) { offset++; date = addDays(today, offset); }
     counts.set(date, (counts.get(date) || 0) + 1);
     byDay.set(date, (byDay.get(date) || 0) + 1);
-    toInsert.push({ campaign_id: campaign.id, brand_id: campaign.brand_id, customer_phone: phone, assigned_agent_id: assignedAgent, scheduled_date: date });
+    toInsert.push({ campaign_id: campaign.id, brand_id: campaign.brand_id, customer_phone: cand.phone, assigned_agent_id: assignedAgent, scheduled_date: date, segment: cand.segment });
   }
   result.inserted = await DB.addSurveyAssignments(toInsert);
   result.scheduled = Array.from(byDay.entries()).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));

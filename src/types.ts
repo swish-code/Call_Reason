@@ -343,6 +343,10 @@ export interface SurveyAssignment {
   attempt_count: number;
   status: SurveyAssignmentStatus;
   scheduled_date: string;
+  segment?: string | null;
+  reachability?: string | null;
+  action_type?: string | null;
+  completed_at?: string | null;
   template_id?: string | null;
   template_name?: string;
   survey_type?: SurveyType;

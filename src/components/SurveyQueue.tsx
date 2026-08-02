@@ -125,6 +125,8 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
       if (res.ok) {
         const data: SurveyAssignment = await res.json();
         setAssignment(data);
+        // Auto-select the customer's segment (from the uploaded number) so the right questions load
+        if (data.segment) setSegment(data.segment);
         const qs = data.questions || [];
         setQuestions(qs);
         setAttempts(data.attempts || []);
@@ -435,6 +437,9 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                             <option value="">— Select —</option>
                             {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
+                          {assignment?.segment && (
+                            <span className="text-[10px] font-bold text-emerald-400" title="Detected from the uploaded customer segment">● Auto</span>
+                          )}
                         </div>
                       )}
                     </div>
