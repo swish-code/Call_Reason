@@ -387,6 +387,7 @@ export interface SurveyRecord {
   complaint?: string;
   note?: string;
   trials?: string;
+  segment?: string;
   extra?: any;
   record_date?: string;
   uploaded_by?: string;

@@ -185,7 +185,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
       const res = await apiFetch(`/api/surveys/assignments/${workId}/response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: list, reachability: 'reached', action_type: actionType }),
+        body: JSON.stringify({ answers: list, reachability: 'reached', action_type: actionType, segment: segment || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setModalError(data.error || "Failed to save response."); return; }

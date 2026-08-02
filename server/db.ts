@@ -483,6 +483,7 @@ export class DB {
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS reachability TEXT;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS action_type TEXT DEFAULT 'no_action';
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+      ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS segment TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS note TEXT;
@@ -1677,7 +1678,7 @@ export class DB {
     assignment_id: string; agent_id: string;
     answers: { question_id: string; answer_value?: string; answered: boolean }[];
     brand_id: string | null; customer_phone: string;
-    reachability?: string; action_type?: string;
+    reachability?: string; action_type?: string; segment?: string;
   }): Promise<any> {
     const reachability = data.reachability === "not_reached" ? "not_reached" : "reached";
     const action_type = data.action_type === "complaint" ? "complaint" : "no_action";
@@ -1728,10 +1729,10 @@ export class DB {
       const complaint = action_type === "complaint" ? (comment || "Complaint") : null;
       const srid = "srec-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
       await client.query(
-        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,rate,answered,comment,complaint,note,extra,record_date,uploaded_by,created_at)
-         VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, to_char(now() + interval '3 hours','YYYY-MM-DD'), $12, now())`,
+        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,rate,answered,comment,complaint,note,segment,extra,record_date,uploaded_by,created_at)
+         VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, to_char(now() + interval '3 hours','YYYY-MM-DD'), $13, now())`,
         [srid, data.brand_id, asg?.brand_name || null, data.customer_phone, agentName, rate, answered,
-         comment, complaint, action_type, JSON.stringify({ reachability, action_type, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id]
+         comment, complaint, action_type, data.segment || null, JSON.stringify({ reachability, action_type, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id]
       );
       // Update contact recency
       const ccid = "cc-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
@@ -1839,13 +1840,13 @@ export class DB {
         const r = records[i];
         const id = "srec-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(`
-          INSERT INTO survey_records (id,record_type,brand_id,brand_label,platform_id,platform_label,order_id,phone,customer_name,item_name,rate,product_feedback,served_by,answered,customer_suggestion,comment,complaint,note,trials,extra,record_date,uploaded_by,created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,now())
+          INSERT INTO survey_records (id,record_type,brand_id,brand_label,platform_id,platform_label,order_id,phone,customer_name,item_name,rate,product_feedback,served_by,answered,customer_suggestion,comment,complaint,note,trials,segment,extra,record_date,uploaded_by,created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,now())
         `, [id, r.record_type, r.brand_id || null, r.brand_label || null, r.platform_id || null, r.platform_label || null,
             r.order_id || null, r.phone || null, r.customer_name || null, r.item_name || null,
             r.rate ?? null, r.product_feedback || null, r.served_by || null, !!r.answered,
             r.customer_suggestion || null, r.comment || null, r.complaint || null, r.note || null,
-            r.trials || null, r.extra ? JSON.stringify(r.extra) : null, r.record_date || null, r.uploaded_by]);
+            r.trials || null, r.segment || null, r.extra ? JSON.stringify(r.extra) : null, r.record_date || null, r.uploaded_by]);
       }
       await client.query("COMMIT");
       return records.length;

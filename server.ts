@@ -2097,7 +2097,7 @@ const RECORD_TYPES: Record<string, {
 }> = {
   new_items: {
     label: "New Items Survey",
-    columns: ["Order Date", "OrderSource", "NewItemName", "New Order ID", "MobileNo", "Customer suggestion for the item", "Comment", "Complaint if needed", "Served By", "Product Feedback", "Rate", "trials"],
+    columns: ["Order Date", "OrderSource", "NewItemName", "New Order ID", "MobileNo", "Customer suggestion for the item", "Comment", "Complaint if needed", "Served By", "Product Feedback", "Rate", "trials", "Segment"],
     map: (row) => {
       const rate = parseRate(pick(row, "Rate"));
       const pf = pick(row, "Product Feedback");
@@ -2115,6 +2115,7 @@ const RECORD_TYPES: Record<string, {
         comment: comment || null,
         complaint: pick(row, "Complaint if needed", "Complaint"),
         trials: pick(row, "trials", "Trials"),
+        segment: pick(row, "Segment") || null,
         record_date: normaliseExcelDate(pick(row, "Order Date")),
         answered: isAnswered(rate, pf, comment),
       };
@@ -2122,7 +2123,7 @@ const RECORD_TYPES: Record<string, {
   },
   complaints: {
     label: "Complaints Survey",
-    columns: ["Brand / Branch", "Platform", "Order ID", "Phone Number", "Rate", "Notes", "Served By"],
+    columns: ["Brand / Branch", "Platform", "Order ID", "Phone Number", "Rate", "Notes", "Served By", "Segment"],
     map: (row, ctx) => {
       const rate = parseRate(pick(row, "Rate"));
       const brandLabel = pick(row, "Brand / Branch", "Brand/Branch", "Brand", "Branch");
@@ -2136,6 +2137,7 @@ const RECORD_TYPES: Record<string, {
         phone: normalisePhone(pick(row, "Phone Number", "Phone")),
         rate, note: note || null,
         served_by: pick(row, "Served By"),
+        segment: pick(row, "Segment") || null,
         answered: isAnswered(rate, null, note),
       };
     },
@@ -2143,7 +2145,7 @@ const RECORD_TYPES: Record<string, {
   // Historical survey import — keeps EVERY column (main fields + the rest in `extra`).
   survey_history: {
     label: "Survey (History)",
-    columns: ["Order Date", "Restaurant", "Branch", "Platform", "Order ID", "Phone Number", "Customer Name", "Order time", "Completion time", "Rate", "Recommending", "Action", "Reachability", "Comment", "Served By"],
+    columns: ["Order Date", "Restaurant", "Branch", "Platform", "Order ID", "Phone Number", "Customer Name", "Order time", "Completion time", "Rate", "Recommending", "Action", "Reachability", "Segment", "Comment", "Served By"],
     map: (row, ctx) => {
       const rate = parseRate(pick(row, "Rate"));
       const brandLabel = pick(row, "Restaurant", "Restaurant name", "Brand");
@@ -2167,6 +2169,7 @@ const RECORD_TYPES: Record<string, {
         served_by: pick(row, "Served By"),
         comment: comment || null,
         note: action || null,
+        segment: pick(row, "Segment") || null,
         record_date: normaliseExcelDate(pick(row, "Order Date", "Date")),
         answered: reached || isAnswered(rate, recommending, comment),
         extra: {
@@ -2356,7 +2359,7 @@ app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(a
 app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(async (req: any, res) => {
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
-  const { answers, reachability, action_type } = req.body;
+  const { answers, reachability, action_type, segment } = req.body;
   const notReached = reachability === "not_reached";
   if (!notReached) {
     if (!Array.isArray(answers) || answers.length === 0) return res.status(400).json({ error: "Answers are required." });
@@ -2369,6 +2372,7 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
     brand_id: a.brand_id, customer_phone: a.customer_phone,
     reachability: notReached ? "not_reached" : "reached",
     action_type: action_type === "complaint" ? "complaint" : "no_action",
+    segment: segment || undefined,
   });
   res.json(updated);
 }));

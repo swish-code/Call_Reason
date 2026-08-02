@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SurveyRecord, SurveyRecordType, Brand } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Database, RefreshCw, AlertCircle, Copy, Trash2 } from "lucide-react";
+import { Database, RefreshCw, AlertCircle, Copy, Trash2, Download } from "lucide-react";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 
 interface SurveysDataProps { currentUser: User; }
@@ -117,6 +117,41 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     else { const d = await res.json().catch(() => ({})); setError(d.error || "Failed."); }
   };
 
+  // Export the currently loaded (filtered) survey records to CSV — includes every field + Segment
+  const exportCsv = () => {
+    if (!records.length) { alert("No records to export."); return; }
+    const cols: { key: string; label: string; val: (r: SurveyRecord) => any }[] = [
+      { key: 'type', label: 'Type', val: r => typeLabel(r.record_type) },
+      { key: 'brand', label: 'Brand', val: r => r.brand_name || r.brand_label || '' },
+      { key: 'platform', label: 'Platform', val: r => r.platform_name || r.platform_label || '' },
+      { key: 'order', label: 'Order ID', val: r => r.order_id || '' },
+      { key: 'item', label: 'Item', val: r => r.item_name || '' },
+      { key: 'phone', label: 'Phone', val: r => r.phone || '' },
+      { key: 'customer', label: 'Customer Name', val: r => r.customer_name || '' },
+      { key: 'rate', label: 'Rate', val: r => (r.rate ?? '') },
+      { key: 'feedback', label: 'Feedback', val: r => r.product_feedback || '' },
+      { key: 'segment', label: 'Segment', val: r => r.segment || '' },
+      { key: 'served', label: 'Served By', val: r => r.served_by || '' },
+      { key: 'answered', label: 'Answered', val: r => (r.answered ? 'Yes' : 'No') },
+      { key: 'comment', label: 'Comment', val: r => r.comment || '' },
+      { key: 'complaint', label: 'Complaint', val: r => r.complaint || '' },
+      { key: 'note', label: 'Note', val: r => r.note || '' },
+      { key: 'record_date', label: 'Record Date', val: r => r.record_date || '' },
+      { key: 'uploaded_by', label: 'Uploaded By', val: r => r.uploaded_by_name || '' },
+      { key: 'created_at', label: 'Created At', val: r => r.created_at || '' },
+    ];
+    const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [cols.map(c => c.label).join(',')];
+    for (const r of records) lines.push(cols.map(c => esc(c.val(r))).join(','));
+    const blob = new Blob(["﻿" + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `survey-data-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
       {/* Header */}
@@ -140,6 +175,13 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
             title="Refresh"
           >
             <RefreshCw className="w-4 h-4" />
+          </button>
+          <button
+            onClick={exportCsv}
+            title="Export the current (filtered) records to CSV"
+            className="px-4 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+          >
+            <Download className="w-4 h-4" /> Export CSV
           </button>
           {isAdmin && (
             <button
@@ -205,6 +247,7 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                   <th className="p-4">Phone</th>
                   <th className="p-4">Rate</th>
                   <th className="p-4">Feedback</th>
+                  <th className="p-4">Segment</th>
                   <th className="p-4">Served By</th>
                   <th className="p-4 text-center">Answered</th>
                   <th className="p-4">Uploaded By</th>
@@ -226,6 +269,11 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                         ? <span className={`font-bold ${feedbackColor(r.product_feedback)}`}>{r.product_feedback}</span>
                         : <span className="text-[var(--muted)]">—</span>}
                     </td>
+                    <td className="p-4">
+                      {r.segment
+                        ? <span className="px-2 py-1 bg-indigo-500/10 text-indigo-400 rounded-lg text-[10px] font-bold">{r.segment}</span>
+                        : <span className="text-[var(--muted)]">—</span>}
+                    </td>
                     <td className="p-4 text-[var(--muted)]">{r.served_by || '—'}</td>
                     <td className="p-4 text-center">
                       {r.answered
@@ -238,7 +286,7 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                 ))}
                 {records.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-[var(--muted)]">No survey data found.</td>
+                    <td colSpan={11} className="p-8 text-center text-[var(--muted)]">No survey data found.</td>
                   </tr>
                 )}
               </tbody>
