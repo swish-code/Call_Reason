@@ -1214,7 +1214,8 @@ export class DB {
   static async getRatings(filter: {
     brand_id?: string; platform_id?: string; action_status?: string;
     requires_action?: boolean; assigned?: string; assigned_agent_id?: string;
-    min_rating?: number; max_rating?: number; has_comment?: boolean; limit?: number; offset?: number;
+    min_rating?: number; max_rating?: number; has_comment?: boolean;
+    from?: string; to?: string; limit?: number; offset?: number;
   } = {}): Promise<any[]> {
     const clauses: string[] = [];
     const values: any[] = [];
@@ -1232,6 +1233,8 @@ export class DB {
     if (filter.max_rating != null) { clauses.push(`r.rating <= $${idx++}`); values.push(filter.max_rating); }
     if (filter.has_comment === true) { clauses.push(`(r.review_text IS NOT NULL AND btrim(r.review_text) <> '')`); }
     else if (filter.has_comment === false) { clauses.push(`(r.review_text IS NULL OR btrim(r.review_text) = '')`); }
+    if (filter.from) { clauses.push(`r.uploaded_at >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`r.uploaded_at <= $${idx++}`); values.push(filter.to); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const lim = filter.limit || 100;
     const off = filter.offset || 0;

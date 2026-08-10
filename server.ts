@@ -1885,7 +1885,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
 // List ratings with filters. Agents only ever see ratings assigned to them.
 app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   const isAgent = req.user.role === "agent";
-  const { brand_id, platform_id, action_status, requires_action, assigned, min_rating, max_rating, has_comment } = req.query;
+  const { brand_id, platform_id, action_status, requires_action, assigned, min_rating, max_rating, has_comment, from, to } = req.query;
   // Resolve the "assigned" filter: agents are always scoped to themselves; managers can pick
   // "me", "unassigned", or a specific agent id.
   let assignedParam: string | undefined;
@@ -1904,6 +1904,8 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
     min_rating: min_rating ? Number(min_rating) : undefined,
     max_rating: max_rating ? Number(max_rating) : undefined,
     has_comment: has_comment === "true" ? true : has_comment === "false" ? false : undefined,
+    from: from as string || undefined,
+    to: to as string || undefined,
     limit: Math.min(Number(req.query.limit) || 5000, 20000),
   });
   res.json(ratings);

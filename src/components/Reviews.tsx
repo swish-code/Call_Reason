@@ -128,6 +128,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [requiresAction, setRequiresAction] = useState(false);
   const [ratingFilter, setRatingFilter] = useState(""); // "", "1".."5"
   const [commentFilter, setCommentFilter] = useState(""); // "", "with", "without"
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
   // Modals
   const [showUpload, setShowUpload] = useState(false);
@@ -176,8 +178,10 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     if (requiresAction) p.set('requires_action', 'true');
     if (ratingFilter) { p.set('min_rating', ratingFilter); p.set('max_rating', ratingFilter); }
     if (commentFilter) p.set('has_comment', commentFilter === 'with' ? 'true' : 'false');
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
     return p.toString();
-  }, [brandId, platformId, actionStatus, assigned, requiresAction, ratingFilter, commentFilter]);
+  }, [brandId, platformId, actionStatus, assigned, requiresAction, ratingFilter, commentFilter, from, to]);
 
   const fetchRatings = useCallback(async () => {
     setLoading(true);
@@ -465,6 +469,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
             {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
           </select>
         )}
+        <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} title="From" />
+        <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} title="To" />
         <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-[var(--text)] font-bold">
           <input
             type="checkbox"
