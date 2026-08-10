@@ -1341,6 +1341,18 @@ export class DB {
     return res.rowCount ?? 0;
   }
 
+  static async bulkSetRatingStatus(ids: string[], actionStatus: string): Promise<number> {
+    if (!ids.length) return 0;
+    const closingStatuses = ["resolved", "no_action_needed", "unreachable"];
+    const res = await pool.query(
+      closingStatuses.includes(actionStatus)
+        ? `UPDATE ratings SET action_status = $1, resolved_at = COALESCE(resolved_at, now()) WHERE id = ANY($2)`
+        : `UPDATE ratings SET action_status = $1 WHERE id = ANY($2)`,
+      [actionStatus, ids]
+    );
+    return res.rowCount ?? 0;
+  }
+
   static async deleteRatings(ids: string[]): Promise<number> {
     if (!ids.length) return 0;
     const res = await pool.query("DELETE FROM ratings WHERE id = ANY($1)", [ids]);

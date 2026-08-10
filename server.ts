@@ -1964,6 +1964,20 @@ app.post("/api/ratings/assign", authenticateJWT, asyncHandler(async (req: any, r
   res.json({ assigned: n });
 }));
 
+// Bulk status change (e.g. mark a batch of reviews "No Action Required")
+app.post("/api/ratings/bulk-status", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!["admin", "supervisor", "leader"].includes(req.user.role))
+    return res.status(403).json({ error: "Access denied." });
+  const { ids, action_status } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0)
+    return res.status(400).json({ error: "No reviews selected." });
+  const valid = ["pending", "in_progress", "resolved", "unreachable", "no_action_needed"];
+  if (!valid.includes(action_status))
+    return res.status(400).json({ error: "Invalid status." });
+  const n = await DB.bulkSetRatingStatus(ids, action_status);
+  res.json({ updated: n });
+}));
+
 // Active Call Center agents — for the review assignment dropdown (assigners only)
 app.get("/api/agents", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))

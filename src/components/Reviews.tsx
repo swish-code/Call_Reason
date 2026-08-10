@@ -303,6 +303,24 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     if (res.ok) { setAssignIds([]); setSelected([]); fetchRatings(); }
   };
 
+  const [bulkStatusSaving, setBulkStatusSaving] = useState(false);
+  const bulkSetStatus = async (status: string, ids: string[]) => {
+    if (!ids.length) return;
+    const msg = ids.length === 1
+      ? "Mark this review as No Action Required?"
+      : `Mark ${ids.length} reviews as No Action Required? They will be hidden from this list and kept for reporting only.`;
+    if (!window.confirm(msg)) return;
+    setBulkStatusSaving(true);
+    const res = await apiFetch('/api/ratings/bulk-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, action_status: status }),
+    });
+    setBulkStatusSaving(false);
+    if (res.ok) { setSelected([]); fetchRatings(); }
+    else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Update failed."); }
+  };
+
   const deleteReviews = async (ids: string[]) => {
     if (!ids.length) return;
     const msg = ids.length === 1 ? "Delete this review? This cannot be undone." : `Delete ${ids.length} reviews? This cannot be undone.`;
@@ -499,6 +517,13 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           )}
           <button onClick={openBulkAssign} className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[11px] font-bold transition active:scale-95">
             Assign selected
+          </button>
+          <button
+            onClick={() => bulkSetStatus('no_action_needed', selected)}
+            disabled={bulkStatusSaving}
+            className="px-3.5 py-1.5 bg-zinc-600 hover:bg-zinc-700 disabled:opacity-50 text-white rounded-xl text-[11px] font-bold transition active:scale-95"
+          >
+            {bulkStatusSaving ? 'Saving…' : 'No Action Required'}
           </button>
           {isAdmin && (
             <button onClick={() => deleteReviews(selected)} className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[11px] font-bold transition active:scale-95 flex items-center gap-1.5">
