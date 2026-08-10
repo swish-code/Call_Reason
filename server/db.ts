@@ -1233,8 +1233,11 @@ export class DB {
     if (filter.max_rating != null) { clauses.push(`r.rating <= $${idx++}`); values.push(filter.max_rating); }
     if (filter.has_comment === true) { clauses.push(`(r.review_text IS NOT NULL AND btrim(r.review_text) <> '')`); }
     else if (filter.has_comment === false) { clauses.push(`(r.review_text IS NULL OR btrim(r.review_text) = '')`); }
-    if (filter.from) { clauses.push(`r.uploaded_at >= $${idx++}`); values.push(filter.from); }
-    if (filter.to) { clauses.push(`r.uploaded_at <= $${idx++}`); values.push(filter.to); }
+    // Filter on the review's own date (order_date, normalised to YYYY-MM-DD on
+    // upload), not uploaded_at — a whole batch shares one upload timestamp, so
+    // filtering by that would be useless for narrowing down reviews.
+    if (filter.from) { clauses.push(`r.order_date >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`r.order_date <= $${idx++}`); values.push(filter.to); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const lim = filter.limit || 100;
     const off = filter.offset || 0;

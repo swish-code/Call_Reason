@@ -547,7 +547,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                         <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" />
                       </td>
                     )}
-                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.uploaded_at)}</td>
+                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.order_date || r.uploaded_at)}</td>
                     <td className="p-4">
                       <div className="space-y-0.5">
                         <div className="font-bold text-[var(--heading)]">{r.brand_name}</div>
