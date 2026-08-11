@@ -3,7 +3,7 @@ import { User, SurveyCampaign, SurveyTemplate, Brand } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 import {
-  Megaphone, RefreshCw, Plus, X, AlertCircle, Upload, FileDown, Users, Ban,
+  Megaphone, RefreshCw, Plus, X, AlertCircle, Upload, FileDown, Users, Ban, RotateCcw,
 } from "lucide-react";
 
 interface SurveyCampaignsProps { currentUser: User; }
@@ -223,6 +223,18 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
     if (res.ok) fetchCampaigns();
   };
 
+  // Un-cancel a campaign — its pending numbers stay in survey_assignments while
+  // cancelled (they're just hidden from the live queue), so reactivating makes
+  // them reappear without needing to re-upload anything.
+  const reactivateCampaign = async (c: SurveyCampaign) => {
+    const res = await apiFetch(`/api/survey-campaigns/${c.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'active' }),
+    });
+    if (res.ok) fetchCampaigns();
+  };
+
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
       {/* Header */}
@@ -331,6 +343,15 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                             className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-[10px] font-bold flex items-center gap-1 transition"
                           >
                             <Ban className="w-3 h-3" /> Cancel
+                          </button>
+                        )}
+                        {c.status === 'cancelled' && (
+                          <button
+                            onClick={() => reactivateCampaign(c)}
+                            title="Reactivate — its pending numbers reappear in the Survey Queue"
+                            className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg text-[10px] font-bold flex items-center gap-1 transition"
+                          >
+                            <RotateCcw className="w-3 h-3" /> Reactivate
                           </button>
                         )}
                       </div>
