@@ -6,7 +6,7 @@ import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks
 interface AllSurveysProps { currentUser: User; }
 
 interface Brand { id: string; brand_name: string; }
-interface Agent { id: string; full_name: string; }
+interface Agent { id: string; full_name: string; open_tasks?: number; total_tasks?: number; }
 interface SurveyRow {
   id: string;
   customer_phone: string;
@@ -21,6 +21,8 @@ interface SurveyRow {
   scheduled_date?: string;
   completed_at?: string | null;
   assignment_mode?: string;
+  survey_type?: string;
+  task_no?: number;
 }
 
 interface Overview {
@@ -44,6 +46,16 @@ const statusView = (s: string): { label: string; cls: string } => {
   if (s === 'in_progress') return { label: 'In Progress', cls: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
   return { label: 'Pending', cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
 };
+
+const surveyTypeLabel = (t?: string) =>
+  t === 'daily_normal' ? 'Daily / Normal'
+  : t === 'marketing_general' ? 'Marketing (General)'
+  : t === 'marketing_item' ? 'Marketing (Item)'
+  : '—';
+
+// "Name — N open" so the assigner sees each agent's live workload in the picker.
+const agentOptionLabel = (a: Agent) =>
+  a.open_tasks == null ? a.full_name : `${a.full_name} — ${a.open_tasks} open`;
 
 const actionView = (a?: string | null) =>
   a === 'complaint'
@@ -69,6 +81,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
   const [agentId, setAgentId] = useState("");
   const [status, setStatus] = useState("");
   const [actionType, setActionType] = useState("");
+  const [surveyType, setSurveyType] = useState("");
 
   const [savingId, setSavingId] = useState<string | null>(null);
 
@@ -78,8 +91,9 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
     if (agentId) p.set('agent_id', agentId);
     if (status) p.set('status', status);
     if (actionType) p.set('action_type', actionType);
+    if (surveyType) p.set('survey_type', surveyType);
     return p.toString();
-  }, [brandId, agentId, status, actionType]);
+  }, [brandId, agentId, status, actionType, surveyType]);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -106,7 +120,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
 
   useEffect(() => {
     apiFetch('/api/brands').then(r => r.ok ? r.json() : []).then(setBrands).catch(() => {});
-    if (canAssign) apiFetch('/api/surveys/agents').then(r => r.ok ? r.json() : []).then(setAgents).catch(() => {});
+    if (canAssign) apiFetch('/api/surveys/agents/workload').then(r => r.ok ? r.json() : []).then(setAgents).catch(() => {});
   }, [canAssign]);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
@@ -180,7 +194,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           <option value="">All Agents</option>
           <option value="unassigned">Unassigned</option>
           {agents.length > 0 && <option disabled>──────────</option>}
-          {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+          {agents.map(a => <option key={a.id} value={a.id}>{agentOptionLabel(a)}</option>)}
         </select>
         <select value={status} onChange={e => setStatus(e.target.value)} className={selCls}>
           <option value="">All Statuses</option>
@@ -192,6 +206,12 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           <option value="">All Actions</option>
           <option value="no_action">No Action</option>
           <option value="complaint">Complaint</option>
+        </select>
+        <select value={surveyType} onChange={e => setSurveyType(e.target.value)} className={selCls} title="Survey type">
+          <option value="">All Survey Types</option>
+          <option value="daily_normal">Daily / Normal</option>
+          <option value="marketing_general">Marketing (General)</option>
+          <option value="marketing_item">Marketing (Item)</option>
         </select>
       </div>
 
@@ -291,8 +311,10 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           <table className="w-full text-xs">
             <thead>
               <tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)] uppercase tracking-wide">
+                <th className="text-left p-4">Task #</th>
                 <th className="text-left p-4">Phone</th>
                 <th className="text-left p-4">Brand</th>
+                <th className="text-left p-4">Type</th>
                 <th className="text-left p-4">Template</th>
                 <th className="text-left p-4">Assigned Agent</th>
                 <th className="text-center p-4">Status</th>
@@ -306,15 +328,19 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {loading ? (
-                <tr><td colSpan={canAssign ? 11 : 10} className="p-8 text-center text-[var(--muted)]">Loading…</td></tr>
+                <tr><td colSpan={canAssign ? 13 : 12} className="p-8 text-center text-[var(--muted)]">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={canAssign ? 11 : 10} className="p-8 text-center text-[var(--muted)]">No surveys found.</td></tr>
+                <tr><td colSpan={canAssign ? 13 : 12} className="p-8 text-center text-[var(--muted)]">No surveys found.</td></tr>
               ) : rows.map(r => {
                 const sv = statusView(r.status);
                 return (
                   <tr key={r.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
+                    <td className="p-4 font-mono text-[11px] font-bold text-indigo-400 whitespace-nowrap">
+                      {r.task_no != null ? `#${r.task_no}` : '—'}
+                    </td>
                     <td className="p-4 font-mono text-[11px] text-[var(--heading)]">{r.customer_phone || '—'}</td>
                     <td className="p-4 text-[var(--text)]">{r.brand_name || '—'}</td>
+                    <td className="p-4 text-[var(--muted)] text-[11px]">{surveyTypeLabel(r.survey_type)}</td>
                     <td className="p-4 text-[var(--muted)]">{r.template_name || '—'}</td>
                     <td className="p-4">
                       {canAssign ? (
@@ -326,7 +352,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                           title="Assign / reassign to an active agent"
                         >
                           <option value="">— Unassigned —</option>
-                          {agents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                          {agents.map(a => <option key={a.id} value={a.id}>{agentOptionLabel(a)}</option>)}
                         </select>
                       ) : (
                         r.agent_name

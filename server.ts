@@ -2347,6 +2347,13 @@ app.get("/api/surveys/agents", authenticateJWT, asyncHandler(async (_req, res) =
   res.json(await DB.getSurveyAgents());
 }));
 
+// Survey agents with their current workload — lets whoever is assigning see how
+// loaded each agent already is, instead of distributing blind.
+app.get("/api/surveys/agents/workload", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  res.json(await DB.getSurveyAgentWorkload());
+}));
+
 // The current user's work queue for today
 app.get("/api/surveys/queue", authenticateJWT, asyncHandler(async (req: any, res) => {
   const queue = await DB.getSurveyQueue(req.user.id);
@@ -2396,12 +2403,13 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
 
 // View All Surveys — every assignment across campaigns, with filters (for reporting + supervision)
 app.get("/api/surveys/all", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { brand_id, agent_id, status, action_type, from, to } = req.query;
+  const { brand_id, agent_id, status, action_type, survey_type, from, to } = req.query;
   res.json(await DB.getAllSurveyAssignments({
     brand_id: brand_id as string || undefined,
     agent_id: agent_id as string || undefined,
     status: status as string || undefined,
     action_type: action_type as string || undefined,
+    survey_type: survey_type as string || undefined,
     from: from as string || undefined,
     to: to as string || undefined,
   }));
@@ -2410,12 +2418,13 @@ app.get("/api/surveys/all", authenticateJWT, asyncHandler(async (req: any, res) 
 // Survey overview: headline counts, per-survey breakdown and per-agent stats.
 // Takes the same filters as /api/surveys/all so the numbers always match the list.
 app.get("/api/surveys/overview", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { brand_id, agent_id, status, action_type, from, to } = req.query;
+  const { brand_id, agent_id, status, action_type, survey_type, from, to } = req.query;
   res.json(await DB.getSurveyOverview({
     brand_id: brand_id as string || undefined,
     agent_id: agent_id as string || undefined,
     status: status as string || undefined,
     action_type: action_type as string || undefined,
+    survey_type: survey_type as string || undefined,
     from: from as string || undefined,
     to: to as string || undefined,
   }));

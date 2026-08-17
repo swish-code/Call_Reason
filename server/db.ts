@@ -484,6 +484,10 @@ export class DB {
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS action_type TEXT DEFAULT 'no_action';
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS segment TEXT;
+      -- Human-facing task number for tracking/referencing a survey. SERIAL
+      -- backfills every existing row and auto-numbers new ones, so a survey's
+      -- number never changes once issued (unlike a computed row position).
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS task_no SERIAL;
       ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS segment TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS running_since TEXT;
       ALTER TABLE assigned_tasks ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
@@ -1802,12 +1806,12 @@ export class DB {
 
   // All survey assignments across campaigns, for the "View All Surveys" page + reporting
   static async getAllSurveyAssignments(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; from?: string; to?: string;
   } = {}): Promise<{ records: any[]; total: number; cap: number }> {
     const { where, values } = DB.surveyFilterSql(filter);
     const CAP = 1000;
     const { rows } = await pool.query(`
-      SELECT a.*, b.brand_name, u.full_name AS agent_name, c.assignment_mode, t.name AS template_name
+      SELECT a.*, b.brand_name, u.full_name AS agent_name, c.assignment_mode, c.survey_type, t.name AS template_name
       FROM survey_assignments a
       LEFT JOIN brands b ON b.id = a.brand_id
       LEFT JOIN users u ON u.id = a.assigned_agent_id
@@ -1826,10 +1830,17 @@ export class DB {
    * filter" means.
    */
   private static surveyFilterSql(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string;
+    survey_type?: string; from?: string; to?: string;
   }, startIdx = 1): { where: string; values: any[]; nextIdx: number } {
     const clauses: string[] = []; const values: any[] = []; let idx = startIdx;
     if (filter.brand_id) { clauses.push(`a.brand_id = $${idx++}`); values.push(filter.brand_id); }
+    // survey_type lives on the campaign, so this is a correlated lookup rather
+    // than a column on the assignment itself.
+    if (filter.survey_type) {
+      clauses.push(`EXISTS (SELECT 1 FROM survey_campaigns sc WHERE sc.id = a.campaign_id AND sc.survey_type = $${idx++})`);
+      values.push(filter.survey_type);
+    }
     if (filter.agent_id === "unassigned") { clauses.push(`a.assigned_agent_id IS NULL`); }
     else if (filter.agent_id) { clauses.push(`a.assigned_agent_id = $${idx++}`); values.push(filter.agent_id); }
     if (filter.status === "pending") { clauses.push(`a.status IN ('pending','in_progress')`); }
@@ -1849,7 +1860,7 @@ export class DB {
    *   pending / in_progress   -> Pending
    */
   static async getSurveyOverview(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; from?: string; to?: string;
   } = {}): Promise<{
     summary: { total: number; reached: number; not_reached: number; pending: number };
     byTemplate: { template_name: string; total: number; reached: number; not_reached: number; pending: number }[];
@@ -1952,6 +1963,26 @@ export class DB {
     const ids = rows.map((r) => r.id);
     await pool.query("UPDATE survey_assignments SET assigned_agent_id = $1 WHERE id = ANY($2)", [agentId, ids]);
     return ids.length;
+  }
+
+  /**
+   * Survey-capable agents with their current workload, so whoever is assigning
+   * can see how loaded each agent already is instead of guessing.
+   * `open_tasks` is what still needs doing; `total_tasks` is everything ever
+   * assigned to them.
+   */
+  static async getSurveyAgentWorkload(): Promise<any[]> {
+    const { rows } = await pool.query(`
+      SELECT u.id, u.full_name, u.role, u.work_type,
+        COUNT(a.id) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS open_tasks,
+        COUNT(a.id)::int AS total_tasks
+      FROM users u
+      LEFT JOIN survey_assignments a ON a.assigned_agent_id = u.id
+      WHERE u.status = 'Active' AND (u.work_type IS NULL OR u.work_type IN ('survey','both'))
+      GROUP BY u.id, u.full_name, u.role, u.work_type
+      ORDER BY u.full_name ASC
+    `);
+    return rows;
   }
 
   static async getSurveyAgents(): Promise<any[]> {
