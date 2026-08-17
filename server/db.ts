@@ -1804,18 +1804,7 @@ export class DB {
   static async getAllSurveyAssignments(filter: {
     brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
   } = {}): Promise<{ records: any[]; total: number; cap: number }> {
-    const clauses: string[] = []; const values: any[] = []; let idx = 1;
-    if (filter.brand_id) { clauses.push(`a.brand_id = $${idx++}`); values.push(filter.brand_id); }
-    if (filter.agent_id === "unassigned") { clauses.push(`a.assigned_agent_id IS NULL`); }
-    else if (filter.agent_id) { clauses.push(`a.assigned_agent_id = $${idx++}`); values.push(filter.agent_id); }
-    // Status buckets: pending (pending+in_progress), completed (successful), not_reached (unreachable+declined)
-    if (filter.status === "pending") { clauses.push(`a.status IN ('pending','in_progress')`); }
-    else if (filter.status === "completed") { clauses.push(`a.status = 'successful'`); }
-    else if (filter.status === "not_reached") { clauses.push(`a.status IN ('unreachable','declined')`); }
-    if (filter.action_type) { clauses.push(`a.action_type = $${idx++}`); values.push(filter.action_type); }
-    if (filter.from) { clauses.push(`a.created_at >= $${idx++}`); values.push(filter.from); }
-    if (filter.to) { clauses.push(`a.created_at <= $${idx++}`); values.push(filter.to); }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { where, values } = DB.surveyFilterSql(filter);
     const CAP = 1000;
     const { rows } = await pool.query(`
       SELECT a.*, b.brand_name, u.full_name AS agent_name, c.assignment_mode, t.name AS template_name
@@ -1829,6 +1818,118 @@ export class DB {
     `, values);
     const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int AS total FROM survey_assignments a ${where}`, values);
     return { records: rows, total: cnt[0]?.total ?? rows.length, cap: CAP };
+  }
+
+  /**
+   * Shared WHERE builder for the All-Surveys views, so the list, the overview
+   * counts and the per-agent stats can never disagree about what "the current
+   * filter" means.
+   */
+  private static surveyFilterSql(filter: {
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
+  }, startIdx = 1): { where: string; values: any[]; nextIdx: number } {
+    const clauses: string[] = []; const values: any[] = []; let idx = startIdx;
+    if (filter.brand_id) { clauses.push(`a.brand_id = $${idx++}`); values.push(filter.brand_id); }
+    if (filter.agent_id === "unassigned") { clauses.push(`a.assigned_agent_id IS NULL`); }
+    else if (filter.agent_id) { clauses.push(`a.assigned_agent_id = $${idx++}`); values.push(filter.agent_id); }
+    if (filter.status === "pending") { clauses.push(`a.status IN ('pending','in_progress')`); }
+    else if (filter.status === "completed") { clauses.push(`a.status = 'successful'`); }
+    else if (filter.status === "not_reached") { clauses.push(`a.status IN ('unreachable','declined')`); }
+    if (filter.action_type) { clauses.push(`a.action_type = $${idx++}`); values.push(filter.action_type); }
+    if (filter.from) { clauses.push(`a.created_at >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`a.created_at <= $${idx++}`); values.push(filter.to); }
+    return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", values, nextIdx: idx };
+  }
+
+  /**
+   * Headline counts, a per-survey (template) breakdown and per-agent stats for
+   * the All Surveys page. Status buckets match the list view exactly:
+   *   successful              -> Completed – Reached
+   *   unreachable / declined  -> Completed – Not Reached
+   *   pending / in_progress   -> Pending
+   */
+  static async getSurveyOverview(filter: {
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; from?: string; to?: string;
+  } = {}): Promise<{
+    summary: { total: number; reached: number; not_reached: number; pending: number };
+    byTemplate: { template_name: string; total: number; reached: number; not_reached: number; pending: number }[];
+    byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; pending: number }[];
+  }> {
+    const { where, values } = DB.surveyFilterSql(filter);
+    const BUCKETS = `
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE a.status = 'successful')::int AS reached,
+      COUNT(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
+      COUNT(*) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS pending`;
+
+    const { rows: sum } = await pool.query(`
+      SELECT ${BUCKETS} FROM survey_assignments a ${where}
+    `, values);
+
+    const { rows: byTemplate } = await pool.query(`
+      SELECT COALESCE(t.name, '— No template —') AS template_name, ${BUCKETS}
+      FROM survey_assignments a
+      LEFT JOIN survey_campaigns c ON c.id = a.campaign_id
+      LEFT JOIN survey_templates t ON t.id = c.template_id
+      ${where}
+      GROUP BY COALESCE(t.name, '— No template —')
+      ORDER BY total DESC
+    `, values);
+
+    const { rows: byAgent } = await pool.query(`
+      SELECT a.assigned_agent_id AS agent_id,
+             COALESCE(u.full_name, '— Unassigned —') AS agent_name,
+             ${BUCKETS},
+             (COUNT(*) FILTER (WHERE a.status IN ('successful','unreachable','declined')))::int AS completed
+      FROM survey_assignments a
+      LEFT JOIN users u ON u.id = a.assigned_agent_id
+      ${where}
+      GROUP BY a.assigned_agent_id, u.full_name
+      ORDER BY total DESC
+    `, values);
+
+    const s = sum[0] || {};
+    return {
+      summary: {
+        total: s.total ?? 0, reached: s.reached ?? 0,
+        not_reached: s.not_reached ?? 0, pending: s.pending ?? 0,
+      },
+      // `assigned` is the agent's whole workload; `completed` is everything that
+      // reached a terminal state, reached or not.
+      byTemplate,
+      byAgent: byAgent.map((r: any) => ({ ...r, assigned: r.total })),
+    };
+  }
+
+  /**
+   * Leader-level edit of a single survey's outcome.
+   *
+   * Returning a finished survey to Pending also clears the outcome fields and
+   * resets attempt_count — otherwise the row would reappear in the queue but
+   * the agent could not act on it, since three logged attempts block any
+   * further call.
+   */
+  static async updateSurveyAssignment(id: string, fields: {
+    status?: string; action_type?: string; reachability?: string;
+  }): Promise<any | undefined> {
+    const sets: string[] = []; const values: any[] = []; let idx = 1;
+
+    if (fields.status === "pending") {
+      sets.push(`status = 'pending'`, `reachability = NULL`, `completed_at = NULL`, `attempt_count = 0`);
+    } else if (fields.status) {
+      sets.push(`status = $${idx++}`); values.push(fields.status);
+      // A terminal status carries its matching reachability and a completion stamp.
+      if (fields.status === "successful") sets.push(`reachability = 'reached'`);
+      else if (fields.status === "unreachable" || fields.status === "declined") sets.push(`reachability = 'not_reached'`);
+      sets.push(`completed_at = COALESCE(completed_at, now())`);
+    }
+    if (fields.action_type) { sets.push(`action_type = $${idx++}`); values.push(fields.action_type); }
+    if (fields.reachability) { sets.push(`reachability = $${idx++}`); values.push(fields.reachability); }
+    if (!sets.length) return DB.getSurveyAssignmentById(id);
+
+    values.push(id);
+    await pool.query(`UPDATE survey_assignments SET ${sets.join(", ")} WHERE id = $${idx}`, values);
+    return DB.getSurveyAssignmentById(id);
   }
 
   static async getCampaignAssignments(campaignId: string): Promise<any[]> {

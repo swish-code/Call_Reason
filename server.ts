@@ -2407,6 +2407,20 @@ app.get("/api/surveys/all", authenticateJWT, asyncHandler(async (req: any, res) 
   }));
 }));
 
+// Survey overview: headline counts, per-survey breakdown and per-agent stats.
+// Takes the same filters as /api/surveys/all so the numbers always match the list.
+app.get("/api/surveys/overview", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const { brand_id, agent_id, status, action_type, from, to } = req.query;
+  res.json(await DB.getSurveyOverview({
+    brand_id: brand_id as string || undefined,
+    agent_id: agent_id as string || undefined,
+    status: status as string || undefined,
+    action_type: action_type as string || undefined,
+    from: from as string || undefined,
+    to: to as string || undefined,
+  }));
+}));
+
 // Manually assign / reassign / unassign a single survey to any active agent (supervisors+)
 app.post("/api/surveys/assignments/:id/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
@@ -2414,6 +2428,23 @@ app.post("/api/surveys/assignments/:id/assign", authenticateJWT, asyncHandler(as
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   const { agent_id } = req.body;
   res.json(await DB.assignSurveyAssignment(req.params.id, agent_id || null));
+}));
+
+// Team-leader edit of a survey's outcome: change status/action, or send a
+// finished survey back to Pending for rework.
+app.patch("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  const { status, action_type, reachability } = req.body;
+  const validStatus = ["pending", "in_progress", "successful", "unreachable", "declined"];
+  if (status !== undefined && !validStatus.includes(status))
+    return res.status(400).json({ error: "Invalid status." });
+  if (action_type !== undefined && !["no_action", "complaint"].includes(action_type))
+    return res.status(400).json({ error: "Invalid action." });
+  if (reachability !== undefined && !["reached", "not_reached"].includes(reachability))
+    return res.status(400).json({ error: "Invalid reachability." });
+  res.json(await DB.updateSurveyAssignment(req.params.id, { status, action_type, reachability }));
 }));
 
 // Campaign assignments + manual distribution
