@@ -1601,6 +1601,18 @@ export class DB {
   // ----------------------------------------------------
   // Surveys — Queue / assignments / attempts / responses
   // ----------------------------------------------------
+  /**
+   * An agent's work queue for today.
+   *
+   * Scoping rule: once a supervisor has hand-assigned any number to this agent,
+   * their queue shows ONLY their own assignments — the shared unassigned pool of
+   * an 'open' campaign is hidden, so a targeted assignment is not drowned out by
+   * the rest of the campaign. Agents with nothing assigned still draw from the
+   * shared pool, which is what keeps 'open' campaigns self-serve.
+   *
+   * The check is per-campaign, not global: being assigned rows in campaign A
+   * must not hide campaign B's open pool from them.
+   */
   static async getSurveyQueue(userId: string): Promise<any[]> {
     const { rows } = await pool.query(`
       SELECT a.*, c.template_id, c.survey_type, c.assignment_mode, c.continuity_type, b.brand_name,
@@ -1610,7 +1622,18 @@ export class DB {
       LEFT JOIN brands b ON b.id = a.brand_id
       LEFT JOIN survey_templates t ON t.id = c.template_id
       WHERE a.status = 'pending' AND a.scheduled_date <= CURRENT_DATE AND c.status = 'active'
-        AND ( a.assigned_agent_id = $1 OR (c.assignment_mode = 'open' AND a.assigned_agent_id IS NULL) )
+        AND (
+          a.assigned_agent_id = $1
+          OR (
+            c.assignment_mode = 'open' AND a.assigned_agent_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM survey_assignments mine
+              WHERE mine.campaign_id = a.campaign_id
+                AND mine.assigned_agent_id = $1
+                AND mine.status = 'pending'
+            )
+          )
+        )
       ORDER BY a.scheduled_date ASC, a.created_at ASC
       LIMIT 300
     `, [userId]);
