@@ -2108,6 +2108,19 @@ export class DB {
     // Avg rating per platform / per brand (spec §6)
     const platformPerf = (await q(`SELECT COALESCE(p.name,'—') name, COUNT(*)::int count, COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg FROM ratings r LEFT JOIN platforms p ON p.id=r.platform_id WHERE ${rW} GROUP BY p.name ORDER BY count DESC LIMIT 10`)).rows;
     const brandPerf = (await q(`SELECT COALESCE(b.brand_name,'—') name, COUNT(*)::int count, COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg FROM ratings r LEFT JOIN brands b ON b.id=r.brand_id WHERE ${rW} GROUP BY b.brand_name ORDER BY count DESC LIMIT 10`)).rows;
+    // Per-branch detail behind each brand, so a brand row can be expanded to see
+    // which branches are pulling its average up or down. Rows with no branch on
+    // the source review are grouped under a single explicit bucket rather than
+    // silently dropped, so the branch counts still reconcile with the brand total.
+    const brandBranchPerf = (await q(`
+      SELECT COALESCE(b.brand_name,'—') brand,
+             COALESCE(NULLIF(btrim(r.branch),''),'— No branch —') name,
+             COUNT(*)::int count,
+             COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg
+      FROM ratings r LEFT JOIN brands b ON b.id=r.brand_id
+      WHERE ${rW}
+      GROUP BY b.brand_name, COALESCE(NULLIF(btrim(r.branch),''),'— No branch —')
+      ORDER BY brand ASC, count DESC`)).rows;
     const rByAgent = (await q(`SELECT ua.full_name name, COUNT(*)::int assigned,
         SUM(CASE WHEN r.action_status IN ('resolved','no_action_needed','unreachable') THEN 1 ELSE 0 END)::int done
       FROM ratings r JOIN users ua ON ua.id=r.assigned_agent_id WHERE ${rW} AND r.assigned_agent_id IS NOT NULL
@@ -2147,7 +2160,7 @@ export class DB {
         resolved: rTot.resolved, unreachable: rTot.unreachable,
         resolutionRate: rTot.needs_action > 0 ? Math.round((rTot.resolved / rTot.needs_action) * 100) : 0,
         byStatus: rByStatus, byRating: rByRating, byBrand: rByBrand, byPlatform: rByPlatform, byAgent: rByAgent,
-        platformPerf, brandPerf,
+        platformPerf, brandPerf, brandBranchPerf,
       },
       surveys: {
         campaigns: { total: campTotal, byStatus: campByStatus },
