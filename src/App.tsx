@@ -14,6 +14,7 @@ import TaskPool from "./components/TaskPool.tsx";
 import Reviews from "./components/Reviews.tsx";
 import Surveys from "./components/Surveys.tsx";
 import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
+import ChangePassword from "./components/ChangePassword.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -52,7 +53,8 @@ import {
   Power,
   Send,
   Star,
-  MessageSquare
+  MessageSquare,
+  KeyRound
 } from "lucide-react";
 
 type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash";
@@ -69,6 +71,7 @@ const PAGE_GROUP: Record<string, string> = {
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
+  const [showChangePassword, setShowChangePassword] = useState(false);
   // Open by default on desktop, closed (drawer) on mobile
   const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 768 : true));
   const closeSidebarOnMobile = () => { if (typeof window !== "undefined" && window.innerWidth < 768) setSidebarOpen(false); };
@@ -624,6 +627,14 @@ export default function App() {
             )}
 
             <button
+              onClick={() => setShowChangePassword(true)}
+              className="p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
+              title="Change Password"
+            >
+              <KeyRound className="w-4 h-4" />
+            </button>
+
+            <button
               onClick={toggleTheme}
               className="p-2 bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)] rounded-xl transition active:scale-95"
               title={theme === "dark" ? "Switch to Light mode" : "Switch to Dark mode"}
@@ -694,6 +705,7 @@ export default function App() {
         </main>
       </div>
 
+      {showChangePassword && <ChangePassword onClose={() => setShowChangePassword(false)} />}
     </div>
   );
 }

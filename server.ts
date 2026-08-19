@@ -377,6 +377,49 @@ app.put("/api/users/:id/reset-password", authenticateJWT, requireAdmin, asyncHan
   res.json({ message: "Password reset successfully." });
 }));
 
+/**
+ * Self-service password change — any signed-in user, for their own account only.
+ *
+ * The current password is required and verified server-side: the JWT alone is
+ * not sufficient proof, since a token left behind on an unattended machine
+ * would otherwise be enough to lock the real owner out of their account.
+ */
+app.post("/api/me/change-password", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const { current_password, new_password } = req.body;
+
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: "Current and new password are both required." });
+  }
+  if (String(new_password).length < 6) {
+    return res.status(400).json({ error: "New password must be at least 6 characters." });
+  }
+  if (current_password === new_password) {
+    return res.status(400).json({ error: "The new password must be different from the current one." });
+  }
+
+  // Always read the stored hash fresh — never trust a password state carried in the token.
+  const user = await DB.getUserById(req.user.id);
+  if (!user) return res.status(404).json({ error: "User not found." });
+
+  if (!bcrypt.compareSync(current_password, user.password_hash)) {
+    return res.status(400).json({ error: "Your current password is incorrect." });
+  }
+
+  await DB.updateUser(req.user.id, { password_hash: bcrypt.hashSync(new_password, 10) });
+
+  // Record that it happened, but never the password itself.
+  await DB.addAuditLog({
+    operator_id: user.id,
+    operator_name: user.full_name,
+    operator_role: user.role,
+    category: "Account",
+    action: "Password Changed",
+    details: `${user.username} changed their own password.`,
+  });
+
+  res.json({ message: "Password changed successfully." });
+}));
+
 // Audit Logs list API
 app.get("/api/audit-logs", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
   res.json(await DB.getAuditLogs());
