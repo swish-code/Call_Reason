@@ -7,6 +7,36 @@ interface Props { onClose: () => void; }
 const inputCls =
   "w-full px-4 py-3 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition pr-11";
 
+// Defined at module scope (not inside ChangePassword) so its identity is
+// stable across renders — an inline component redefined on every keystroke
+// makes React remount the DOM node each time, which drops input focus.
+const Field = ({ label, value, onChange, show, onToggleShow, autoFocus }: {
+  label: string; value: string; onChange: (v: string) => void;
+  show: boolean; onToggleShow: () => void; autoFocus?: boolean;
+}) => (
+  <div className="space-y-1.5">
+    <label className="text-xs font-bold text-[var(--text)]">{label}</label>
+    <div className="relative">
+      <input
+        type={show ? "text" : "password"}
+        value={value}
+        autoFocus={autoFocus}
+        onChange={(e) => onChange(e.target.value)}
+        className={inputCls}
+        autoComplete={label.startsWith("Current") ? "current-password" : "new-password"}
+      />
+      <button
+        type="button"
+        onClick={onToggleShow}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--heading)] transition"
+        title={show ? "Hide passwords" : "Show passwords"}
+      >
+        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+      </button>
+    </div>
+  </div>
+);
+
 /**
  * Self-service password change. The current password is required — the server
  * verifies it, so simply being signed in is not enough to replace it.
@@ -48,32 +78,6 @@ export default function ChangePassword({ onClose }: Props) {
     }
   };
 
-  const Field = ({ label, value, onChange, autoFocus }: {
-    label: string; value: string; onChange: (v: string) => void; autoFocus?: boolean;
-  }) => (
-    <div className="space-y-1.5">
-      <label className="text-xs font-bold text-[var(--text)]">{label}</label>
-      <div className="relative">
-        <input
-          type={show ? "text" : "password"}
-          value={value}
-          autoFocus={autoFocus}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputCls}
-          autoComplete={label.startsWith("Current") ? "current-password" : "new-password"}
-        />
-        <button
-          type="button"
-          onClick={() => setShow((s) => !s)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--heading)] transition"
-          title={show ? "Hide passwords" : "Show passwords"}
-        >
-          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-md relative overflow-hidden">
@@ -104,9 +108,9 @@ export default function ChangePassword({ onClose }: Props) {
             </div>
           )}
 
-          <Field label="Current Password" value={current} onChange={setCurrent} autoFocus />
-          <Field label="New Password" value={next} onChange={setNext} />
-          <Field label="Confirm New Password" value={confirm} onChange={setConfirm} />
+          <Field label="Current Password" value={current} onChange={setCurrent} show={show} onToggleShow={() => setShow((s) => !s)} autoFocus />
+          <Field label="New Password" value={next} onChange={setNext} show={show} onToggleShow={() => setShow((s) => !s)} />
+          <Field label="Confirm New Password" value={confirm} onChange={setConfirm} show={show} onToggleShow={() => setShow((s) => !s)} />
 
           <p className="text-[11px] text-[var(--muted)]">At least 6 characters.</p>
 
