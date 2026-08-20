@@ -1806,7 +1806,7 @@ export class DB {
 
   // All survey assignments across campaigns, for the "View All Surveys" page + reporting
   static async getAllSurveyAssignments(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; from?: string; to?: string;
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; segment?: string; from?: string; to?: string;
   } = {}): Promise<{ records: any[]; total: number; cap: number }> {
     const { where, values } = DB.surveyFilterSql(filter);
     const CAP = 1000;
@@ -1831,7 +1831,7 @@ export class DB {
    */
   private static surveyFilterSql(filter: {
     brand_id?: string; agent_id?: string; status?: string; action_type?: string;
-    survey_type?: string; from?: string; to?: string;
+    survey_type?: string; segment?: string; from?: string; to?: string;
   }, startIdx = 1): { where: string; values: any[]; nextIdx: number } {
     const clauses: string[] = []; const values: any[] = []; let idx = startIdx;
     if (filter.brand_id) { clauses.push(`a.brand_id = $${idx++}`); values.push(filter.brand_id); }
@@ -1841,6 +1841,10 @@ export class DB {
       clauses.push(`EXISTS (SELECT 1 FROM survey_campaigns sc WHERE sc.id = a.campaign_id AND sc.survey_type = $${idx++})`);
       values.push(filter.survey_type);
     }
+    // "none" selects rows uploaded without a segment, which is a real bucket
+    // worth isolating — not the same as "no segment filter applied".
+    if (filter.segment === "none") { clauses.push(`(a.segment IS NULL OR btrim(a.segment) = '')`); }
+    else if (filter.segment) { clauses.push(`a.segment = $${idx++}`); values.push(filter.segment); }
     if (filter.agent_id === "unassigned") { clauses.push(`a.assigned_agent_id IS NULL`); }
     else if (filter.agent_id) { clauses.push(`a.assigned_agent_id = $${idx++}`); values.push(filter.agent_id); }
     if (filter.status === "pending") { clauses.push(`a.status IN ('pending','in_progress')`); }
@@ -1860,7 +1864,7 @@ export class DB {
    *   pending / in_progress   -> Pending
    */
   static async getSurveyOverview(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; from?: string; to?: string;
+    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; segment?: string; from?: string; to?: string;
   } = {}): Promise<{
     summary: { total: number; reached: number; not_reached: number; pending: number };
     byTemplate: { template_name: string; total: number; reached: number; not_reached: number; pending: number }[];

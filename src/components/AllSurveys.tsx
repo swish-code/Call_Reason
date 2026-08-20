@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { User } from "../types.js";
+import { User, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw } from "lucide-react";
 
@@ -22,6 +22,7 @@ interface SurveyRow {
   completed_at?: string | null;
   assignment_mode?: string;
   survey_type?: string;
+  segment?: string | null;
   task_no?: number;
 }
 
@@ -82,6 +83,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
   const [status, setStatus] = useState("");
   const [actionType, setActionType] = useState("");
   const [surveyType, setSurveyType] = useState("");
+  const [segment, setSegment] = useState("");
 
   const [savingId, setSavingId] = useState<string | null>(null);
 
@@ -92,8 +94,9 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
     if (status) p.set('status', status);
     if (actionType) p.set('action_type', actionType);
     if (surveyType) p.set('survey_type', surveyType);
+    if (segment) p.set('segment', segment);
     return p.toString();
-  }, [brandId, agentId, status, actionType, surveyType]);
+  }, [brandId, agentId, status, actionType, surveyType, segment]);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -213,6 +216,11 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           <option value="marketing_general">Marketing (General)</option>
           <option value="marketing_item">Marketing (Item)</option>
         </select>
+        <select value={segment} onChange={e => setSegment(e.target.value)} className={selCls} title="Customer segment">
+          <option value="">All Segments</option>
+          {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="none">— No segment —</option>
+        </select>
       </div>
 
       {error && <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400">{error}</div>}
@@ -316,6 +324,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                 <th className="text-left p-4">Brand</th>
                 <th className="text-left p-4">Type</th>
                 <th className="text-left p-4">Template</th>
+                <th className="text-left p-4">Segment</th>
                 <th className="text-left p-4">Assigned Agent</th>
                 <th className="text-center p-4">Status</th>
                 <th className="text-center p-4">Reachability</th>
@@ -328,9 +337,9 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {loading ? (
-                <tr><td colSpan={canAssign ? 13 : 12} className="p-8 text-center text-[var(--muted)]">Loading…</td></tr>
+                <tr><td colSpan={canAssign ? 14 : 13} className="p-8 text-center text-[var(--muted)]">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={canAssign ? 13 : 12} className="p-8 text-center text-[var(--muted)]">No surveys found.</td></tr>
+                <tr><td colSpan={canAssign ? 14 : 13} className="p-8 text-center text-[var(--muted)]">No surveys found.</td></tr>
               ) : rows.map(r => {
                 const sv = statusView(r.status);
                 return (
@@ -342,6 +351,11 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     <td className="p-4 text-[var(--text)]">{r.brand_name || '—'}</td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{surveyTypeLabel(r.survey_type)}</td>
                     <td className="p-4 text-[var(--muted)]">{r.template_name || '—'}</td>
+                    <td className="p-4">
+                      {r.segment
+                        ? <span className="px-2 py-1 bg-indigo-500/10 text-indigo-400 rounded-lg text-[10px] font-bold">{r.segment}</span>
+                        : <span className="text-[var(--muted)]">—</span>}
+                    </td>
                     <td className="p-4">
                       {canAssign ? (
                         <select
