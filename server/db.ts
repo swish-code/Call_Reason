@@ -1394,7 +1394,12 @@ export class DB {
   static async getSurveyTemplates(): Promise<any[]> {
     const { rows } = await pool.query(`
       SELECT t.*, b.brand_name, u.full_name AS created_by_name,
-        (SELECT COUNT(*)::int FROM survey_questions q WHERE q.template_id = t.id) AS question_count
+        (SELECT COUNT(*)::int FROM survey_questions q WHERE q.template_id = t.id) AS question_count,
+        EXISTS (
+          SELECT 1 FROM survey_answers a
+          JOIN survey_questions q ON q.id = a.question_id
+          WHERE q.template_id = t.id
+        ) AS has_data
       FROM survey_templates t
       LEFT JOIN brands b ON b.id = t.brand_id
       LEFT JOIN users u ON u.id = t.created_by
@@ -1405,7 +1410,12 @@ export class DB {
 
   static async getSurveyTemplateById(id: string): Promise<any | undefined> {
     const { rows } = await pool.query(`
-      SELECT t.*, b.brand_name, u.full_name AS created_by_name
+      SELECT t.*, b.brand_name, u.full_name AS created_by_name,
+        EXISTS (
+          SELECT 1 FROM survey_answers a
+          JOIN survey_questions q ON q.id = a.question_id
+          WHERE q.template_id = t.id
+        ) AS has_data
       FROM survey_templates t
       LEFT JOIN brands b ON b.id = t.brand_id
       LEFT JOIN users u ON u.id = t.created_by
@@ -1414,6 +1424,26 @@ export class DB {
     if (!rows[0]) return undefined;
     const q = await pool.query("SELECT * FROM survey_questions WHERE template_id = $1 ORDER BY q_order ASC", [id]);
     return { ...rows[0], questions: q.rows };
+  }
+
+  /**
+   * True once any of a template's questions have a recorded answer. Used to
+   * lock editing entirely — the delete-and-reinsert bug that severed 5,824
+   * historical answers came from editing a template that already had data;
+   * the safer fix is a fresh template can be edited freely, but once real
+   * survey results exist under it, it is frozen and a new template is made
+   * instead of risking it again.
+   */
+  static async templateHasRecordedData(templateId: string): Promise<boolean> {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM survey_answers a
+         JOIN survey_questions q ON q.id = a.question_id
+         WHERE q.template_id = $1
+       ) AS has_data`,
+      [templateId]
+    );
+    return !!rows[0]?.has_data;
   }
 
   /**
@@ -1486,6 +1516,14 @@ export class DB {
     name?: string; brand_id?: string | null; active?: boolean;
     questions?: { id?: string; text: string; answer_type: string; options?: any; q_order?: number; segment?: string | null }[];
   }): Promise<any | undefined> {
+    // A template with recorded answers is frozen entirely — not just its
+    // questions. The upsert-by-id fix keeps IDs stable for a normal edit, but
+    // freezing removes the risk class outright: no edit path can ever touch
+    // a template real survey results already exist under. Create a new
+    // template instead.
+    if (await DB.templateHasRecordedData(id)) {
+      throw new Error("This template already has recorded survey answers and can no longer be edited. Create a new template instead.");
+    }
     const client = await pool.connect();
     try {
       await client.query("BEGIN");

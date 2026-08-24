@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { User, SurveyTemplate, SurveyQuestion, AnswerType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
-  ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2, Download,
+  ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2, Download, Lock,
 } from "lucide-react";
 
 interface SurveyTemplatesProps { currentUser: User; }
@@ -131,6 +131,13 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
   };
 
   const openEdit = async (t: SurveyTemplate) => {
+    // Real survey answers already exist under this template — editing it is
+    // blocked server-side too, but stopping here avoids the modal opening
+    // just to fail on save.
+    if (t.has_data) {
+      alert(`"${t.name}" already has recorded survey answers and can no longer be edited.\nCreate a new template instead — it will keep this one's history intact.`);
+      return;
+    }
     resetModal();
     setEditId(t.id);
     setName(t.name);
@@ -262,9 +269,15 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                   <tr
                     key={t.id}
                     onClick={() => canManage && openEdit(t)}
-                    className={`transition align-middle ${canManage ? 'hover:bg-[var(--surface-2)]/40 cursor-pointer' : ''}`}
+                    title={t.has_data ? 'Locked — this template already has recorded survey answers' : undefined}
+                    className={`transition align-middle ${canManage ? 'hover:bg-[var(--surface-2)]/40 cursor-pointer' : ''} ${t.has_data ? 'opacity-80' : ''}`}
                   >
-                    <td className="p-4 font-bold text-[var(--heading)]">{t.name}</td>
+                    <td className="p-4 font-bold text-[var(--heading)]">
+                      <span className="inline-flex items-center gap-1.5">
+                        {t.has_data && <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                        {t.name}
+                      </span>
+                    </td>
                     <td className="p-4 text-[var(--text)]">
                       {t.brand_name || <span className="text-[var(--muted)]">General</span>}
                     </td>

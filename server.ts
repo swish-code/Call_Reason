@@ -2343,9 +2343,14 @@ app.post("/api/survey-templates", authenticateJWT, asyncHandler(async (req: any,
 
 app.put("/api/survey-templates/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!canBuildTemplates(req.user.role)) return res.status(403).json({ error: "Access denied." });
-  const t = await DB.updateSurveyTemplate(req.params.id, req.body);
-  if (!t) return res.status(404).json({ error: "Template not found." });
-  res.json(t);
+  try {
+    const t = await DB.updateSurveyTemplate(req.params.id, req.body);
+    if (!t) return res.status(404).json({ error: "Template not found." });
+    res.json(t);
+  } catch (e: any) {
+    // templateHasRecordedData guard throws a plain Error with a user-facing message.
+    res.status(400).json({ error: e.message || "Failed to update template." });
+  }
 }));
 
 // ---- Campaigns ----

@@ -308,6 +308,9 @@ export interface SurveyTemplate {
   question_count?: number;
   questions?: SurveyQuestion[];
   created_at: string;
+  /** True once any of this template's questions has a recorded answer — the
+   * template is then frozen and cannot be edited (see server/db.ts). */
+  has_data?: boolean;
 }
 
 export interface SurveyCampaign {
