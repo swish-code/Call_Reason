@@ -569,22 +569,17 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                     )}
                   </div>
 
-                  {/* Action type for a reached/completed survey */}
-                  <div className="flex items-center gap-2 pt-1">
-                    <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wide">Action</span>
-                    <select value={actionType} onChange={e => setActionType(e.target.value as 'no_action' | 'complaint')} className={selCls}>
-                      <option value="no_action">No Action</option>
-                      <option value="complaint">Complaint</option>
-                    </select>
-                  </div>
-
-                  {modalError && (
-                    <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400 flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {modalError}
+                  {/* Action type for a reached/completed survey, plus the reached-but-declined
+                      outcomes right beside it — the agent picks the outcome for this call here,
+                      not after scrolling past the whole question list. */}
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-[var(--muted)] uppercase tracking-wide">Action</span>
+                      <select value={actionType} onChange={e => setActionType(e.target.value as 'no_action' | 'complaint')} className={selCls}>
+                        <option value="no_action">No Action</option>
+                        <option value="complaint">Complaint</option>
+                      </select>
                     </div>
-                  )}
-
-                  <div className="flex flex-wrap justify-between gap-2 pt-1">
                     <div className="flex flex-wrap gap-2">
                       <button
                         onClick={markNotReached}
@@ -611,18 +606,25 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                         {declinedSaving === 'not_interested' ? 'Saving…' : 'Not Interested'}
                       </button>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={closeWork} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">
-                        Close
-                      </button>
-                      <button
-                        onClick={saveResponse}
-                        disabled={responseSaving || questions.length === 0 || notReachedSaving || !!declinedSaving}
-                        className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
-                      >
-                        {responseSaving ? 'Saving…' : 'Reached — Save Response'}
-                      </button>
+                  </div>
+
+                  {modalError && (
+                    <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {modalError}
                     </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button onClick={closeWork} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">
+                      Close
+                    </button>
+                    <button
+                      onClick={saveResponse}
+                      disabled={responseSaving || questions.length === 0 || notReachedSaving || !!declinedSaving}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
+                    >
+                      {responseSaving ? 'Saving…' : 'Reached — Save Response'}
+                    </button>
                   </div>
                 </div>
               )}
