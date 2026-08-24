@@ -2422,24 +2422,29 @@ app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(a
   res.json(out);
 }));
 
-// Record an outcome: Reached (with answers) or Not Reached (No Action)
+// Record an outcome: Reached + completed (with answers), Reached but declined
+// (Refused to Complete / Not Interested — no answers needed), or Not Reached (No Action)
 app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(async (req: any, res) => {
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
-  const { answers, reachability, action_type, segment } = req.body;
+  const { answers, reachability, action_type, segment, outcome } = req.body;
   const notReached = reachability === "not_reached";
-  if (!notReached) {
+  const declined = !notReached && (outcome === "refused" || outcome === "not_interested");
+  // Only a genuine completed survey requires actual answers — a customer who
+  // refused or wasn't interested was reached, but has nothing to answer.
+  if (!notReached && !declined) {
     if (!Array.isArray(answers) || answers.length === 0) return res.status(400).json({ error: "Answers are required." });
     const anyAnswered = answers.some((x: any) => x.answered && String(x.answer_value ?? "").trim() !== "");
     if (!anyAnswered) return res.status(400).json({ error: "At least one question must be answered." });
   }
   const updated = await DB.addSurveyResponse({
     assignment_id: req.params.id, agent_id: req.user.id,
-    answers: notReached ? [] : answers.map((x: any) => ({ question_id: x.question_id, answer_value: x.answer_value, answered: !!x.answered })),
+    answers: (notReached || declined) ? [] : answers.map((x: any) => ({ question_id: x.question_id, answer_value: x.answer_value, answered: !!x.answered })),
     brand_id: a.brand_id, customer_phone: a.customer_phone,
     reachability: notReached ? "not_reached" : "reached",
     action_type: action_type === "complaint" ? "complaint" : "no_action",
     segment: segment || undefined,
+    outcome: declined ? outcome : "completed",
   });
   res.json(updated);
 }));
@@ -2491,7 +2496,7 @@ app.patch("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (r
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   const { status, action_type, reachability } = req.body;
-  const validStatus = ["pending", "in_progress", "successful", "unreachable", "declined"];
+  const validStatus = ["pending", "in_progress", "successful", "unreachable", "declined", "refused", "not_interested"];
   if (status !== undefined && !validStatus.includes(status))
     return res.status(400).json({ error: "Invalid status." });
   if (action_type !== undefined && !["no_action", "complaint"].includes(action_type))

@@ -36,12 +36,15 @@ const outcomeColor = (o: string) =>
 const statusLabel = (s: string) =>
   s === 'in_progress' ? 'In Progress'
   : s === 'no_answer' ? 'No Answer'
+  : s === 'refused' ? 'Refused to Complete'
+  : s === 'not_interested' ? 'Not Interested'
   : s.charAt(0).toUpperCase() + s.slice(1);
 
 const statusColor = (s: string) =>
   s === 'successful' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
   : s === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
   : s === 'declined' || s === 'unreachable' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+  : s === 'refused' || s === 'not_interested' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20'
   : s === 'no_answer' ? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
   : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
 
@@ -198,6 +201,33 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
       setModalError(e.message || "Response error.");
     } finally {
       setResponseSaving(false);
+    }
+  };
+
+  // Close the survey as reached-but-declined: the agent got the customer on the
+  // line, but they refused to finish or weren't interested. No answers required.
+  const [declinedSaving, setDeclinedSaving] = useState<'refused' | 'not_interested' | null>(null);
+  const markDeclined = async (outcome: 'refused' | 'not_interested') => {
+    if (!workId) return;
+    const label = outcome === 'refused' ? 'Refused to Complete' : 'Not Interested';
+    if (!window.confirm(`Mark this survey as "${label}"?\nThe customer was reached but did not complete the survey.`)) return;
+    setModalError("");
+    setDeclinedSaving(outcome);
+    try {
+      const res = await apiFetch(`/api/surveys/assignments/${workId}/response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reachability: 'reached', action_type: actionType, outcome, segment: segment || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setModalError(data.error || "Failed to update."); return; }
+      closeWork();
+      fetchQueue();
+      fetchCapacity();
+    } catch (e: any) {
+      setModalError(e.message || "Update error.");
+    } finally {
+      setDeclinedSaving(null);
     }
   };
 
@@ -554,22 +584,40 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                     </div>
                   )}
 
-                  <div className="flex justify-between gap-2 pt-1">
-                    <button
-                      onClick={markNotReached}
-                      disabled={notReachedSaving || responseSaving}
-                      className="px-4 py-2 bg-rose-600/90 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
-                      title="Customer did not answer — mark as Not Reached (No Action)"
-                    >
-                      {notReachedSaving ? 'Saving…' : 'Not Reached (No Action)'}
-                    </button>
+                  <div className="flex flex-wrap justify-between gap-2 pt-1">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={markNotReached}
+                        disabled={notReachedSaving || responseSaving || !!declinedSaving}
+                        className="px-4 py-2 bg-rose-600/90 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+                        title="Customer did not answer — mark as Not Reached (No Action)"
+                      >
+                        {notReachedSaving ? 'Saving…' : 'Not Reached (No Action)'}
+                      </button>
+                      <button
+                        onClick={() => markDeclined('refused')}
+                        disabled={notReachedSaving || responseSaving || !!declinedSaving}
+                        className="px-4 py-2 bg-orange-600/90 hover:bg-orange-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+                        title="Customer was reached but refused to complete the survey"
+                      >
+                        {declinedSaving === 'refused' ? 'Saving…' : 'Refused to Complete'}
+                      </button>
+                      <button
+                        onClick={() => markDeclined('not_interested')}
+                        disabled={notReachedSaving || responseSaving || !!declinedSaving}
+                        className="px-4 py-2 bg-orange-600/90 hover:bg-orange-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+                        title="Customer was reached but was not interested in the survey"
+                      >
+                        {declinedSaving === 'not_interested' ? 'Saving…' : 'Not Interested'}
+                      </button>
+                    </div>
                     <div className="flex gap-2">
                       <button onClick={closeWork} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">
                         Close
                       </button>
                       <button
                         onClick={saveResponse}
-                        disabled={responseSaving || questions.length === 0}
+                        disabled={responseSaving || questions.length === 0 || notReachedSaving || !!declinedSaving}
                         className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
                       >
                         {responseSaving ? 'Saving…' : 'Reached — Save Response'}

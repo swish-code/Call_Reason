@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw } from "lucide-react";
+import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw, UserX } from "lucide-react";
 
 interface AllSurveysProps { currentUser: User; }
 
@@ -27,9 +27,9 @@ interface SurveyRow {
 }
 
 interface Overview {
-  summary: { total: number; reached: number; not_reached: number; pending: number };
-  byTemplate: { template_name: string; total: number; reached: number; not_reached: number; pending: number }[];
-  byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; pending: number }[];
+  summary: { total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number };
+  byTemplate: { template_name: string; total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
+  byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
 }
 
 const KW_MS = 3 * 60 * 60 * 1000;
@@ -40,10 +40,12 @@ const fmtDateTime = (ts?: string | null) => {
   return new Date(t + KW_MS).toISOString().replace('T', ' ').slice(0, 16);
 };
 
-// Map raw assignment status into the three reporting buckets the business cares about
+// Map raw assignment status into the reporting buckets the business cares about
 const statusView = (s: string): { label: string; cls: string } => {
   if (s === 'successful') return { label: 'Completed', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
   if (s === 'unreachable' || s === 'declined') return { label: 'Not Reached', cls: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
+  if (s === 'refused') return { label: 'Refused to Complete', cls: 'bg-orange-500/10 text-orange-400 border-orange-500/20' };
+  if (s === 'not_interested') return { label: 'Not Interested', cls: 'bg-orange-500/10 text-orange-400 border-orange-500/20' };
   if (s === 'in_progress') return { label: 'In Progress', cls: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
   return { label: 'Pending', cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
 };
@@ -204,6 +206,8 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           <option value="pending">Pending</option>
           <option value="completed">Completed — Reached</option>
           <option value="not_reached">Completed — Not Reached</option>
+          <option value="refused">Refused to Complete</option>
+          <option value="not_interested">Not Interested</option>
         </select>
         <select value={actionType} onChange={e => setActionType(e.target.value)} className={selCls}>
           <option value="">All Actions</option>
@@ -227,11 +231,12 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
 
       {/* Overview — headline counts for whatever the filters currently select */}
       {overview && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {[
             { label: 'Total Surveys', value: overview.summary.total, icon: ListChecks, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
             { label: 'Completed — Reached', value: overview.summary.reached, icon: CheckCircle2, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
             { label: 'Completed — Not Reached', value: overview.summary.not_reached, icon: PhoneOff, color: 'text-rose-400', bg: 'bg-rose-500/10' },
+            { label: 'Refused / Not Interested', value: overview.summary.refused_not_interested, icon: UserX, color: 'text-orange-400', bg: 'bg-orange-500/10' },
             { label: 'Pending', value: overview.summary.pending, icon: Clock, color: 'text-amber-400', bg: 'bg-amber-500/10' },
           ].map(c => (
             <div key={c.label} className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl flex items-center gap-4">
@@ -259,6 +264,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                   <th className="text-center py-2 px-2">Total</th>
                   <th className="text-center py-2 px-2">Reached</th>
                   <th className="text-center py-2 px-2">Not Reached</th>
+                  <th className="text-center py-2 px-2">Refused/NI</th>
                   <th className="text-center py-2 px-2">Pending</th>
                 </tr>
               </thead>
@@ -269,6 +275,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     <td className="py-2 px-2 text-center font-mono text-[var(--text)]">{t.total}</td>
                     <td className="py-2 px-2 text-center font-mono text-emerald-400">{t.reached}</td>
                     <td className="py-2 px-2 text-center font-mono text-rose-400">{t.not_reached}</td>
+                    <td className="py-2 px-2 text-center font-mono text-orange-400">{t.refused_not_interested}</td>
                     <td className="py-2 px-2 text-center font-mono text-amber-400">{t.pending}</td>
                   </tr>
                 ))}
@@ -293,6 +300,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                   <th className="text-center py-2 px-2">Completed</th>
                   <th className="text-center py-2 px-2">Reached</th>
                   <th className="text-center py-2 px-2">Not Reached</th>
+                  <th className="text-center py-2 px-2">Refused/NI</th>
                   <th className="text-center py-2 px-2">Pending</th>
                 </tr>
               </thead>
@@ -304,6 +312,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     <td className="py-2 px-2 text-center font-mono text-[var(--text)]">{a.completed}</td>
                     <td className="py-2 px-2 text-center font-mono text-emerald-400">{a.reached}</td>
                     <td className="py-2 px-2 text-center font-mono text-rose-400">{a.not_reached}</td>
+                    <td className="py-2 px-2 text-center font-mono text-orange-400">{a.refused_not_interested}</td>
                     <td className="py-2 px-2 text-center font-mono text-amber-400">{a.pending}</td>
                   </tr>
                 ))}
@@ -387,6 +396,8 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                           {r.status === 'in_progress' && <option value="in_progress">In Progress</option>}
                           <option value="successful">Completed — Reached</option>
                           <option value="unreachable">Completed — Not Reached</option>
+                          <option value="refused">Refused to Complete</option>
+                          <option value="not_interested">Not Interested</option>
                         </select>
                       ) : (
                         <span className={`px-2 py-1 rounded-lg border text-[10px] font-bold ${sv.cls}`}>{sv.label}</span>
@@ -416,7 +427,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDateTime(r.completed_at)}</td>
                     {canAssign && (
                       <td className="p-4 text-center">
-                        {['successful', 'unreachable', 'declined'].includes(r.status) ? (
+                        {['successful', 'unreachable', 'declined', 'refused', 'not_interested'].includes(r.status) ? (
                           <button
                             onClick={() => patchRow(r.id, { status: 'pending' },
                               "Return this survey to Pending?\nIts outcome and call attempts will be cleared so it can be worked again.")}

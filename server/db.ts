@@ -1725,10 +1725,17 @@ export class DB {
     answers: { question_id: string; answer_value?: string; answered: boolean }[];
     brand_id: string | null; customer_phone: string;
     reachability?: string; action_type?: string; segment?: string;
+    // "completed" (default) collects the answers below; "refused"/"not_interested"
+    // record that the agent reached the customer but they declined the survey —
+    // no answers are stored for those, but they are NOT bucketed with unreachable.
+    outcome?: "completed" | "refused" | "not_interested";
   }): Promise<any> {
     const reachability = data.reachability === "not_reached" ? "not_reached" : "reached";
     const action_type = data.action_type === "complaint" ? "complaint" : "no_action";
-    const answered = reachability === "reached";
+    const declinedOutcome = reachability === "reached" && (data.outcome === "refused" || data.outcome === "not_interested");
+    // "answered" drives whether real answers are stored/counted as a completed
+    // survey; a reached-but-declined outcome collected no answers either.
+    const answered = reachability === "reached" && !declinedOutcome;
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -1764,8 +1771,9 @@ export class DB {
           }
         }
       }
-      // Terminal status: successful when reached, unreachable when not
-      const newStatus = answered ? "successful" : "unreachable";
+      // Terminal status: successful when a real survey was collected, the
+      // declined outcome when reached-but-refused, unreachable otherwise.
+      const newStatus = answered ? "successful" : declinedOutcome ? (data.outcome as string) : "unreachable";
       await client.query(
         "UPDATE survey_assignments SET status = $2, reachability = $3, action_type = $4, completed_at = now() WHERE id = $1",
         [data.assignment_id, newStatus, reachability, action_type]
@@ -1778,7 +1786,7 @@ export class DB {
         `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,rate,answered,comment,complaint,note,segment,extra,record_date,uploaded_by,created_at)
          VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, to_char(now() + interval '3 hours','YYYY-MM-DD'), $13, now())`,
         [srid, data.brand_id, asg?.brand_name || null, data.customer_phone, agentName, rate, answered,
-         comment, complaint, action_type, data.segment || null, JSON.stringify({ reachability, action_type, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id]
+         comment, complaint, action_type, data.segment || null, JSON.stringify({ reachability, action_type, outcome: newStatus, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id]
       );
       // Update contact recency
       const ccid = "cc-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
@@ -1850,6 +1858,10 @@ export class DB {
     if (filter.status === "pending") { clauses.push(`a.status IN ('pending','in_progress')`); }
     else if (filter.status === "completed") { clauses.push(`a.status = 'successful'`); }
     else if (filter.status === "not_reached") { clauses.push(`a.status IN ('unreachable','declined')`); }
+    // Reached, but the customer declined to finish or wasn't interested — distinct
+    // from "not_reached" (never got the customer on the line at all).
+    else if (filter.status === "refused") { clauses.push(`a.status = 'refused'`); }
+    else if (filter.status === "not_interested") { clauses.push(`a.status = 'not_interested'`); }
     if (filter.action_type) { clauses.push(`a.action_type = $${idx++}`); values.push(filter.action_type); }
     if (filter.from) { clauses.push(`a.created_at >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`a.created_at <= $${idx++}`); values.push(filter.to); }
@@ -1859,22 +1871,25 @@ export class DB {
   /**
    * Headline counts, a per-survey (template) breakdown and per-agent stats for
    * the All Surveys page. Status buckets match the list view exactly:
-   *   successful              -> Completed – Reached
-   *   unreachable / declined  -> Completed – Not Reached
-   *   pending / in_progress   -> Pending
+   *   successful                  -> Completed – Reached
+   *   unreachable / declined      -> Completed – Not Reached
+   *   refused / not_interested    -> Reached, but declined to finish (own bucket —
+   *                                  neither "collected a survey" nor "never got them")
+   *   pending / in_progress       -> Pending
    */
   static async getSurveyOverview(filter: {
     brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; segment?: string; from?: string; to?: string;
   } = {}): Promise<{
-    summary: { total: number; reached: number; not_reached: number; pending: number };
-    byTemplate: { template_name: string; total: number; reached: number; not_reached: number; pending: number }[];
-    byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; pending: number }[];
+    summary: { total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number };
+    byTemplate: { template_name: string; total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
+    byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
   }> {
     const { where, values } = DB.surveyFilterSql(filter);
     const BUCKETS = `
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE a.status = 'successful')::int AS reached,
       COUNT(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
+      COUNT(*) FILTER (WHERE a.status IN ('refused','not_interested'))::int AS refused_not_interested,
       COUNT(*) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS pending`;
 
     const { rows: sum } = await pool.query(`
@@ -1895,7 +1910,7 @@ export class DB {
       SELECT a.assigned_agent_id AS agent_id,
              COALESCE(u.full_name, '— Unassigned —') AS agent_name,
              ${BUCKETS},
-             (COUNT(*) FILTER (WHERE a.status IN ('successful','unreachable','declined')))::int AS completed
+             (COUNT(*) FILTER (WHERE a.status IN ('successful','unreachable','declined','refused','not_interested')))::int AS completed
       FROM survey_assignments a
       LEFT JOIN users u ON u.id = a.assigned_agent_id
       ${where}
@@ -1907,10 +1922,11 @@ export class DB {
     return {
       summary: {
         total: s.total ?? 0, reached: s.reached ?? 0,
-        not_reached: s.not_reached ?? 0, pending: s.pending ?? 0,
+        not_reached: s.not_reached ?? 0, refused_not_interested: s.refused_not_interested ?? 0,
+        pending: s.pending ?? 0,
       },
       // `assigned` is the agent's whole workload; `completed` is everything that
-      // reached a terminal state, reached or not.
+      // reached a terminal state, whatever the outcome.
       byTemplate,
       byAgent: byAgent.map((r: any) => ({ ...r, assigned: r.total })),
     };
@@ -1934,7 +1950,8 @@ export class DB {
     } else if (fields.status) {
       sets.push(`status = $${idx++}`); values.push(fields.status);
       // A terminal status carries its matching reachability and a completion stamp.
-      if (fields.status === "successful") sets.push(`reachability = 'reached'`);
+      // refused/not_interested are reached-but-declined outcomes, not "never got them".
+      if (fields.status === "successful" || fields.status === "refused" || fields.status === "not_interested") sets.push(`reachability = 'reached'`);
       else if (fields.status === "unreachable" || fields.status === "declined") sets.push(`reachability = 'not_reached'`);
       sets.push(`completed_at = COALESCE(completed_at, now())`);
     }

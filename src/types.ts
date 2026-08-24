@@ -282,7 +282,7 @@ export type SurveyType = 'marketing_item' | 'marketing_general' | 'daily_normal'
 export type AssignmentMode = 'assigned' | 'open';
 export type ContinuityType = 'one_time_slot' | 'continuous';
 export type CampaignStatus = 'pending' | 'active' | 'full_today' | 'completed' | 'cancelled';
-export type SurveyAssignmentStatus = 'pending' | 'in_progress' | 'successful' | 'no_answer' | 'unreachable' | 'declined';
+export type SurveyAssignmentStatus = 'pending' | 'in_progress' | 'successful' | 'no_answer' | 'unreachable' | 'declined' | 'refused' | 'not_interested';
 
 // Customer segments — a question can target one segment, or be shared (empty = All)
 export const SURVEY_SEGMENTS = ["Loyal", "Occasional", "Low-Frequency", "High-Value Churned"] as const;
