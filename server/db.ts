@@ -1484,7 +1484,7 @@ export class DB {
 
   static async updateSurveyTemplate(id: string, data: {
     name?: string; brand_id?: string | null; active?: boolean;
-    questions?: { text: string; answer_type: string; options?: any; q_order?: number; segment?: string | null }[];
+    questions?: { id?: string; text: string; answer_type: string; options?: any; q_order?: number; segment?: string | null }[];
   }): Promise<any | undefined> {
     const client = await pool.connect();
     try {
@@ -1495,14 +1495,42 @@ export class DB {
       if (data.active !== undefined) { sets.push(`active = $${idx++}`); vals.push(data.active); }
       if (sets.length) { vals.push(id); await client.query(`UPDATE survey_templates SET ${sets.join(",")} WHERE id = $${idx}`, vals); }
       if (data.questions) {
-        await client.query("DELETE FROM survey_questions WHERE template_id = $1", [id]);
+        // Upsert by id instead of delete-all-then-reinsert: recreating every
+        // question on every edit gave each one a fresh id, which silently
+        // severed the FK on every already-recorded survey_answers row
+        // (ON DELETE SET NULL) — historical answers stayed in the table but
+        // lost which question they were for. Existing rows are updated in
+        // place (same id, so past answers stay linked); only questions the
+        // caller genuinely removed are deleted, and only new ones (no id, or
+        // an id that isn't a real existing question here) are inserted.
+        const { rows: existing } = await client.query(
+          "SELECT id FROM survey_questions WHERE template_id = $1", [id]
+        );
+        const existingIds = new Set(existing.map((r: any) => r.id));
+        const keptIds = new Set<string>();
+
         for (let i = 0; i < data.questions.length; i++) {
           const q = data.questions[i];
-          const qid = "sq-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
-          await client.query(
-            "INSERT INTO survey_questions (id,template_id,text,answer_type,options,q_order,segment) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-            [qid, id, q.text, q.answer_type || "free_text", q.options ? JSON.stringify(q.options) : null, q.q_order ?? i, q.segment || null]
-          );
+          const optionsJson = q.options ? JSON.stringify(q.options) : null;
+          if (q.id && existingIds.has(q.id)) {
+            await client.query(
+              `UPDATE survey_questions SET text=$1, answer_type=$2, options=$3, q_order=$4, segment=$5 WHERE id=$6`,
+              [q.text, q.answer_type || "free_text", optionsJson, q.q_order ?? i, q.segment || null, q.id]
+            );
+            keptIds.add(q.id);
+          } else {
+            const qid = "sq-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
+            await client.query(
+              "INSERT INTO survey_questions (id,template_id,text,answer_type,options,q_order,segment) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+              [qid, id, q.text, q.answer_type || "free_text", optionsJson, q.q_order ?? i, q.segment || null]
+            );
+            keptIds.add(qid);
+          }
+        }
+
+        const removedIds = [...existingIds].filter((eid) => !keptIds.has(eid));
+        if (removedIds.length) {
+          await client.query("DELETE FROM survey_questions WHERE id = ANY($1)", [removedIds]);
         }
       }
       await client.query("COMMIT");

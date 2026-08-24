@@ -18,7 +18,11 @@ const fmtDate = (ts?: string) => {
 const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none";
 const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
-interface QRow { text: string; answer_type: AnswerType; optionsText: string; segment: string; }
+// `id` is only set for a question that already exists in the database — it
+// lets the save request update that row in place instead of the backend
+// treating every question as brand new, which would sever already-recorded
+// answers from the question they were for.
+interface QRow { id?: string; text: string; answer_type: AnswerType; optionsText: string; segment: string; }
 
 export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
   const [templates, setTemplates] = useState<SurveyTemplate[]>([]);
@@ -140,6 +144,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
         const qs: SurveyQuestion[] = data.questions || [];
         if (qs.length) {
           setRows(qs.map(q => ({
+            id: q.id,
             text: q.text || "",
             answer_type: q.answer_type,
             optionsText: (q.options || []).join(", "),
@@ -163,7 +168,12 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
     const cleaned = rows.filter(r => r.text.trim());
     if (cleaned.length === 0) { setModalError("Add at least one question."); return; }
     const questions = cleaned.map((r, i) => {
+      // Carry the existing id along so the backend updates this question in
+      // place instead of treating it as new — that keeps already-recorded
+      // answers linked to it. A row with no id (freshly added here) is a new
+      // question and gets a new id server-side.
       const q: any = { text: r.text.trim(), answer_type: r.answer_type, q_order: i + 1, segment: r.segment || null };
+      if (r.id) q.id = r.id;
       if (r.answer_type === 'multiple_choice') {
         q.options = r.optionsText.split(',').map(s => s.trim()).filter(Boolean);
       }
