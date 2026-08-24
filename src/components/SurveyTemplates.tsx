@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { User, SurveyTemplate, SurveyQuestion, AnswerType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
-  ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2,
+  ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2, Download,
 } from "lucide-react";
 
 interface SurveyTemplatesProps { currentUser: User; }
@@ -37,6 +37,61 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
   const [modalError, setModalError] = useState("");
 
   const canManage = ['admin', 'manager', 'supervisor', 'leader'].includes(currentUser.role);
+  const [exportingId, setExportingId] = useState<string | null>(null);
+
+  // Downloads every recorded answer for this template as one CSV: one row per
+  // respondent, one column per question, in the template's question order.
+  const exportTemplate = async (t: SurveyTemplate) => {
+    setExportingId(t.id);
+    try {
+      const res = await apiFetch(`/api/survey-templates/${t.id}/export`);
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error || "Export failed."); return; }
+      const data: {
+        questions: { id: string; text: string; q_order: number }[];
+        answers: { response_id: string; customer_phone: string; agent_name: string | null;
+          answered_at: string; brand_name: string | null; segment: string | null;
+          question_id: string; answer_value: string | null }[];
+      } = await res.json();
+
+      const questions = [...data.questions].sort((a, b) => a.q_order - b.q_order);
+      const byResponse = new Map<string, {
+        customer_phone: string; agent_name: string | null; answered_at: string;
+        brand_name: string | null; segment: string | null; answers: Record<string, string>;
+      }>();
+      for (const a of data.answers) {
+        let row = byResponse.get(a.response_id);
+        if (!row) {
+          row = { customer_phone: a.customer_phone, agent_name: a.agent_name, answered_at: a.answered_at, brand_name: a.brand_name, segment: a.segment, answers: {} };
+          byResponse.set(a.response_id, row);
+        }
+        row.answers[a.question_id] = a.answer_value || "";
+      }
+
+      const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const header = ["Phone", "Brand", "Segment", "Agent", "Completed At", ...questions.map(q => q.text)];
+      const lines = [header.map(esc).join(",")];
+      for (const row of byResponse.values()) {
+        const cells = [
+          row.customer_phone, row.brand_name || "", row.segment || "", row.agent_name || "",
+          fmtDate(row.answered_at), ...questions.map(q => row.answers[q.id] ?? ""),
+        ];
+        lines.push(cells.map(esc).join(","));
+      }
+      if (byResponse.size === 0) { setError("No completed responses to export yet."); return; }
+
+      const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${t.name.replace(/[^a-z0-9]+/gi, "-")}-responses-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e.message || "Export error.");
+    } finally {
+      setExportingId(null);
+    }
+  };
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
@@ -189,6 +244,7 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                   <th className="p-4">Status</th>
                   <th className="p-4">Created By</th>
                   <th className="p-4">Created</th>
+                  <th className="p-4 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -214,11 +270,21 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                     </td>
                     <td className="p-4 text-[var(--muted)]">{t.created_by_name || '—'}</td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(t.created_at)}</td>
+                    <td className="p-4 text-center">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); exportTemplate(t); }}
+                        disabled={exportingId === t.id}
+                        title="Export this survey's questions and answers to CSV"
+                        className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 text-emerald-400 border border-emerald-500/20 rounded-lg text-[10px] font-bold inline-flex items-center gap-1.5 transition active:scale-95"
+                      >
+                        <Download className="w-3.5 h-3.5" /> {exportingId === t.id ? 'Exporting…' : 'Export'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {templates.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-[var(--muted)]">No templates found.</td>
+                    <td colSpan={7} className="p-8 text-center text-[var(--muted)]">No templates found.</td>
                   </tr>
                 )}
               </tbody>

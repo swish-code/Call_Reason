@@ -2258,6 +2258,17 @@ app.get("/api/survey-templates/:id", authenticateJWT, asyncHandler(async (req, r
   res.json(t);
 }));
 
+// Export data for a template: its questions + every recorded answer, for the
+// frontend to pivot into one row per respondent / one column per question.
+app.get("/api/survey-templates/:id/export", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!canBuildTemplates(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  try {
+    res.json(await DB.getTemplateExportRows(req.params.id));
+  } catch (e: any) {
+    res.status(404).json({ error: e.message || "Template not found." });
+  }
+}));
+
 app.post("/api/survey-templates", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!canBuildTemplates(req.user.role)) return res.status(403).json({ error: "Access denied." });
   const { name, brand_id, active, questions } = req.body;

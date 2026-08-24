@@ -1416,6 +1416,42 @@ export class DB {
     return { ...rows[0], questions: q.rows };
   }
 
+  /**
+   * Every completed answer for a template's questions, one flat row per
+   * (response, question) — the shape the frontend pivots into one row per
+   * respondent / one column per question for the export.
+   *
+   * Scoped implicitly: an answer only exists for a question_id, and a
+   * question only belongs to one template, so filtering by the template's
+   * question ids is sufficient — no need to also check which campaign the
+   * assignment came from.
+   */
+  static async getTemplateExportRows(templateId: string): Promise<{
+    template: any; questions: any[];
+    answers: { response_id: string; customer_phone: string; agent_name: string | null;
+      answered_at: string; brand_name: string | null; segment: string | null;
+      question_id: string; answer_value: string | null }[];
+  }> {
+    const template = await DB.getSurveyTemplateById(templateId);
+    if (!template) throw new Error("Template not found.");
+
+    const { rows: answers } = await pool.query(`
+      SELECT r.id AS response_id, asg.customer_phone, u.full_name AS agent_name,
+        r.answered_at, b.brand_name, asg.segment,
+        a.question_id, a.answer_value
+      FROM survey_answers a
+      JOIN survey_questions q ON q.id = a.question_id
+      JOIN survey_responses r ON r.id = a.response_id
+      JOIN survey_assignments asg ON asg.id = r.assignment_id
+      LEFT JOIN users u ON u.id = r.agent_id
+      LEFT JOIN brands b ON b.id = asg.brand_id
+      WHERE q.template_id = $1
+      ORDER BY r.answered_at ASC
+    `, [templateId]);
+
+    return { template, questions: template.questions, answers };
+  }
+
   static async createSurveyTemplate(data: {
     name: string; brand_id?: string | null; created_by: string; active?: boolean;
     questions: { text: string; answer_type: string; options?: any; q_order?: number; segment?: string | null }[];
