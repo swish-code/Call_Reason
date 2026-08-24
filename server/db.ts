@@ -2142,27 +2142,40 @@ export class DB {
   }
 
   // Delete survey records (optionally scoped by the same filters as the list).
+  /**
+   * `survey_live` rows are written automatically when an agent completes (or
+   * marks Not Reached on) a live survey — they are the employee's own
+   * recorded work, not an admin-uploaded file. This function must never be
+   * able to delete them, regardless of what filter is passed in, so the
+   * guard sits inside the query itself rather than relying on every caller
+   * remembering to exclude it.
+   */
   static async deleteSurveyRecords(filter: {
     record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string;
   } = {}): Promise<number> {
-    const clauses: string[] = []; const values: any[] = []; let idx = 1;
+    if (filter.record_type === "survey_live") {
+      throw new Error("Survey responses recorded by agents cannot be deleted.");
+    }
+    const clauses: string[] = ["record_type <> 'survey_live'"]; const values: any[] = []; let idx = 1;
     if (filter.record_type) { clauses.push(`record_type = $${idx++}`); values.push(filter.record_type); }
     if (filter.brand_id) { clauses.push(`brand_id = $${idx++}`); values.push(filter.brand_id); }
     if (filter.answered != null) { clauses.push(`answered = $${idx++}`); values.push(filter.answered); }
     if (filter.from) { clauses.push(`created_at >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`created_at <= $${idx++}`); values.push(filter.to); }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const where = `WHERE ${clauses.join(" AND ")}`;
     const res = await pool.query(`DELETE FROM survey_records ${where}`, values);
     return res.rowCount ?? 0;
   }
 
   // Remove duplicate survey records — keeps the earliest row per
   // (record_type, order_id); only dedupes rows that carry an order_id.
+  // Excludes survey_live for the same reason as deleteSurveyRecords above.
   static async dedupeSurveyRecords(): Promise<number> {
     const res = await pool.query(`
       DELETE FROM survey_records a USING survey_records b
       WHERE a.id > b.id
         AND a.record_type = b.record_type
+        AND a.record_type <> 'survey_live'
         AND a.order_id IS NOT NULL AND a.order_id <> ''
         AND a.order_id = b.order_id
         AND COALESCE(a.phone,'') = COALESCE(b.phone,'')

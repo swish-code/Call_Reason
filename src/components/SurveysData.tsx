@@ -96,12 +96,10 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     if (res.ok) { const d = await res.json(); fetchRecords(); alert(`${d.removed} duplicate record(s) removed.`); }
     else { const d = await res.json().catch(() => ({})); setError(d.error || "Failed."); }
   };
-  const anyFilter = !!(type || brandId || answered || from || to);
   const deleteData = async () => {
-    const msg = anyFilter
-      ? "Delete the FILTERED survey records? This cannot be undone."
-      : "Delete ALL survey data? This cannot be undone.";
-    if (!window.confirm(msg)) return;
+    // The button only renders once a specific (non-live) Type filter is
+    // picked, so this always deletes a bounded, filtered set — never "all".
+    if (!window.confirm("Delete the filtered survey records? This cannot be undone.")) return;
     const res = await apiFetch('/api/survey-records/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -183,7 +181,12 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
           >
             <Download className="w-4 h-4" /> Export CSV
           </button>
-          {isAdmin && (
+          {/* Survey (Live) rows are recorded automatically when an agent completes
+              a survey — that is the employee's own work, never deletable. The
+              delete/dedupe tools only appear once a specific OTHER type is
+              picked, so there is no filter combination (including "no filter
+              at all") that can reach live records through this UI. */}
+          {isAdmin && type && type !== 'survey_live' && (
             <button
               onClick={dedupe}
               title="Remove duplicate records"
@@ -192,13 +195,13 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
               <Copy className="w-4 h-4" /> Remove duplicates
             </button>
           )}
-          {isAdmin && (
+          {isAdmin && type && type !== 'survey_live' && (
             <button
               onClick={deleteData}
-              title={anyFilter ? "Delete filtered records" : "Delete all survey data"}
+              title="Delete filtered records"
               className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
             >
-              <Trash2 className="w-4 h-4" /> {anyFilter ? "Delete filtered" : "Delete all"}
+              <Trash2 className="w-4 h-4" /> Delete filtered
             </button>
           )}
           <SurveyDataUploadButton currentUser={currentUser} onUploaded={fetchRecords} />

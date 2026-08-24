@@ -39,6 +39,69 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // ----------------------------------------------------
+// Universal action log — every add/edit/delete, for every endpoint,
+// forever. This is deliberately generic rather than a per-route call
+// (the codebase already had ~15 hand-placed DB.addAuditLog calls, which only
+// covers a fraction of what mutates data — any endpoint someone forgets to
+// instrument is invisible). A single request-level hook can't be forgotten:
+// it fires for every successful POST/PUT/PATCH/DELETE regardless of which
+// route handled it, including ones added after this was written.
+//
+// It is registered before any route, but the actual logging happens on
+// res.on('finish') — by then the route's own middleware (authenticateJWT)
+// has already run on this same `req` object and set req.user, and the
+// response body/status are known. GET requests are not logged (pure reads
+// are not "actions"), and failed requests (4xx/5xx) are not logged (nothing
+// was actually written).
+const AUDIT_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const SENSITIVE_BODY_KEYS = new Set([
+  "password", "password_hash", "current_password", "new_password", "token",
+]);
+
+function summarizeBody(body: any): string {
+  if (!body || typeof body !== "object") return "";
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(body)) {
+    if (SENSITIVE_BODY_KEYS.has(k)) { parts.push(`${k}=***`); continue; }
+    if (v == null) continue;
+    const s = typeof v === "string" ? v : JSON.stringify(v);
+    // Base64 file uploads and long blobs would otherwise flood every entry.
+    parts.push(`${k}=${s.length > 120 ? s.slice(0, 120) + "…" : s}`);
+  }
+  return parts.join(", ");
+}
+
+// First path segment after /api/ — a stable, low-maintenance category that
+// covers every current and future route without a lookup table to keep in sync.
+function categoryFromPath(p: string): string {
+  const m = p.match(/^\/api\/([^/]+)/);
+  if (!m) return "System";
+  return m[1].split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+app.use((req: any, res: any, next: any) => {
+  res.on("finish", () => {
+    try {
+      if (!AUDIT_METHODS.has(req.method)) return;
+      if (res.statusCode >= 400) return; // failed writes changed nothing
+      if (!req.user) return; // unauthenticated route (e.g. login itself)
+      void DB.addAuditLog({
+        operator_id: req.user.id,
+        operator_name: req.user.full_name,
+        operator_role: req.user.role,
+        department: req.user.department || undefined,
+        category: categoryFromPath(req.path),
+        action: `${req.method} ${req.path}`,
+        details: summarizeBody(req.body),
+        related_ref: req.params?.id || undefined,
+        ip_address: req.ip,
+      }).catch(() => {});
+    } catch { /* logging must never affect the real request */ }
+  });
+  next();
+});
+
+// ----------------------------------------------------
 // Authentication & JWT Security Support
 // ----------------------------------------------------
 const JWT_SECRET = process.env.JWT_SECRET || "crm-system-super-secret-key-2026";
