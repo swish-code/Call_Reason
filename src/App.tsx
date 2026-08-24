@@ -181,7 +181,9 @@ export default function App() {
     const saved = localStorage.getItem("crm-user-session");
     if (saved) {
       try {
-        setCurrentUser(JSON.parse(saved));
+        const u: User = JSON.parse(saved);
+        setCurrentUser(u);
+        if (u.role === "marketing") setActivePage("reviews");
       } catch (e) {
         localStorage.removeItem("crm-user-session");
       }
@@ -214,7 +216,7 @@ export default function App() {
       const userData: User = await res.json();
       setCurrentUser(userData);
       localStorage.setItem("crm-user-session", JSON.stringify(userData));
-      setActivePage("dashboard");
+      setActivePage(userData.role === "marketing" ? "reviews" : "dashboard");
     } catch (err: any) {
       setLoginError(err.message || "Sorry, a network error occurred during login.");
     } finally {
@@ -378,8 +380,9 @@ export default function App() {
   // Sidebar navigation â€” config-driven, collapsible groups
   // ----------------------------------------------------
   const role = currentUser.role;
-  const notOwner = role !== "owner";
-  const notAgent = role !== "agent";
+  const isMarketing = role === "marketing";
+  const notOwner = role !== "owner" && !isMarketing;
+  const notAgent = role !== "agent" && !isMarketing;
   const isAgent = role === "agent";
   const isAdmin = role === "admin";
   const isManager = role === "manager";
@@ -654,43 +657,43 @@ export default function App() {
 
         {/* Dynamic Main view switcher */}
         <main className="p-4 md:p-8 flex-1 max-w-7xl mx-auto w-full">
-          {activePage === "dashboard" && (
+          {activePage === "dashboard" && currentUser.role !== "marketing" && (
             <OpsDashboard currentUser={currentUser} />
           )}
-          {activePage === "reports" && (
+          {activePage === "reports" && currentUser.role !== "marketing" && (
             <OpsReports currentUser={currentUser} />
           )}
-          {activePage === "history" && (
+          {activePage === "history" && currentUser.role !== "marketing" && (
             <HistoryLogs currentUser={currentUser} />
           )}
-          {activePage === "mytasks" && (
+          {activePage === "mytasks" && currentUser.role !== "marketing" && (
             <Tasks currentUser={currentUser} mode="mine" onSeen={() => setUnseenTasks(0)} />
           )}
-          {activePage === "tasks" && currentUser.role !== "agent" && (
+          {activePage === "tasks" && currentUser.role !== "agent" && currentUser.role !== "marketing" && (
             <Tasks currentUser={currentUser} mode="assign" />
           )}
-          {activePage === "tracker" && currentUser.role !== "agent" && (
+          {activePage === "tracker" && currentUser.role !== "agent" && currentUser.role !== "marketing" && (
             <Tasks currentUser={currentUser} mode="tracker" />
           )}
-          {activePage === "recurring" && currentUser.role !== "agent" && (
+          {activePage === "recurring" && currentUser.role !== "agent" && currentUser.role !== "marketing" && (
             <RecurringTasks currentUser={currentUser} />
           )}
           {activePage === "pool" && currentUser.role === "agent" && (
             <TaskPool currentUser={currentUser} shiftStatus={shiftStatus} />
           )}
-          {activePage === "users" && (
+          {activePage === "users" && currentUser.role !== "marketing" && (
             <UsersManagement currentUser={currentUser} />
           )}
-          {activePage === "configuration" && (
+          {activePage === "configuration" && currentUser.role !== "marketing" && (
             <Configuration currentUser={currentUser} />
           )}
-          {activePage === "newlog" && (
+          {activePage === "newlog" && currentUser.role !== "marketing" && (
             <OpsLogForm currentUser={currentUser} onDone={() => setActivePage("logs")} />
           )}
-          {activePage === "logs" && (
+          {activePage === "logs" && currentUser.role !== "marketing" && (
             <OpsLogsList currentUser={currentUser} />
           )}
-          {activePage === "performance" && currentUser.role !== "agent" && (
+          {activePage === "performance" && currentUser.role !== "agent" && currentUser.role !== "marketing" && (
             <PerformanceReport currentUser={currentUser} />
           )}
           {activePage === "reviews" && (
@@ -699,7 +702,7 @@ export default function App() {
           {activePage === "surveys" && (
             <Surveys currentUser={currentUser} />
           )}
-          {activePage === "feedbackdash" && currentUser.role !== "agent" && (
+          {activePage === "feedbackdash" && currentUser.role !== "agent" && currentUser.role !== "marketing" && (
             <FeedbackDashboard currentUser={currentUser} />
           )}
         </main>

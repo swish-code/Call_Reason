@@ -1,5 +1,5 @@
 // Coarse permission bucket. Authority order is driven by `level` (below), not by role.
-export type UserRole = "agent" | "leader" | "supervisor" | "manager" | "owner" | "admin";
+export type UserRole = "agent" | "leader" | "supervisor" | "manager" | "owner" | "admin" | "marketing";
 
 // Organizational team an employee belongs to (separate from the permission role)
 export type Team = "Complain Team" | "Call Center" | "Technical Team" | "Team Leader";
@@ -46,6 +46,7 @@ export const USER_TYPES: UserType[] = [
   { value: "operations_manager", label: "Operations Manager", role: "manager", department: null, level: LEVEL.MANAGER },
   { value: "owner", label: "Owner", role: "owner", department: null, level: LEVEL.OWNER },
   { value: "system_admin", label: "System Admin", role: "admin", department: null, level: LEVEL.ADMIN },
+  { value: "marketing_viewer", label: "Marketing (View Only)", role: "marketing", department: null, level: LEVEL.AGENT },
 ];
 
 // Default level for a bare role (used to backfill legacy accounts without a stored level)

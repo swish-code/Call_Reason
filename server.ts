@@ -147,19 +147,19 @@ const requireManagerOrAdmin = (req: any, res: any, next: any) => {
   }
 };
 
-// GET /api/users: leaders, supervisors, managers, admins (agents excluded)
+// GET /api/users: leaders, supervisors, managers, admins (agents and marketing excluded)
 const requireLeaderManagerOrAdmin = (req: any, res: any, next: any) => {
   const r = req.user?.role;
-  if (r && r !== "agent") {
+  if (r && r !== "agent" && r !== "marketing") {
     next();
   } else {
     res.status(403).json({ error: "Access denied." });
   }
 };
 
-// Any manager (Team Leader, Supervisor, or Admin) — i.e. not an agent
+// Any manager (Team Leader, Supervisor, or Admin) — i.e. not an agent or marketing (view-only)
 const requireManager = (req: any, res: any, next: any) => {
-  if (req.user && req.user.role !== "agent") {
+  if (req.user && req.user.role !== "agent" && req.user.role !== "marketing") {
     next();
   } else {
     res.status(403).json({ error: "Sorry, this action is restricted to Team Leaders, Supervisors, or Admins." });
@@ -1016,6 +1016,7 @@ app.get("/api/logs/history", authenticateJWT, requireLeaderOrAdmin, asyncHandler
 }));
 
 app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
+  if (req.user.role === "marketing") return res.status(403).json({ error: "Access denied." });
   const { role, id, full_name, department } = req.user;
   const body = req.body;
   if (!body.activity_type) return res.status(400).json({ error: "Activity type is required." });
@@ -2110,6 +2111,7 @@ app.get("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) 
 
 // Patch rating (status / note / assignment / customer contact)
 app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing") return res.status(403).json({ error: "Access denied." });
   const rating = await DB.getRatingById(req.params.id);
   if (!rating) return res.status(404).json({ error: "Rating not found." });
   // Agents may only edit reviews assigned to them
@@ -2141,6 +2143,7 @@ app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res
 
 // Log a call attempt (max 3)
 app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing") return res.status(403).json({ error: "Access denied." });
   const rating = await DB.getRatingById(req.params.id);
   if (!rating) return res.status(404).json({ error: "Rating not found." });
   const attemptsCount = (rating.attempts || []).length;
@@ -2492,6 +2495,7 @@ app.get("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (req
 
 // Log a call attempt on an assignment (max 3)
 app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing") return res.status(403).json({ error: "Access denied." });
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   if ((a.attempt_count || 0) >= 3) return res.status(400).json({ error: "Maximum 3 attempts reached." });
@@ -2504,6 +2508,7 @@ app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(a
 // Record an outcome: Reached + completed (with answers), Reached but declined
 // (Refused to Complete / Not Interested — no answers needed), or Not Reached (No Action)
 app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing") return res.status(403).json({ error: "Access denied." });
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   const { answers, reachability, action_type, segment, outcome } = req.body;
