@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { User, SurveyRecord, SurveyRecordType, Brand } from "../types.js";
+import { User, SurveyRecord, SurveyRecordType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { Database, RefreshCw, AlertCircle, Copy, Trash2, Download } from "lucide-react";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
@@ -45,6 +45,7 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
   const [type, setType] = useState("");
   const [brandId, setBrandId] = useState("");
   const [answered, setAnswered] = useState(""); // "", "answered", "no_answer"
+  const [segment, setSegment] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
@@ -60,10 +61,11 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     if (brandId) p.set('brand_id', brandId);
     if (answered === 'answered') p.set('answered', 'true');
     else if (answered === 'no_answer') p.set('answered', 'false');
+    if (segment) p.set('segment', segment);
     if (from) p.set('from', from);
     if (to) p.set('to', to);
     return p.toString();
-  }, [type, brandId, answered, from, to]);
+  }, [type, brandId, answered, segment, from, to]);
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -222,6 +224,11 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
           <option value="">All</option>
           <option value="answered">Answered</option>
           <option value="no_answer">No Answer</option>
+        </select>
+        <select value={segment} onChange={e => setSegment(e.target.value)} className={selCls} title="Customer segment">
+          <option value="">All Segments</option>
+          {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="none">— No segment —</option>
         </select>
         <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} title="From" />
         <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} title="To" />

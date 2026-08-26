@@ -2651,13 +2651,14 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
 }));
 
 app.get("/api/survey-records", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { type, brand_id, answered, from, to } = req.query;
+  const { type, brand_id, answered, from, to, segment } = req.query;
   res.json(await DB.getSurveyRecords({
     record_type: type || undefined,
     brand_id: brand_id || undefined,
     answered: answered === "true" ? true : answered === "false" ? false : undefined,
     from: from || undefined,
     to: to || undefined,
+    segment: segment || undefined,
   }));
 }));
 

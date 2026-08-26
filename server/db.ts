@@ -2156,7 +2156,7 @@ export class DB {
   }
 
   static async getSurveyRecords(filter: {
-    record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string;
+    record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string; segment?: string;
   } = {}): Promise<{ records: any[]; total: number; cap: number }> {
     const clauses: string[] = []; const values: any[] = []; let idx = 1;
     if (filter.record_type) { clauses.push(`r.record_type = $${idx++}`); values.push(filter.record_type); }
@@ -2164,6 +2164,8 @@ export class DB {
     if (filter.answered != null) { clauses.push(`r.answered = $${idx++}`); values.push(filter.answered); }
     if (filter.from) { clauses.push(`r.created_at >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`r.created_at <= $${idx++}`); values.push(filter.to); }
+    if (filter.segment === "none") { clauses.push(`r.segment IS NULL`); }
+    else if (filter.segment) { clauses.push(`r.segment = $${idx++}`); values.push(filter.segment); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const LIST_CAP = 1000;
     const { rows } = await pool.query(`
