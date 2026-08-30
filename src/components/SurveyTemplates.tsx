@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { User, SurveyTemplate, SurveyQuestion, AnswerType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
-  ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2, Download, Lock,
+  ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2, Download, Lock, Copy,
 } from "lucide-react";
 
 interface SurveyTemplatesProps { currentUser: User; }
@@ -164,6 +164,40 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
     }
   };
 
+  const [copyingId, setCopyingId] = useState<string | null>(null);
+
+  // Duplicate a template's questions into a brand-new (unlocked, empty)
+  // template — none of the original's recorded answers come along, since
+  // this creates a fresh template with fresh question ids.
+  const copyTemplate = async (t: SurveyTemplate) => {
+    resetModal();
+    setName(`${t.name} (Copy)`);
+    setBrandId(t.brand_id || "");
+    setShowModal(true);
+    setModalLoading(true);
+    setCopyingId(t.id);
+    try {
+      const res = await apiFetch(`/api/survey-templates/${t.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        const qs: SurveyQuestion[] = data.questions || [];
+        if (qs.length) {
+          setRows(qs.map(q => ({
+            text: q.text || "",
+            answer_type: q.answer_type,
+            optionsText: (q.options || []).join(", "),
+            segment: q.segment || "",
+          })));
+        }
+      } else {
+        setModalError("Failed to load the template to copy.");
+      }
+    } finally {
+      setModalLoading(false);
+      setCopyingId(null);
+    }
+  };
+
   const addRow = () => setRows(rs => [...rs, { text: "", answer_type: "rating_1_5", optionsText: "", segment: "" }]);
   const removeRow = (i: number) => setRows(rs => rs.filter((_, idx) => idx !== i));
   const updateRow = (i: number, patch: Partial<QRow>) =>
@@ -294,14 +328,26 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                     <td className="p-4 text-[var(--muted)]">{t.created_by_name || '—'}</td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(t.created_at)}</td>
                     <td className="p-4 text-center">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); exportTemplate(t); }}
-                        disabled={exportingId === t.id}
-                        title="Export this survey's questions and answers to CSV"
-                        className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 text-emerald-400 border border-emerald-500/20 rounded-lg text-[10px] font-bold inline-flex items-center gap-1.5 transition active:scale-95"
-                      >
-                        <Download className="w-3.5 h-3.5" /> {exportingId === t.id ? 'Exporting…' : 'Export'}
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        {canManage && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); copyTemplate(t); }}
+                            disabled={copyingId === t.id}
+                            title="Duplicate this template's questions into a new, empty template"
+                            className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-50 text-violet-400 border border-violet-500/20 rounded-lg text-[10px] font-bold inline-flex items-center gap-1.5 transition active:scale-95"
+                          >
+                            <Copy className="w-3.5 h-3.5" /> {copyingId === t.id ? 'Copying…' : 'Copy'}
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); exportTemplate(t); }}
+                          disabled={exportingId === t.id}
+                          title="Export this survey's questions and answers to CSV"
+                          className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 text-emerald-400 border border-emerald-500/20 rounded-lg text-[10px] font-bold inline-flex items-center gap-1.5 transition active:scale-95"
+                        >
+                          <Download className="w-3.5 h-3.5" /> {exportingId === t.id ? 'Exporting…' : 'Export'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
