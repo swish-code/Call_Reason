@@ -1215,6 +1215,24 @@ export class DB {
   // ----------------------------------------------------
   // Ratings / Reviews
   // ----------------------------------------------------
+  /**
+   * Customer 360 export: every rating in the window, INCLUDING auto-closed
+   * ('no_action_needed') rows. The Reviews list hides those on purpose, but
+   * they are the bulk of the 4–5 star reviews — an analytics export that
+   * dropped them would poison every rating average downstream.
+   */
+  static async getRatingsForC360(platform_id: string, from: string, to: string): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT r.order_date, b.brand_name, r.branch, r.order_id, r.review_text, r.rating
+       FROM ratings r
+       JOIN brands b ON b.id = r.brand_id
+       WHERE r.platform_id = $1 AND r.order_date >= $2 AND r.order_date <= $3
+       ORDER BY r.order_date, b.brand_name, r.order_id`,
+      [platform_id, from, to],
+    );
+    return rows;
+  }
+
   static async getRatings(filter: {
     brand_id?: string; platform_id?: string; action_status?: string;
     requires_action?: boolean; assigned?: string; assigned_agent_id?: string;

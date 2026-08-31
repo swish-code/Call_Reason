@@ -2173,6 +2173,44 @@ app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: 
   res.json(attempt);
 }));
 
+// Customer 360 ratings export — an .xlsx in exactly the layout the SWISH
+// Customer 360 system imports as its "Talabat ratings" source: sheet
+// "Talabat Data", columns Date · Brand, Branch · Order ID · customer comment ·
+// Rating. Unlike the Reviews list, this includes auto-closed reviews (see
+// getRatingsForC360) — the export is for analytics, not for the action queue.
+app.get("/api/reports/c360-ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "agent") return res.status(403).json({ error: "Access denied." });
+  const platformId = (req.query.platform_id as string) || "plat-1";
+  const from = typeof req.query.from === "string" ? req.query.from : "";
+  const to = typeof req.query.to === "string" ? req.query.to : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: "from and to dates are required (YYYY-MM-DD)." });
+  }
+  const rows = await DB.getRatingsForC360(platformId, from, to);
+  const header = ["Date", "Brand, Branch", "Order ID", "customer comment", "Rating"];
+  const aoa: any[][] = [header];
+  for (const r of rows) {
+    // order_date is normalised YYYY-MM-DD text; emit a real date cell at UTC
+    // midnight so the importer's serial→Kuwait conversion lands on this day.
+    const [y, mo, d] = String(r.order_date).split("-").map(Number);
+    aoa.push([
+      new Date(Date.UTC(y, mo - 1, d)),
+      r.branch ? `${r.brand_name}, ${r.branch}` : r.brand_name,
+      r.order_id,
+      r.review_text || "",
+      Number(r.rating),
+    ]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Talabat Data");
+  const file = XLSX.write(wb, { type: "base64", bookType: "xlsx", cellDates: true });
+  const platforms = await DB.getPlatforms();
+  const pName = (platforms.find((p: any) => p.id === platformId)?.name || platformId)
+    .toLowerCase().replace(/\W+/g, "-");
+  res.json({ filename: `c360_${pName}_ratings_${from}_to_${to}.xlsx`, file, rows: rows.length });
+}));
+
 // ----------------------------------------------------
 // Surveys Module (Call Campaigns + Survey Records)
 // ----------------------------------------------------

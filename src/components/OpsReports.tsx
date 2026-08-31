@@ -35,6 +35,23 @@ function Pagination({ page, total, onChange }: { page: number; total: number; on
   );
 }
 
+const downloadBase64 = (b64: string, filename: string) => {
+  const a = document.createElement("a");
+  a.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
+  a.download = filename;
+  a.click();
+};
+
+/** First and last day of the previous calendar month, as YYYY-MM-DD. */
+const previousMonthRange = () => {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const last = new Date(now.getFullYear(), now.getMonth(), 0);
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: fmt(first), to: fmt(last) };
+};
+
 export default function OpsReports({ currentUser }: OpsReportsProps) {
   const [logs, setLogs] = useState<OpsLog[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -42,6 +59,37 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
+
+  // Customer 360 ratings export
+  const [platforms, setPlatforms] = useState<{ id: string; name: string }[]>([]);
+  const [c360Platform, setC360Platform] = useState("plat-1");
+  const [c360From, setC360From] = useState(previousMonthRange().from);
+  const [c360To, setC360To] = useState(previousMonthRange().to);
+  const [c360Busy, setC360Busy] = useState(false);
+  const [c360Msg, setC360Msg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await apiFetch("/api/platforms");
+        if (r.ok) setPlatforms(await r.json());
+      } catch { /* platform list is a convenience; the default still works */ }
+    })();
+  }, []);
+
+  const exportC360 = async () => {
+    if (!c360From || !c360To) { setC360Msg("Pick both dates first."); return; }
+    setC360Busy(true); setC360Msg("");
+    try {
+      const r = await apiFetch(
+        `/api/reports/c360-ratings?platform_id=${encodeURIComponent(c360Platform)}&from=${c360From}&to=${c360To}`,
+      );
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Export failed.");
+      downloadBase64(data.file, data.filename);
+      setC360Msg(`Downloaded ${data.rows.toLocaleString()} rating(s) — upload this file to Customer 360 as "Talabat ratings".`);
+    } catch (err: any) { setC360Msg(err.message); } finally { setC360Busy(false); }
+  };
 
   const [fStart, setFStart] = useState("");
   const [fEnd, setFEnd] = useState("");
@@ -135,6 +183,45 @@ export default function OpsReports({ currentUser }: OpsReportsProps) {
         <div className="flex items-center gap-2">
           <button onClick={exportCsv} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Download className="w-4 h-4" /> Export to Excel (CSV)</button>
           <button onClick={() => window.print()} className="px-4 py-2.5 bg-[var(--bg)] hover:bg-[var(--surface-2)] text-[var(--text)] border border-[var(--border)] font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"><Printer className="w-4 h-4" /> Export to PDF</button>
+        </div>
+      </div>
+
+      {/* Customer 360 ratings export */}
+      <div className="bg-[var(--surface)] p-5 border border-[var(--border)] rounded-3xl shadow-sm space-y-3 print:hidden">
+        <div>
+          <h3 className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-1.5">
+            <Download className="w-4 h-4 text-blue-400" /> Customer 360 ratings export
+          </h3>
+          <p className="text-[11px] text-[var(--muted)] mt-0.5">
+            Every review in the period — including auto-closed ones the Reviews list hides — in the
+            exact file layout Customer 360 imports.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">Platform</label>
+            <select value={c360Platform} onChange={(e) => setC360Platform(e.target.value)} className={selCls}>
+              {(platforms.length ? platforms : [{ id: "plat-1", name: "Talabat" }]).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">From</label>
+            <input type="date" value={c360From} onChange={(e) => setC360From(e.target.value)} className={selCls} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-[var(--muted)]">To</label>
+            <input type="date" value={c360To} onChange={(e) => setC360To(e.target.value)} className={selCls} />
+          </div>
+          <button
+            onClick={exportC360}
+            disabled={c360Busy}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-2xl text-xs flex items-center gap-1.5 active:scale-95 transition"
+          >
+            <Download className="w-4 h-4" /> {c360Busy ? "Preparing…" : "Download .xlsx"}
+          </button>
+          {c360Msg && <p className="text-[11px] text-[var(--muted)] basis-full">{c360Msg}</p>}
         </div>
       </div>
 
