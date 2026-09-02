@@ -589,9 +589,15 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
             )}
 
             {assignResult !== null && (
-              <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">
-                Assigned {assignResult} number(s).
-              </div>
+              assignResult === 0 ? (
+                <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-xl text-xs text-amber-400 font-bold">
+                  No unassigned numbers left in this campaign — every pending number already has an agent. Reassigning to a different agent isn't done here; use the "Assign / reassign" dropdown for individual rows on the All Surveys page instead.
+                </div>
+              ) : (
+                <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">
+                  Assigned {assignResult} number(s).
+                </div>
+              )
             )}
 
             <div className="flex justify-end gap-2 pt-1">
