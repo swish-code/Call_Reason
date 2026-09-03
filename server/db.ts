@@ -1,6 +1,6 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
-import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog, AssignedTask } from "../src/types.js";
+import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog, AssignedTask, Area, OpsTask } from "../src/types.js";
 
 const { Pool } = pkg;
 
@@ -114,7 +114,7 @@ const SEED_INTERACTIONS: Interaction[] = [
 
 // Columns that may be updated through the API (whitelist guards against
 // arbitrary fields in request bodies being written to the table).
-const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "level", "job_title", "team", "department", "status", "created_by"] as const;
+const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "level", "job_title", "team", "department", "branch_id", "area_id", "status", "created_by"] as const;
 const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "order_number", "branch", "team", "customer_type", "call_from", "aggregator_name", "comments", "complaint_reason", "fcr", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
 
 const LOG_COLS = ["log_type", "department", "activity_type", "status", "agent_id", "agent_name", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "calls_reviewed", "created_at", "updated_at", "created_by"] as const;
@@ -150,10 +150,32 @@ export class DB {
         id TEXT PRIMARY KEY,
         category_name TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS areas (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS branches (
         id TEXT PRIMARY KEY,
         branch_name TEXT NOT NULL,
-        brand TEXT
+        brand TEXT,
+        area_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS ops_tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        branch_id TEXT NOT NULL,
+        assigned_by TEXT,
+        assigned_by_name TEXT,
+        assigned_to TEXT,
+        assigned_to_name TEXT,
+        status TEXT DEFAULT 'New',
+        priority TEXT,
+        due_date TEXT,
+        note TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        completed_at TEXT
       );
       CREATE TABLE IF NOT EXISTS interactions (
         id TEXT PRIMARY KEY,
@@ -500,6 +522,13 @@ export class DB {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS level INTEGER;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT;
       CREATE UNIQUE INDEX IF NOT EXISTS uq_assigned_tasks_template_date ON assigned_tasks(template_id, task_date) WHERE template_id IS NOT NULL;
+      -- Operations module (brands & branches): branches already existed, so its
+      -- new column needs an explicit ALTER (the CREATE TABLE IF NOT EXISTS above
+      -- is a no-op against an existing table). areas/ops_tasks are brand-new
+      -- tables so their CREATE TABLE above already covers them.
+      ALTER TABLE branches ADD COLUMN IF NOT EXISTS area_id TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS area_id TEXT;
     `);
 
     // FM staff are supervised by Quality — move any existing FM accounts there
@@ -513,8 +542,11 @@ export class DB {
         WHEN role = 'owner' THEN 6
         WHEN role = 'admin' THEN 99
         WHEN role = 'manager' THEN 5
+        WHEN role = 'ops_manager' THEN 3
         WHEN role = 'supervisor' THEN 3
+        WHEN role = 'area_manager' THEN 2
         WHEN role = 'leader' THEN 2
+        WHEN role = 'branch_manager' THEN 1
         ELSE 1 END
       WHERE level IS NULL
     `);
@@ -681,9 +713,9 @@ export class DB {
 
   static async addUser(user: User): Promise<User> {
     const { rows } = await pool.query<User>(
-      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, level, job_title, team, department, status, created_at, updated_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.level ?? null, user.job_title ?? null, user.team ?? "Call Center", user.department ?? null, user.status, user.created_at, user.updated_at, user.created_by ?? null]
+      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, level, job_title, team, department, branch_id, area_id, status, created_at, updated_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.level ?? null, user.job_title ?? null, user.team ?? "Call Center", user.department ?? null, user.branch_id ?? null, user.area_id ?? null, user.status, user.created_at, user.updated_at, user.created_by ?? null]
     );
     return rows[0];
   }
@@ -781,22 +813,123 @@ export class DB {
   }
 
   // ----------------------------------------------------
-  // Branch methods (stores/branches shown for Complaint call reasons)
+  // Branch methods (stores/branches shown for Complaint call reasons, and
+  // scoped by the Operations module via area_id)
   // ----------------------------------------------------
   static async getBranches(): Promise<Branch[]> {
-    const { rows } = await pool.query<Branch>("SELECT * FROM branches ORDER BY branch_name ASC");
+    const { rows } = await pool.query<Branch>(`
+      SELECT b.*, a.name AS area_name FROM branches b
+      LEFT JOIN areas a ON a.id = b.area_id
+      ORDER BY b.branch_name ASC
+    `);
     return rows;
   }
 
-  static async addBranch(name: string): Promise<Branch> {
-    const newBranch: Branch = { id: "br-" + Date.now(), branch_name: name };
-    await pool.query("INSERT INTO branches (id, branch_name) VALUES ($1,$2)", [newBranch.id, newBranch.branch_name]);
+  static async addBranch(name: string, brand?: string | null, areaId?: string | null): Promise<Branch> {
+    const newBranch: Branch = { id: "br-" + Date.now(), branch_name: name, brand: brand ?? undefined, area_id: areaId ?? null };
+    await pool.query("INSERT INTO branches (id, branch_name, brand, area_id) VALUES ($1,$2,$3,$4)", [newBranch.id, newBranch.branch_name, brand || null, areaId || null]);
     return newBranch;
+  }
+
+  static async updateBranch(id: string, fields: { branch_name?: string; brand?: string | null; area_id?: string | null }): Promise<Branch | undefined> {
+    const sets: string[] = []; const vals: any[] = []; let idx = 1;
+    if (fields.branch_name !== undefined) { sets.push(`branch_name = $${idx++}`); vals.push(fields.branch_name); }
+    if (fields.brand !== undefined) { sets.push(`brand = $${idx++}`); vals.push(fields.brand); }
+    if (fields.area_id !== undefined) { sets.push(`area_id = $${idx++}`); vals.push(fields.area_id); }
+    if (!sets.length) return undefined;
+    vals.push(id);
+    await pool.query(`UPDATE branches SET ${sets.join(", ")} WHERE id = $${idx}`, vals);
+    const { rows } = await pool.query<Branch>("SELECT * FROM branches WHERE id = $1", [id]);
+    return rows[0];
   }
 
   static async deleteBranch(id: string): Promise<boolean> {
     const res = await pool.query("DELETE FROM branches WHERE id = $1", [id]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // ----------------------------------------------------
+  // Area methods (Operations module — groups branches for an Area Manager)
+  // ----------------------------------------------------
+  static async getAreas(): Promise<Area[]> {
+    const { rows } = await pool.query<Area>("SELECT * FROM areas ORDER BY name ASC");
+    return rows;
+  }
+
+  static async addArea(name: string): Promise<Area> {
+    const newArea: Area = { id: "area-" + Date.now(), name };
+    await pool.query("INSERT INTO areas (id, name) VALUES ($1,$2)", [newArea.id, newArea.name]);
+    return newArea;
+  }
+
+  static async deleteArea(id: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM areas WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  // ----------------------------------------------------
+  // Operations tasks (brands & branches module)
+  // Scoping is by branch_id, joined through areas — NOT the department/level
+  // model the older Tasks module uses. See getOpsTasks' `filter.area_id`
+  // (an Area Manager's tasks = every task whose branch falls in their area).
+  // ----------------------------------------------------
+  static async getOpsTasks(filter: { branch_id?: string; area_id?: string; assigned_to?: string } = {}): Promise<OpsTask[]> {
+    const clauses: string[] = []; const values: any[] = []; let idx = 1;
+    if (filter.branch_id) { clauses.push(`t.branch_id = $${idx++}`); values.push(filter.branch_id); }
+    if (filter.area_id) { clauses.push(`b.area_id = $${idx++}`); values.push(filter.area_id); }
+    if (filter.assigned_to) { clauses.push(`t.assigned_to = $${idx++}`); values.push(filter.assigned_to); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { rows } = await pool.query<OpsTask>(`
+      SELECT t.*, b.branch_name, a.name AS area_name
+      FROM ops_tasks t
+      JOIN branches b ON b.id = t.branch_id
+      LEFT JOIN areas a ON a.id = b.area_id
+      ${where}
+      ORDER BY t.created_at DESC
+    `, values);
+    return rows;
+  }
+
+  static async getOpsTaskById(id: string): Promise<OpsTask | undefined> {
+    const { rows } = await pool.query<OpsTask>(`
+      SELECT t.*, b.branch_name, a.name AS area_name
+      FROM ops_tasks t
+      JOIN branches b ON b.id = t.branch_id
+      LEFT JOIN areas a ON a.id = b.area_id
+      WHERE t.id = $1
+    `, [id]);
+    return rows[0];
+  }
+
+  static async addOpsTask(t: {
+    title: string; description?: string | null; branch_id: string;
+    assigned_by: string; assigned_by_name: string; assigned_to?: string | null; assigned_to_name?: string | null;
+    priority?: string | null; due_date?: string | null;
+  }): Promise<OpsTask> {
+    const id = "opt-" + Date.now();
+    const now = new Date().toISOString();
+    await pool.query(
+      `INSERT INTO ops_tasks (id, title, description, branch_id, assigned_by, assigned_by_name, assigned_to, assigned_to_name, status, priority, due_date, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'New',$9,$10,$11,$11)`,
+      [id, t.title, t.description ?? null, t.branch_id, t.assigned_by, t.assigned_by_name, t.assigned_to ?? null, t.assigned_to_name ?? null, t.priority ?? null, t.due_date ?? null, now]
+    );
+    return (await DB.getOpsTaskById(id))!;
+  }
+
+  static async updateOpsTask(id: string, fields: {
+    status?: string; assigned_to?: string | null; assigned_to_name?: string | null;
+    priority?: string | null; due_date?: string | null; note?: string | null;
+  }): Promise<OpsTask | undefined> {
+    const sets: string[] = []; const values: any[] = []; let idx = 1;
+    for (const c of ["status", "assigned_to", "assigned_to_name", "priority", "due_date", "note"] as const) {
+      if (fields[c] !== undefined) { sets.push(`${c} = $${idx++}`); values.push(fields[c]); }
+    }
+    if (fields.status === "Completed") { sets.push(`completed_at = $${idx++}`); values.push(new Date().toISOString()); }
+    sets.push(`updated_at = $${idx++}`); values.push(new Date().toISOString());
+    if (!sets.length) return DB.getOpsTaskById(id);
+    values.push(id);
+    await pool.query(`UPDATE ops_tasks SET ${sets.join(", ")} WHERE id = $${idx}`, values);
+    return DB.getOpsTaskById(id);
   }
 
   // ----------------------------------------------------

@@ -1,5 +1,9 @@
 // Coarse permission bucket. Authority order is driven by `level` (below), not by role.
-export type UserRole = "agent" | "leader" | "supervisor" | "manager" | "owner" | "admin" | "marketing";
+// ops_manager/area_manager/branch_manager belong to the Operations module (brands &
+// branches) — a separate hierarchy from department/level, scoped by branch_id/area_id
+// on the user record instead. They must never be treated as implicitly included by a
+// bare `role !== "agent"` check the way "manager"/"supervisor"/"leader" are elsewhere.
+export type UserRole = "agent" | "leader" | "supervisor" | "manager" | "owner" | "admin" | "marketing" | "ops_manager" | "area_manager" | "branch_manager";
 
 // Organizational team an employee belongs to (separate from the permission role)
 export type Team = "Complain Team" | "Call Center" | "Technical Team" | "Team Leader";
@@ -43,15 +47,22 @@ export const USER_TYPES: UserType[] = [
   { value: "assistant_manager", label: "Assistant Manager", role: "manager", department: null, level: LEVEL.ASSISTANT_MANAGER },
   { value: "call_center_manager", label: "Call Center Manager", role: "manager", department: null, level: LEVEL.MANAGER },
   { value: "marketing_manager", label: "Marketing Manager", role: "manager", department: null, level: LEVEL.MANAGER },
-  { value: "operations_manager", label: "Operations Manager", role: "manager", department: null, level: LEVEL.MANAGER },
   { value: "owner", label: "Owner", role: "owner", department: null, level: LEVEL.OWNER },
   { value: "system_admin", label: "System Admin", role: "admin", department: null, level: LEVEL.ADMIN },
   { value: "marketing_viewer", label: "Marketing (View Only)", role: "marketing", department: null, level: LEVEL.AGENT },
+  // Operations module (brands & branches) — a separate hierarchy from the department/level
+  // ladder above. Levels are deliberately kept BELOW EXECUTIVE_LEVEL (4) so none of these
+  // roles ever trip `isExecutive` in the old Tasks/Logs system and inherit cross-department
+  // visibility they have nothing to do with; ordering only needs Branch < Area < Operations.
+  { value: "operations_manager", label: "Operations Manager", role: "ops_manager", department: null, level: 3 },
+  { value: "area_manager", label: "Area Manager", role: "area_manager", department: null, level: 2 },
+  { value: "branch_manager", label: "Branch Manager", role: "branch_manager", department: null, level: 1 },
 ];
 
 // Default level for a bare role (used to backfill legacy accounts without a stored level)
 export const roleDefaultLevel = (role: string): number =>
   role === "owner" ? LEVEL.OWNER : role === "admin" ? LEVEL.ADMIN : role === "manager" ? LEVEL.MANAGER
+  : role === "ops_manager" ? 3 : role === "area_manager" ? 2 : role === "branch_manager" ? 1
   : role === "supervisor" ? LEVEL.SUPERVISOR : role === "leader" ? LEVEL.LEADER : LEVEL.AGENT;
 
 // The log modules
@@ -115,6 +126,8 @@ export interface User {
   job_title?: string; // Human-facing account type label (e.g. "Call Center Manager")
   team?: Team; // Legacy team field (kept for backward compatibility)
   department?: Department; // Department for the Operations & Logs system
+  branch_id?: string | null; // Operations module: set for branch_manager (exactly one branch)
+  area_id?: string | null;   // Operations module: set for area_manager (one area, many branches)
   status: "Active" | "Inactive";
   can_upload?: boolean; // Agent may upload rating/survey Excel files
   work_type?: "calls" | "survey" | "both"; // Survey eligibility for the queue
@@ -424,6 +437,36 @@ export interface Branch {
   id: string;
   branch_name: string;
   brand?: string; // Owning brand (branches are per-brand)
+  area_id?: string | null; // Operations module: which area this branch belongs to
+  area_name?: string; // Joined for display
+}
+
+// ----------------------------------------------------
+// Operations module (brands & branches)
+// ----------------------------------------------------
+export interface Area {
+  id: string;
+  name: string;
+}
+
+export interface OpsTask {
+  id: string;
+  title: string;
+  description?: string | null;
+  branch_id: string;
+  branch_name?: string; // Joined for display
+  area_name?: string;   // Joined for display
+  assigned_by?: string | null;
+  assigned_by_name?: string | null;
+  assigned_to?: string | null;
+  assigned_to_name?: string | null;
+  status: "New" | "In Progress" | "Completed";
+  priority?: string | null;
+  due_date?: string | null;
+  note?: string | null;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string | null;
 }
 
 // Generic, admin-managed dropdown option (Configuration page)

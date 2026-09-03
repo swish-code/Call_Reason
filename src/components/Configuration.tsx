@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, DropdownOption, CONFIGURABLE_LISTS, Brand, Branch, Category } from "../types.js";
+import { User, DropdownOption, CONFIGURABLE_LISTS, Brand, Branch, Category, Area } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { Settings, Plus, Trash, Pencil, Check, X, ChevronUp, ChevronDown, Eye, EyeOff, RefreshCw, ListChecks, AlertCircle } from "lucide-react";
 
@@ -141,25 +141,70 @@ const SimpleEntityCard: React.FC<SimpleEntityCardProps> = ({ title, description,
   );
 };
 
+// ---- Branch → Area assignment (Operations module) ----
+interface BranchAreaCardProps { branches: Branch[]; areas: Area[]; onChange: () => void; }
+const BranchAreaCard: React.FC<BranchAreaCardProps> = ({ branches, areas, onChange }) => {
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const setArea = async (branchId: string, areaId: string) => {
+    setSavingId(branchId);
+    try {
+      await apiFetch(`/api/branches/${branchId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ area_id: areaId || null }),
+      });
+      onChange();
+    } finally {
+      setSavingId(null);
+    }
+  };
+  return (
+    <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl space-y-4">
+      <div>
+        <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2"><ListChecks className="w-4 h-4 text-indigo-400" /> Branch → Area</h3>
+        <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">Assign each branch to an Area, so an Area Manager's scope covers the right branches.</p>
+      </div>
+      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+        {branches.map((b) => (
+          <div key={b.id} className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-[var(--heading)] truncate">{b.branch_name}</span>
+            <select
+              value={b.area_id || ""}
+              disabled={savingId === b.id}
+              onChange={(e) => setArea(b.id, e.target.value)}
+              className="px-2 py-1.5 bg-[var(--bg)] border border-[var(--border)] rounded-lg text-[11px] font-bold text-[var(--heading)] [&>option]:bg-[var(--surface)]"
+            >
+              <option value="">— No area —</option>
+              {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        ))}
+        {branches.length === 0 && <span className="text-[var(--muted)] text-xs">No branches defined yet.</span>}
+      </div>
+    </div>
+  );
+};
+
 export default function Configuration({ currentUser }: ConfigurationProps) {
   const [options, setOptions] = useState<DropdownOption[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchAll = async () => {
     try {
       setLoading(true); setError("");
-      const [ro, rb, rbr, rc] = await Promise.all([
-        apiFetch("/api/options"), apiFetch("/api/brands"), apiFetch("/api/branches"), apiFetch("/api/categories"),
+      const [ro, rb, rbr, rc, ra] = await Promise.all([
+        apiFetch("/api/options"), apiFetch("/api/brands"), apiFetch("/api/branches"), apiFetch("/api/categories"), apiFetch("/api/areas"),
       ]);
       if (!ro.ok) throw new Error("Failed to load configuration options.");
       setOptions(await ro.json());
       if (rb.ok) setBrands(await rb.json());
       if (rbr.ok) setBranches(await rbr.json());
       if (rc.ok) setCategories(await rc.json());
+      if (ra.ok) setAreas(await ra.json());
     } catch (err: any) {
       setError(err.message || "Connection error.");
     } finally {
@@ -199,6 +244,8 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
           <SimpleEntityCard title="Brands" description="Brand options used across the system" items={brands} labelField="brand_name" base="/api/brands" onChange={fetchAll} />
           <SimpleEntityCard title="Branches" description="Branch options (shown for Complaints)" items={branches} labelField="branch_name" base="/api/branches" onChange={fetchAll} />
           <SimpleEntityCard title="Categories" description="Case category options" items={categories} labelField="category_name" base="/api/categories" onChange={fetchAll} />
+          <SimpleEntityCard title="Areas" description="Operations module: groups of branches for an Area Manager" items={areas} labelField="name" base="/api/areas" onChange={fetchAll} />
+          <BranchAreaCard branches={branches} areas={areas} onChange={fetchAll} />
         </div>
       )}
     </div>

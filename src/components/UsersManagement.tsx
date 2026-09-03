@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, USER_TYPES, UserType, roleDefaultLevel } from "../types.js";
+import { User, USER_TYPES, UserType, roleDefaultLevel, Branch, Area } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 
 // Map a stored user back to its account-type label (for the edit form)
@@ -54,6 +54,10 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const [password, setPassword] = useState("");
   const [userType, setUserType] = useState<string>("Call Center Agent");
   const [status, setStatus] = useState<"Active" | "Inactive">("Active");
+  const [branchId, setBranchId] = useState("");
+  const [areaId, setAreaId] = useState("");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
 
   // Reset password states
   const [isResetOpen, setIsResetOpen] = useState(false);
@@ -80,6 +84,8 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
 
   useEffect(() => {
     fetchUsers();
+    apiFetch("/api/branches").then(r => r.ok ? r.json() : []).then(setBranches).catch(() => {});
+    apiFetch("/api/areas").then(r => r.ok ? r.json() : []).then(setAreas).catch(() => {});
   }, []);
 
   const handleOpenAdd = () => {
@@ -89,6 +95,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setPassword("");
     setUserType("Call Center Agent");
     setStatus("Active");
+    setBranchId(""); setAreaId("");
     setError("");
     setIsModalOpen(true);
   };
@@ -100,6 +107,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setPassword(""); // don't fill password
     setUserType(userTypeLabel(user));
     setStatus(user.status || "Active");
+    setBranchId(user.branch_id || ""); setAreaId(user.area_id || "");
     setError("");
     setIsModalOpen(true);
   };
@@ -126,6 +134,8 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       team,
       department,
       status,
+      branch_id: role === "branch_manager" ? (branchId || null) : null,
+      area_id: role === "area_manager" ? (areaId || null) : null,
       ...(password && { password })
     };
 
@@ -223,6 +233,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     if (r === "manager") return "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20";
     if (r === "leader") return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
     if (r === "supervisor") return "bg-purple-500/10 text-purple-400 border border-purple-500/20";
+    if (r === "ops_manager" || r === "area_manager" || r === "branch_manager") return "bg-teal-500/10 text-teal-400 border border-teal-500/20";
     return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
   };
 
@@ -463,6 +474,34 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                   {creatableTypes.map((t) => (<option key={t.label} value={t.label}>{t.label}</option>))}
                 </select>
               </div>
+
+              {resolveUserType(userType).role === "branch_manager" && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--muted)] block">Branch:</label>
+                  <select
+                    value={branchId}
+                    onChange={(e) => setBranchId(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="">— Select —</option>
+                    {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name}</option>))}
+                  </select>
+                </div>
+              )}
+
+              {resolveUserType(userType).role === "area_manager" && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--muted)] block">Area:</label>
+                  <select
+                    value={areaId}
+                    onChange={(e) => setAreaId(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="">— Select —</option>
+                    {areas.map((a) => (<option key={a.id} value={a.id}>{a.name}</option>))}
+                  </select>
+                </div>
+              )}
 
               {isAdmin && (
                 <div className="space-y-1">
