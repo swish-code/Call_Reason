@@ -29,7 +29,7 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
   const canReassign = currentUser.role === "admin" || currentUser.role === "ops_manager" || currentUser.role === "area_manager";
 
   const [tasks, setTasks] = useState<OpsTask[]>([]);
-  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [allBranches, setAllBranches] = useState<BranchOption[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -61,10 +61,25 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
 
+  // For ops_manager, the branch picker must only offer branches under their
+  // own brand_ids — the backend already rejects anything else (branchInOpsScope),
+  // but showing the full, unfiltered branch list first and only erroring on
+  // submit is confusing. Resolve their brand_ids (ids) to brand names, since
+  // branches.brand stores the brand's name, not its id.
+  const [myBrandNames, setMyBrandNames] = useState<Set<string> | null>(null);
+
   useEffect(() => {
     apiFetch("/api/ops-tasks/agents").then(r => r.ok ? r.json() : []).then(setAgents).catch(() => {});
-    if (canCreate) apiFetch("/api/branches").then(r => r.ok ? r.json() : []).then(setBranches).catch(() => {});
-  }, [canCreate]);
+    if (!canCreate) return;
+    apiFetch("/api/branches").then(r => r.ok ? r.json() : []).then(setAllBranches).catch(() => {});
+    if (currentUser.role === "admin") { setMyBrandNames(null); return; } // admin: unrestricted
+    const myIds = new Set(currentUser.brand_ids || []);
+    apiFetch("/api/brands").then(r => r.ok ? r.json() : []).then((brands: { id: string; brand_name: string }[]) => {
+      setMyBrandNames(new Set(brands.filter(b => myIds.has(b.id)).map(b => b.brand_name)));
+    }).catch(() => setMyBrandNames(new Set()));
+  }, [canCreate, currentUser.role]);
+
+  const branches = myBrandNames ? allBranches.filter(b => b.brand && myBrandNames.has(b.brand)) : allBranches;
 
   const resetModal = () => {
     setTitle(""); setDescription(""); setBranchId(""); setAssignTo("");
