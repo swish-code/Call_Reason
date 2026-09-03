@@ -16,6 +16,7 @@ import Surveys from "./components/Surveys.tsx";
 import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
 import ChangePassword from "./components/ChangePassword.tsx";
 import OpsTasks from "./components/OpsTasks.tsx";
+import OpsTaskTypes from "./components/OpsTaskTypes.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -58,7 +59,7 @@ import {
   KeyRound
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks";
+type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
@@ -424,7 +425,10 @@ export default function App() {
       { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: !isOpsRole },
       { page: "surveys", label: "Surveys", icon: MessageSquare, visible: !isOpsRole },
     ] },
-    { type: "item", item: { page: "opstasks", label: "Operations Tasks", icon: Building2, visible: isOpsRole || isAdmin } },
+    { type: "group", key: "operations", label: "Operations", icon: Building2, items: [
+      { page: "opstasks", label: "Tasks", icon: Building2, visible: isOpsRole || isAdmin },
+      { page: "opstasktypes", label: "Task Types", icon: ClipboardCheck, visible: role === "ops_manager" || isAdmin },
+    ] },
     { type: "group", key: "admin", label: "Administration", icon: ShieldAlert, items: [
       { page: "users", label: "User Management", icon: ShieldAlert, visible: isAdmin || isManager, accent: "amber" },
       { page: "configuration", label: "Configuration", icon: SlidersHorizontal, visible: isAdmin },
@@ -715,6 +719,9 @@ export default function App() {
           )}
           {activePage === "opstasks" && (isOpsRole || isAdmin) && (
             <OpsTasks currentUser={currentUser} />
+          )}
+          {activePage === "opstasktypes" && (role === "ops_manager" || isAdmin) && (
+            <OpsTaskTypes currentUser={currentUser} />
           )}
         </main>
       </div>

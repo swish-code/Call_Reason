@@ -7,6 +7,7 @@ interface OpsTasksProps { currentUser: User; }
 
 interface BranchOption { id: string; branch_name: string; brand?: string | null; }
 interface AgentOption { id: string; full_name: string; role: string; }
+interface TaskTypeOption { id: string; label: string; }
 
 const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none";
 const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
@@ -31,6 +32,7 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
   const [tasks, setTasks] = useState<OpsTask[]>([]);
   const [allBranches, setAllBranches] = useState<BranchOption[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [taskTypes, setTaskTypes] = useState<TaskTypeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
 
   useEffect(() => {
     apiFetch("/api/ops-tasks/agents").then(r => r.ok ? r.json() : []).then(setAgents).catch(() => {});
+    apiFetch("/api/options/ops_task_type").then(r => r.ok ? r.json() : []).then(setTaskTypes).catch(() => {});
     if (!canCreate) return;
     apiFetch("/api/branches").then(r => r.ok ? r.json() : []).then(setAllBranches).catch(() => {});
     if (currentUser.role === "admin") { setMyBrandNames(null); return; } // admin: unrestricted
@@ -244,7 +247,10 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
               <div className="p-6 space-y-4">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-[var(--text)]">Title</label>
-                  <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Task title" className={`w-full ${inputCls}`} />
+                  <select value={title} onChange={e => setTitle(e.target.value)} className={`w-full ${selCls}`}>
+                    <option value="">— Select —</option>
+                    {taskTypes.map(t => <option key={t.id} value={t.label}>{t.label}</option>)}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-[var(--text)]">Description</label>

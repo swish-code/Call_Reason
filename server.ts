@@ -653,6 +653,35 @@ app.delete("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandl
 }));
 
 // ----------------------------------------------------
+// Operations task types (Operations Manager self-service, scoped to the
+// single "ops_task_type" list — NOT the general /api/options endpoints
+// above, which are admin/leader-only and unscoped by list_key on PUT/DELETE.
+// Reading the list still goes through the existing GET /api/options/:key
+// (open to any authenticated user, same as every other dropdown list).
+// ----------------------------------------------------
+const requireOpsManagerOrAdmin = (req: any, res: any, next: any) => {
+  if (req.user && (req.user.role === "admin" || req.user.role === "ops_manager")) return next();
+  res.status(403).json({ error: "Access denied." });
+};
+
+app.post("/api/ops-task-types", authenticateJWT, requireOpsManagerOrAdmin, asyncHandler(async (req, res) => {
+  const { label } = req.body;
+  if (!label || !String(label).trim()) return res.status(400).json({ error: "A non-empty label is required." });
+  const option = await DB.addOption("ops_task_type", String(label).trim());
+  res.status(201).json(option);
+}));
+
+app.delete("/api/ops-task-types/:id", authenticateJWT, requireOpsManagerOrAdmin, asyncHandler(async (req, res) => {
+  // Confirm the row actually belongs to ops_task_type before deleting, so this
+  // scoped endpoint can never be used to delete an option from another list.
+  const all = await DB.getOptionsByKey("ops_task_type", false);
+  if (!all.some((o) => o.id === req.params.id)) return res.status(404).json({ error: "Task type not found." });
+  const success = await DB.deleteOption(req.params.id);
+  if (success) res.json({ message: "Task type deleted." });
+  else res.status(404).json({ error: "Task type not found." });
+}));
+
+// ----------------------------------------------------
 // Operations & Logs API (Agent / Team Leader, department-scoped)
 // ----------------------------------------------------
 const DEPT_TO_LOGTYPE: Record<string, string> = {

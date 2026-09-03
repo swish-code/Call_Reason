@@ -90,6 +90,10 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   tl_activity: ["Agent Coaching", "One-to-One Session", "Monthly Meeting", "Floor Task", "Validation Quality Review", "Agent Mistake Review", "Performance Feedback", "Other"],
   cc_status: ["Open", "In Progress", "Completed"],
   complaint_status: ["Solved", "Not Solved", "Waiting Feedback"],
+  // Operations module (brands & branches): placeholder task titles until the
+  // real list is supplied — Operations Manager can add/remove these from the
+  // "Task Types" page without needing full Configuration access.
+  ops_task_type: ["Stock Check", "Cleanliness Audit", "Staff Training", "Equipment Maintenance", "Customer Service Review", "Other"],
 };
 
 const SEED_CATEGORIES: Category[] = [
