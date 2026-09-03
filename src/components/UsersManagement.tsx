@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, USER_TYPES, UserType, roleDefaultLevel, Branch, Area } from "../types.js";
+import { User, USER_TYPES, UserType, roleDefaultLevel, Brand, Branch } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 
 // Map a stored user back to its account-type label (for the edit form)
@@ -54,10 +54,12 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const [password, setPassword] = useState("");
   const [userType, setUserType] = useState<string>("Call Center Agent");
   const [status, setStatus] = useState<"Active" | "Inactive">("Active");
-  const [branchId, setBranchId] = useState("");
-  const [areaId, setAreaId] = useState("");
+  const [branchId, setBranchId] = useState(""); // branch_manager: one branch
+  const [brandIds, setBrandIds] = useState<string[]>([]); // ops_manager: one or more brands
+  const [branchIds, setBranchIds] = useState<string[]>([]); // area_manager: hand-picked branches
+  const [branchFilterBrand, setBranchFilterBrand] = useState(""); // area_manager form: narrows the branch list below
+  const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [areas, setAreas] = useState<Area[]>([]);
 
   // Reset password states
   const [isResetOpen, setIsResetOpen] = useState(false);
@@ -85,7 +87,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   useEffect(() => {
     fetchUsers();
     apiFetch("/api/branches").then(r => r.ok ? r.json() : []).then(setBranches).catch(() => {});
-    apiFetch("/api/areas").then(r => r.ok ? r.json() : []).then(setAreas).catch(() => {});
+    apiFetch("/api/brands").then(r => r.ok ? r.json() : []).then(setBrands).catch(() => {});
   }, []);
 
   const handleOpenAdd = () => {
@@ -95,7 +97,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setPassword("");
     setUserType("Call Center Agent");
     setStatus("Active");
-    setBranchId(""); setAreaId("");
+    setBranchId(""); setBrandIds([]); setBranchIds([]); setBranchFilterBrand("");
     setError("");
     setIsModalOpen(true);
   };
@@ -107,7 +109,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setPassword(""); // don't fill password
     setUserType(userTypeLabel(user));
     setStatus(user.status || "Active");
-    setBranchId(user.branch_id || ""); setAreaId(user.area_id || "");
+    setBranchId(user.branch_id || ""); setBrandIds(user.brand_ids || []); setBranchIds(user.branch_ids || []); setBranchFilterBrand("");
     setError("");
     setIsModalOpen(true);
   };
@@ -135,7 +137,8 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       department,
       status,
       branch_id: role === "branch_manager" ? (branchId || null) : null,
-      area_id: role === "area_manager" ? (areaId || null) : null,
+      brand_ids: role === "ops_manager" ? brandIds : [],
+      branch_ids: role === "area_manager" ? branchIds : [],
       ...(password && { password })
     };
 
@@ -484,22 +487,69 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                     className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   >
                     <option value="">— Select —</option>
-                    {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name}</option>))}
+                    {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name}{b.brand ? ` (${b.brand})` : ""}</option>))}
                   </select>
                 </div>
               )}
 
-              {resolveUserType(userType).role === "area_manager" && (
+              {resolveUserType(userType).role === "ops_manager" && (
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-[var(--muted)] block">Area:</label>
-                  <select
-                    value={areaId}
-                    onChange={(e) => setAreaId(e.target.value)}
-                    className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                  >
-                    <option value="">— Select —</option>
-                    {areas.map((a) => (<option key={a.id} value={a.id}>{a.name}</option>))}
-                  </select>
+                  <label className="text-[11px] font-bold text-[var(--muted)] block">Brands responsible for (select one or more):</label>
+                  <div className="flex flex-wrap gap-2 p-2 bg-[var(--surface-2)] border border-[var(--border)] rounded-xl max-h-32 overflow-y-auto">
+                    {brands.map((b) => {
+                      const checked = brandIds.includes(b.id);
+                      return (
+                        <label key={b.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border ${checked ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--heading)] border-[var(--border)]"}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => setBrandIds(e.target.checked ? [...brandIds, b.id] : brandIds.filter((id) => id !== b.id))}
+                            className="hidden"
+                          />
+                          {b.brand_name}
+                        </label>
+                      );
+                    })}
+                    {brands.length === 0 && <span className="text-[var(--muted)] text-xs">No brands defined.</span>}
+                  </div>
+                  <p className="text-[10px] text-[var(--muted)]">Responsible for every branch under the selected brand(s).</p>
+                </div>
+              )}
+
+              {resolveUserType(userType).role === "area_manager" && (
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[var(--muted)] block">Filter by brand (optional):</label>
+                    <select
+                      value={branchFilterBrand}
+                      onChange={(e) => setBranchFilterBrand(e.target.value)}
+                      className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                    >
+                      <option value="">All brands</option>
+                      {brands.map((b) => (<option key={b.id} value={b.brand_name}>{b.brand_name}</option>))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[var(--muted)] block">Branches responsible for (select one or more):</label>
+                    <div className="flex flex-wrap gap-2 p-2 bg-[var(--surface-2)] border border-[var(--border)] rounded-xl max-h-40 overflow-y-auto">
+                      {branches.filter((b) => !branchFilterBrand || b.brand === branchFilterBrand).map((b) => {
+                        const checked = branchIds.includes(b.id);
+                        return (
+                          <label key={b.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border ${checked ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--heading)] border-[var(--border)]"}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => setBranchIds(e.target.checked ? [...branchIds, b.id] : branchIds.filter((id) => id !== b.id))}
+                              className="hidden"
+                            />
+                            {b.branch_name}
+                          </label>
+                        );
+                      })}
+                      {branches.length === 0 && <span className="text-[var(--muted)] text-xs">No branches defined.</span>}
+                    </div>
+                    {branchIds.length > 0 && <p className="text-[10px] text-[var(--muted)]">{branchIds.length} branch(es) selected (switching the brand filter above keeps your selection).</p>}
+                  </div>
                 </div>
               )}
 

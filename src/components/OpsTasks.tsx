@@ -5,7 +5,7 @@ import { Building2, Plus, X, AlertCircle, RefreshCw } from "lucide-react";
 
 interface OpsTasksProps { currentUser: User; }
 
-interface BranchOption { id: string; branch_name: string; area_name?: string | null; }
+interface BranchOption { id: string; branch_name: string; brand?: string | null; }
 interface AgentOption { id: string; full_name: string; role: string; }
 
 const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none";
@@ -155,7 +155,7 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
                 <tr>
                   <th className="p-4">Title</th>
                   <th className="p-4">Branch</th>
-                  <th className="p-4">Area</th>
+                  <th className="p-4">Brand</th>
                   <th className="p-4">Assigned To</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">Priority</th>
@@ -170,7 +170,7 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
                       {t.description && <div className="text-[11px] text-[var(--muted)] font-normal mt-0.5 max-w-[220px] truncate" title={t.description}>{t.description}</div>}
                     </td>
                     <td className="p-4 text-[var(--text)]">{t.branch_name || "—"}</td>
-                    <td className="p-4 text-[var(--muted)]">{t.area_name || "—"}</td>
+                    <td className="p-4 text-[var(--muted)]">{t.brand || "—"}</td>
                     <td className="p-4">
                       {canReassign ? (
                         <select
@@ -240,7 +240,7 @@ export default function OpsTasks({ currentUser }: OpsTasksProps) {
                     <label className="text-xs font-bold text-[var(--text)]">Branch</label>
                     <select value={branchId} onChange={e => setBranchId(e.target.value)} className={`w-full ${selCls}`}>
                       <option value="">— Select —</option>
-                      {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}{b.area_name ? ` (${b.area_name})` : ""}</option>)}
+                      {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}{b.brand ? ` (${b.brand})` : ""}</option>)}
                     </select>
                   </div>
                   <div className="space-y-2">

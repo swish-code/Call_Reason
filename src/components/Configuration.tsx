@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, DropdownOption, CONFIGURABLE_LISTS, Brand, Branch, Category, Area } from "../types.js";
+import { User, DropdownOption, CONFIGURABLE_LISTS, Brand, Branch, Category } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { Settings, Plus, Trash, Pencil, Check, X, ChevronUp, ChevronDown, Eye, EyeOff, RefreshCw, ListChecks, AlertCircle } from "lucide-react";
 
@@ -141,45 +141,47 @@ const SimpleEntityCard: React.FC<SimpleEntityCardProps> = ({ title, description,
   );
 };
 
-// ---- Branch → Area assignment (Operations module) ----
-interface BranchAreaCardProps { branches: Branch[]; areas: Area[]; onChange: () => void; }
-const BranchAreaCard: React.FC<BranchAreaCardProps> = ({ branches, areas, onChange }) => {
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const setArea = async (branchId: string, areaId: string) => {
-    setSavingId(branchId);
-    try {
-      await apiFetch(`/api/branches/${branchId}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ area_id: areaId || null }),
-      });
-      onChange();
-    } finally {
-      setSavingId(null);
-    }
+// ---- Branches card: like SimpleEntityCard, but a branch also needs a brand
+// (the Operations module scopes an Operations Manager to a brand's branches
+// via branches.brand, and shows it in the Branch picker for Area/Branch Manager). ----
+interface BranchCardProps { branches: Branch[]; brands: Brand[]; onChange: () => void; }
+const BranchCard: React.FC<BranchCardProps> = ({ branches, brands, onChange }) => {
+  const [name, setName] = useState("");
+  const [brand, setBrand] = useState("");
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !brand) return;
+    await apiFetch("/api/branches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), brand }) });
+    setName(""); onChange();
+  };
+  const remove = async (id: string, label: string) => {
+    if (!confirm(`Delete "${label}"?`)) return;
+    await apiFetch(`/api/branches/${id}`, { method: "DELETE" });
+    onChange();
   };
   return (
     <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl space-y-4">
       <div>
-        <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2"><ListChecks className="w-4 h-4 text-indigo-400" /> Branch → Area</h3>
-        <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">Assign each branch to an Area, so an Area Manager's scope covers the right branches.</p>
+        <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2"><ListChecks className="w-4 h-4 text-emerald-400" /> Branches</h3>
+        <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">Branch options (shown for Complaints, and the unit the Operations module scopes managers by).</p>
       </div>
-      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+      <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1">
         {branches.map((b) => (
-          <div key={b.id} className="flex items-center justify-between gap-2">
-            <span className="text-xs font-bold text-[var(--heading)] truncate">{b.branch_name}</span>
-            <select
-              value={b.area_id || ""}
-              disabled={savingId === b.id}
-              onChange={(e) => setArea(b.id, e.target.value)}
-              className="px-2 py-1.5 bg-[var(--bg)] border border-[var(--border)] rounded-lg text-[11px] font-bold text-[var(--heading)] [&>option]:bg-[var(--surface)]"
-            >
-              <option value="">— No area —</option>
-              {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
+          <span key={b.id} className="flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 bg-[var(--bg)] border border-[var(--border)]/70 rounded-xl text-xs font-bold text-[var(--heading)]">
+            {b.branch_name}{b.brand ? <span className="text-[var(--muted)] font-normal"> ({b.brand})</span> : null}
+            <button type="button" onClick={() => remove(b.id, b.branch_name)} className="p-0.5 text-[var(--muted)] hover:text-rose-400 rounded"><X className="w-3.5 h-3.5" /></button>
+          </span>
         ))}
-        {branches.length === 0 && <span className="text-[var(--muted)] text-xs">No branches defined yet.</span>}
+        {branches.length === 0 && <span className="text-[var(--muted)] text-xs">None defined.</span>}
       </div>
+      <form onSubmit={add} className="flex flex-wrap gap-2">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Add new branch…" className="flex-1 min-w-[120px] px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-bold text-[var(--heading)] placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        <select value={brand} onChange={(e) => setBrand(e.target.value)} className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-bold text-[var(--heading)] [&>option]:bg-[var(--surface)]">
+          <option value="">Brand…</option>
+          {brands.map((b) => <option key={b.id} value={b.brand_name}>{b.brand_name}</option>)}
+        </select>
+        <button type="submit" className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 active:scale-95"><Plus className="w-4 h-4" /></button>
+      </form>
     </div>
   );
 };
@@ -189,22 +191,20 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [areas, setAreas] = useState<Area[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchAll = async () => {
     try {
       setLoading(true); setError("");
-      const [ro, rb, rbr, rc, ra] = await Promise.all([
-        apiFetch("/api/options"), apiFetch("/api/brands"), apiFetch("/api/branches"), apiFetch("/api/categories"), apiFetch("/api/areas"),
+      const [ro, rb, rbr, rc] = await Promise.all([
+        apiFetch("/api/options"), apiFetch("/api/brands"), apiFetch("/api/branches"), apiFetch("/api/categories"),
       ]);
       if (!ro.ok) throw new Error("Failed to load configuration options.");
       setOptions(await ro.json());
       if (rb.ok) setBrands(await rb.json());
       if (rbr.ok) setBranches(await rbr.json());
       if (rc.ok) setCategories(await rc.json());
-      if (ra.ok) setAreas(await ra.json());
     } catch (err: any) {
       setError(err.message || "Connection error.");
     } finally {
@@ -242,10 +242,8 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
             <OptionListCard key={meta.key} meta={meta} items={options.filter((o) => o.list_key === meta.key)} onChange={fetchAll} />
           ))}
           <SimpleEntityCard title="Brands" description="Brand options used across the system" items={brands} labelField="brand_name" base="/api/brands" onChange={fetchAll} />
-          <SimpleEntityCard title="Branches" description="Branch options (shown for Complaints)" items={branches} labelField="branch_name" base="/api/branches" onChange={fetchAll} />
+          <BranchCard branches={branches} brands={brands} onChange={fetchAll} />
           <SimpleEntityCard title="Categories" description="Case category options" items={categories} labelField="category_name" base="/api/categories" onChange={fetchAll} />
-          <SimpleEntityCard title="Areas" description="Operations module: groups of branches for an Area Manager" items={areas} labelField="name" base="/api/areas" onChange={fetchAll} />
-          <BranchAreaCard branches={branches} areas={areas} onChange={fetchAll} />
         </div>
       )}
     </div>

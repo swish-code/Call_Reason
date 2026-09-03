@@ -217,7 +217,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
       team: user.team,
       department: user.department,
       branch_id: user.branch_id,
-      area_id: user.area_id,
+      brand_ids: user.brand_ids,
+      branch_ids: user.branch_ids,
       full_name: user.full_name
     },
     JWT_SECRET,
@@ -246,7 +247,8 @@ app.post("/api/auth/login", asyncHandler(async (req, res) => {
     team: user.team,
     department: user.department,
     branch_id: user.branch_id,
-    area_id: user.area_id,
+    brand_ids: user.brand_ids,
+    branch_ids: user.branch_ids,
     status: user.status,
     token
   };
@@ -263,7 +265,7 @@ app.get("/api/users", authenticateJWT, requireLeaderManagerOrAdmin, asyncHandler
 }));
 
 app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(async (req, res) => {
-  const { full_name, username, password, role, status, team, department, branch_id, area_id } = req.body;
+  const { full_name, username, password, role, status, team, department, branch_id, brand_ids, branch_ids } = req.body;
   const isOpsRole = role === "ops_manager" || role === "area_manager" || role === "branch_manager";
 
   if (!full_name || !username || !password || !role || !status) {
@@ -316,11 +318,13 @@ app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(asyn
     job_title,
     team,
     // Management roles (Assistant Manager and up) are org-wide → no department.
-    // Operations-module roles are also department-less (scoped by branch_id/area_id
-    // instead) even though their level is deliberately kept below EXECUTIVE_LEVEL.
+    // Operations-module roles are also department-less (scoped by branch_id/
+    // brand_ids/branch_ids instead) even though their level is deliberately
+    // kept below EXECUTIVE_LEVEL.
     department: (level >= EXECUTIVE_LEVEL || isOpsRole) ? null : (department || (ut ? ut.department : null) || "Call Center"),
     branch_id: role === "branch_manager" ? (branch_id || null) : null,
-    area_id: role === "area_manager" ? (area_id || null) : null,
+    brand_ids: role === "ops_manager" ? (Array.isArray(brand_ids) ? brand_ids : []) : [],
+    branch_ids: role === "area_manager" ? (Array.isArray(branch_ids) ? branch_ids : []) : [],
     status,
     created_at: nowString,
     updated_at: nowString,
@@ -343,7 +347,7 @@ app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(asyn
 
 app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { full_name, username, email, role, status, password, team, department, level, job_title, branch_id, area_id } = req.body;
+  const { full_name, username, email, role, status, password, team, department, level, job_title, branch_id, brand_ids, branch_ids } = req.body;
 
   const targetUser = await DB.getUserById(id);
   if (!targetUser) {
@@ -377,7 +381,8 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req
     level: level !== undefined ? level : (targetUser as any).level,
     job_title: job_title !== undefined ? job_title : (targetUser as any).job_title,
     branch_id: branch_id !== undefined ? (branch_id || null) : (targetUser as any).branch_id,
-    area_id: area_id !== undefined ? (area_id || null) : (targetUser as any).area_id,
+    brand_ids: brand_ids !== undefined ? (Array.isArray(brand_ids) ? brand_ids : []) : (targetUser as any).brand_ids,
+    branch_ids: branch_ids !== undefined ? (Array.isArray(branch_ids) ? branch_ids : []) : (targetUser as any).branch_ids,
   };
 
   if (password && password.trim() !== "") {
@@ -555,8 +560,8 @@ app.delete("/api/categories/:id", authenticateJWT, requireLeaderOrAdmin, asyncHa
 }));
 
 // ----------------------------------------------------
-// Branches API (stores shown for Complaint call reasons, and grouped into
-// Areas for the Operations module)
+// Branches API (stores shown for Complaint call reasons, and the unit the
+// Operations module scopes brand_ids/branch_ids/branch_id against)
 // ----------------------------------------------------
 const requireBranchManage = (req: any, res: any, next: any) => {
   if (req.user && (req.user.role === "admin" || req.user.role === "leader" || req.user.role === "ops_manager")) return next();
@@ -568,20 +573,19 @@ app.get("/api/branches", authenticateJWT, asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/branches", authenticateJWT, requireBranchManage, asyncHandler(async (req, res) => {
-  const { name, brand, area_id } = req.body;
+  const { name, brand } = req.body;
   if (!name || name.trim() === "") {
     return res.status(400).json({ error: "Branch name is required" });
   }
-  const branch = await DB.addBranch(name.trim(), brand || null, area_id || null);
+  const branch = await DB.addBranch(name.trim(), brand || null);
   res.status(201).json(branch);
 }));
 
 app.patch("/api/branches/:id", authenticateJWT, requireBranchManage, asyncHandler(async (req, res) => {
-  const { branch_name, brand, area_id } = req.body;
+  const { branch_name, brand } = req.body;
   const branch = await DB.updateBranch(req.params.id, {
     branch_name: branch_name !== undefined ? String(branch_name).trim() : undefined,
     brand: brand !== undefined ? (brand || null) : undefined,
-    area_id: area_id !== undefined ? (area_id || null) : undefined,
   });
   if (!branch) return res.status(404).json({ error: "Branch not found." });
   res.json(branch);
@@ -593,31 +597,6 @@ app.delete("/api/branches/:id", authenticateJWT, requireBranchManage, asyncHandl
     res.json({ message: "Branch deleted successfully" });
   } else {
     res.status(404).json({ error: "Branch not found" });
-  }
-}));
-
-// ----------------------------------------------------
-// Areas API (Operations module — groups branches for an Area Manager)
-// ----------------------------------------------------
-app.get("/api/areas", authenticateJWT, asyncHandler(async (req, res) => {
-  res.json(await DB.getAreas());
-}));
-
-app.post("/api/areas", authenticateJWT, requireBranchManage, asyncHandler(async (req, res) => {
-  const { name } = req.body;
-  if (!name || name.trim() === "") {
-    return res.status(400).json({ error: "Area name is required" });
-  }
-  const area = await DB.addArea(name.trim());
-  res.status(201).json(area);
-}));
-
-app.delete("/api/areas/:id", authenticateJWT, requireBranchManage, asyncHandler(async (req, res) => {
-  const success = await DB.deleteArea(req.params.id);
-  if (success) {
-    res.json({ message: "Area deleted successfully" });
-  } else {
-    res.status(404).json({ error: "Area not found" });
   }
 }));
 
@@ -1466,21 +1445,44 @@ app.delete("/api/recurring/:id", authenticateJWT, requireManager, asyncHandler(a
 
 // ----------------------------------------------------
 // Operations Tasks (brands & branches module)
-// Scoped by branch_id/area_id on the user, NOT the department/level model the
-// older /api/tasks* routes use — every route here starts with an explicit
-// role allow-list, never a bare "not agent" check, so no other role ever
-// inherits this module by accident.
+// Scoped by branch_id/brand_ids/branch_ids on the user, NOT the
+// department/level model the older /api/tasks* routes use:
+//   - Operations Manager: one or more brand_ids -> scope = every branch
+//     under those brands
+//   - Area Manager: a hand-picked branch_ids list -> scope = exactly those
+//     branches (any brand)
+//   - Branch Manager: a single branch_id -> scope = that one branch
+// Every route here starts with an explicit role allow-list, never a bare
+// "not agent" check, so no other role ever inherits this module by accident.
 // ----------------------------------------------------
 const OPS_ROLES = new Set(["ops_manager", "area_manager", "branch_manager"]);
 
+// True once `branchId` falls inside `actor`'s Operations scope (branch_id /
+// brand_ids / branch_ids as appropriate for their role). Admin is unrestricted.
+async function branchInOpsScope(actor: any, branchId: string): Promise<boolean> {
+  if (actor.role === "admin") return true;
+  if (actor.role === "branch_manager") return actor.branch_id === branchId;
+  if (actor.role === "area_manager") return Array.isArray(actor.branch_ids) && actor.branch_ids.includes(branchId);
+  if (actor.role === "ops_manager") {
+    if (!Array.isArray(actor.brand_ids) || !actor.brand_ids.length) return false;
+    const branch = (await DB.getBranches()).find((b: any) => b.id === branchId);
+    if (!branch || !branch.brand) return false;
+    const brands = await DB.getBrands();
+    return brands.some((b: any) => actor.brand_ids.includes(b.id) && b.brand_name === branch.brand);
+  }
+  return false;
+}
+
 app.get("/api/ops-tasks", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { role, area_id, branch_id } = req.user;
-  if (role === "admin" || role === "ops_manager") {
-    return res.json(await DB.getOpsTasks());
+  const { role, brand_ids, branch_ids, branch_id } = req.user;
+  if (role === "admin") return res.json(await DB.getOpsTasks());
+  if (role === "ops_manager") {
+    if (!Array.isArray(brand_ids) || !brand_ids.length) return res.json([]);
+    return res.json(await DB.getOpsTasks({ brand_ids }));
   }
   if (role === "area_manager") {
-    if (!area_id) return res.json([]);
-    return res.json(await DB.getOpsTasks({ area_id }));
+    if (!Array.isArray(branch_ids) || !branch_ids.length) return res.json([]);
+    return res.json(await DB.getOpsTasks({ branch_ids }));
   }
   if (role === "branch_manager") {
     if (!branch_id) return res.json([]);
@@ -1489,20 +1491,21 @@ app.get("/api/ops-tasks", authenticateJWT, asyncHandler(async (req: any, res) =>
   return res.status(403).json({ error: "Access denied." });
 }));
 
-// Candidate assignees for the create/reassign picker, scoped the same way as the list above.
+// Candidate assignees for the create/reassign picker.
 app.get("/api/ops-tasks/agents", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { role, area_id } = req.user;
+  const { role, branch_ids } = req.user;
   if (!OPS_ROLES.has(role) && role !== "admin") return res.status(403).json({ error: "Access denied." });
   const users = await DB.getUsers();
-  const branches = await DB.getBranches();
   let candidates = users.filter((u: any) => OPS_ROLES.has(u.role) && u.status === "Active");
   if (role === "area_manager") {
-    const branchIdsInArea = new Set(branches.filter((b: any) => b.area_id === area_id).map((b: any) => b.id));
-    candidates = candidates.filter((u: any) => u.role === "branch_manager" && branchIdsInArea.has(u.branch_id));
+    const mine = new Set(Array.isArray(branch_ids) ? branch_ids : []);
+    candidates = candidates.filter((u: any) => u.role === "branch_manager" && mine.has(u.branch_id));
   } else if (role === "branch_manager") {
     candidates = []; // nothing below branch manager to assign further to
   }
-  res.json(candidates.map((u: any) => ({ id: u.id, full_name: u.full_name, role: u.role, branch_id: u.branch_id ?? null, area_id: u.area_id ?? null })));
+  // ops_manager/admin: free choice of any Area Manager or Branch Manager (the
+  // Operations Manager "decides who it goes to" — not restricted to their own brands).
+  res.json(candidates.map((u: any) => ({ id: u.id, full_name: u.full_name, role: u.role, branch_id: u.branch_id ?? null })));
 }));
 
 app.post("/api/ops-tasks", authenticateJWT, asyncHandler(async (req: any, res) => {
@@ -1511,6 +1514,9 @@ app.post("/api/ops-tasks", authenticateJWT, asyncHandler(async (req: any, res) =
   }
   const { title, description, branch_id, assigned_to, priority, due_date } = req.body;
   if (!title || !branch_id) return res.status(400).json({ error: "Title and branch are required." });
+  if (!(await branchInOpsScope(req.user, branch_id))) {
+    return res.status(403).json({ error: "That branch is outside your assigned brands." });
+  }
 
   let assigned_to_name: string | null = null;
   if (assigned_to) {
@@ -1531,18 +1537,14 @@ app.post("/api/ops-tasks", authenticateJWT, asyncHandler(async (req: any, res) =
 }));
 
 app.patch("/api/ops-tasks/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { role, id: userId, area_id, branch_id } = req.user;
+  const { role, branch_ids } = req.user;
   if (!OPS_ROLES.has(role) && role !== "admin") return res.status(403).json({ error: "Access denied." });
 
   const task = await DB.getOpsTaskById(req.params.id);
   if (!task) return res.status(404).json({ error: "Task not found." });
 
-  // Scope check: which existing tasks this actor may touch at all.
-  if (role === "area_manager") {
-    const branch = (await DB.getBranches()).find((b: any) => b.id === task.branch_id);
-    if (!branch || branch.area_id !== area_id) return res.status(403).json({ error: "Not authorized for this task." });
-  } else if (role === "branch_manager") {
-    if (task.branch_id !== branch_id) return res.status(403).json({ error: "Not authorized for this task." });
+  if (!(await branchInOpsScope(req.user, task.branch_id))) {
+    return res.status(403).json({ error: "Not authorized for this task." });
   }
 
   const { status, assigned_to, priority, due_date, note } = req.body;
@@ -1558,11 +1560,12 @@ app.patch("/api/ops-tasks/:id", authenticateJWT, asyncHandler(async (req: any, r
       if (!target || !OPS_ROLES.has(target.role)) {
         return res.status(400).json({ error: "Assignee must be an Operations Manager, Area Manager, or Branch Manager." });
       }
-      // Non-admin/ops_manager may only reassign within their own scope.
+      // Area Manager may only reassign within their own hand-picked branches.
       if (role === "area_manager") {
-        const branches = await DB.getBranches();
-        const inArea = target.role === "branch_manager" && branches.some((b: any) => b.id === target.branch_id && b.area_id === area_id);
-        if (!inArea) return res.status(403).json({ error: "You can only assign to a Branch Manager within your area." });
+        const mine = new Set(Array.isArray(branch_ids) ? branch_ids : []);
+        if (target.role !== "branch_manager" || !mine.has(target.branch_id)) {
+          return res.status(403).json({ error: "You can only assign to a Branch Manager within your branches." });
+        }
       } else if (role === "branch_manager") {
         return res.status(403).json({ error: "Branch Manager cannot reassign this task." });
       }

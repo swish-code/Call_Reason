@@ -1,8 +1,9 @@
 // Coarse permission bucket. Authority order is driven by `level` (below), not by role.
 // ops_manager/area_manager/branch_manager belong to the Operations module (brands &
-// branches) — a separate hierarchy from department/level, scoped by branch_id/area_id
-// on the user record instead. They must never be treated as implicitly included by a
-// bare `role !== "agent"` check the way "manager"/"supervisor"/"leader" are elsewhere.
+// branches) — a separate hierarchy from department/level, scoped by brand_ids/
+// branch_ids/branch_id on the user record instead. They must never be treated as
+// implicitly included by a bare `role !== "agent"` check the way "manager"/
+// "supervisor"/"leader" are elsewhere.
 export type UserRole = "agent" | "leader" | "supervisor" | "manager" | "owner" | "admin" | "marketing" | "ops_manager" | "area_manager" | "branch_manager";
 
 // Organizational team an employee belongs to (separate from the permission role)
@@ -126,8 +127,9 @@ export interface User {
   job_title?: string; // Human-facing account type label (e.g. "Call Center Manager")
   team?: Team; // Legacy team field (kept for backward compatibility)
   department?: Department; // Department for the Operations & Logs system
-  branch_id?: string | null; // Operations module: set for branch_manager (exactly one branch)
-  area_id?: string | null;   // Operations module: set for area_manager (one area, many branches)
+  branch_id?: string | null;      // Operations module: set for branch_manager (exactly one branch)
+  brand_ids?: string[] | null;    // Operations module: set for ops_manager (one or more brands; scope = every branch under them)
+  branch_ids?: string[] | null;   // Operations module: set for area_manager (a hand-picked set of branches, any brand)
   status: "Active" | "Inactive";
   can_upload?: boolean; // Agent may upload rating/survey Excel files
   work_type?: "calls" | "survey" | "both"; // Survey eligibility for the queue
@@ -437,25 +439,18 @@ export interface Branch {
   id: string;
   branch_name: string;
   brand?: string; // Owning brand (branches are per-brand)
-  area_id?: string | null; // Operations module: which area this branch belongs to
-  area_name?: string; // Joined for display
 }
 
 // ----------------------------------------------------
 // Operations module (brands & branches)
 // ----------------------------------------------------
-export interface Area {
-  id: string;
-  name: string;
-}
-
 export interface OpsTask {
   id: string;
   title: string;
   description?: string | null;
   branch_id: string;
   branch_name?: string; // Joined for display
-  area_name?: string;   // Joined for display
+  brand?: string;       // Joined for display (the branch's brand)
   assigned_by?: string | null;
   assigned_by_name?: string | null;
   assigned_to?: string | null;
