@@ -2415,6 +2415,62 @@ app.get("/api/reports/c360-ratings", authenticateJWT, asyncHandler(async (req: a
   res.json({ filename: `c360_${pName}_ratings_${from}_to_${to}.xlsx`, file, rows: rows.length });
 }));
 
+// Full "download all reviews" export — every rating ever uploaded, including
+// the auto-closed (no_action_needed) bucket that the Reviews page itself
+// hides from its list (see getAllRatingsForExport). This is what "Total
+// Reviews" on the Feedback Dashboard actually counts.
+const REVIEW_STATUS_LABEL: Record<string, string> = {
+  resolved: "Complaint Recorded",
+  no_action_needed: "No Action Required",
+  in_progress: "In Progress",
+  unreachable: "Unreachable",
+  pending: "Pending",
+};
+app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: any, res) => {
+  // Anyone who can see the Reviews page may export it — that's every role
+  // except agent (view-restricted to their own) and the Operations-module
+  // roles (Reviews isn't part of their module at all; only its own page is
+  // hidden from them, but this endpoint has no such implicit UI gate).
+  if (req.user.role === "agent" || OPS_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const rows = await DB.getAllRatingsForExport();
+  const header = [
+    "Date", "Brand", "Platform", "Order ID", "Customer Name", "Customer Phone", "Branch",
+    "Rating", "Review Text", "Status", "Requires Action", "Assigned Agent", "Action Note",
+    "Served By", "Uploaded By", "Uploaded At",
+  ];
+  const aoa: any[][] = [header];
+  for (const r of rows) {
+    let orderDate: any = "";
+    if (r.order_date) {
+      const [y, mo, d] = String(r.order_date).split("-").map(Number);
+      if (y && mo && d) orderDate = new Date(Date.UTC(y, mo - 1, d));
+    }
+    aoa.push([
+      orderDate,
+      r.brand_name || "",
+      r.platform_name || "",
+      r.order_id || "",
+      r.customer_name || "",
+      r.customer_phone || "",
+      r.branch || "",
+      Number(r.rating) || "",
+      r.review_text || "",
+      REVIEW_STATUS_LABEL[r.action_status] || r.action_status || "",
+      r.requires_action ? "Yes" : "No",
+      r.agent_name || "",
+      r.action_note || "",
+      r.served_by || "",
+      r.uploaded_by_name || "",
+      r.uploaded_at ? new Date(r.uploaded_at) : "",
+    ]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Reviews");
+  const file = XLSX.write(wb, { type: "base64", bookType: "xlsx", cellDates: true });
+  res.json({ filename: `all_reviews_${new Date().toISOString().slice(0, 10)}.xlsx`, file, rows: rows.length });
+}));
+
 // ----------------------------------------------------
 // Surveys Module (Call Campaigns + Survey Records)
 // ----------------------------------------------------

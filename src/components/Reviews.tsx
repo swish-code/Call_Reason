@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import {
-  Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2,
+  Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download,
 } from "lucide-react";
 
 interface Platform { id: string; name: string; }
@@ -254,6 +254,21 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     downloadBase64(data.file, data.filename);
   };
 
+  const [exportingAll, setExportingAll] = useState(false);
+  const handleExportAll = async () => {
+    setExportingAll(true);
+    try {
+      const res = await apiFetch('/api/reports/all-reviews');
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || 'Export failed.'); return; }
+      downloadBase64(data.file, data.filename);
+    } catch (e: any) {
+      setError(e.message || 'Export error.');
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
   const handleUpload = async () => {
     if (!uploadFile) return;
     setUploading(true);
@@ -420,6 +435,16 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+          {!isAgent && (
+            <button
+              onClick={handleExportAll}
+              disabled={exportingAll}
+              title="Download every review in the system as an Excel file"
+              className="px-4 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 border border-emerald-500/20 text-emerald-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+            >
+              <Download className="w-4 h-4" /> {exportingAll ? 'Exporting…' : 'Export All'}
+            </button>
+          )}
           {canUpload && (
             <>
               <button

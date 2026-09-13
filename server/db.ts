@@ -1357,6 +1357,29 @@ export class DB {
     return rows;
   }
 
+  /**
+   * Every rating ever uploaded, for a full "download all reviews" export —
+   * unlike getRatings() (the Reviews page list), this includes auto-closed
+   * (no_action_needed) rows too, matching what the Feedback Dashboard's
+   * "Total Reviews" count already includes.
+   */
+  static async getAllRatingsForExport(): Promise<any[]> {
+    const { rows } = await pool.query(`
+      SELECT r.*,
+        b.brand_name, p.name AS platform_name,
+        ua.full_name AS agent_name,
+        uu.full_name AS uploaded_by_name
+      FROM ratings r
+      LEFT JOIN brands b ON b.id = r.brand_id
+      LEFT JOIN platforms p ON p.id = r.platform_id
+      LEFT JOIN users ua ON ua.id = r.assigned_agent_id
+      LEFT JOIN users uu ON uu.id = r.uploaded_by
+      ORDER BY r.uploaded_at DESC
+      LIMIT 500000
+    `);
+    return rows;
+  }
+
   static async getRatings(filter: {
     brand_id?: string; platform_id?: string; action_status?: string;
     requires_action?: boolean; assigned?: string; assigned_agent_id?: string;
