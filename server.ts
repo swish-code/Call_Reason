@@ -696,6 +696,8 @@ const LOG_FIELDS = ["department", "activity_type", "status", "branch", "brand", 
 // Recurring tasks — date helpers & lazy daily generation (Kuwait time, UTC+3)
 // ----------------------------------------------------
 const KW_OFFSET_MS = 3 * 3600 * 1000;
+// Days between the Excel serial epoch (1899-12-30) and the Unix epoch.
+const EXCEL_EPOCH_DAYS = 25569;
 function kuwaitToday(): { date: string; weekday: number } {
   const kw = new Date(Date.now() + KW_OFFSET_MS);
   const date = kw.toISOString().slice(0, 10); // YYYY-MM-DD in Kuwait local
@@ -2440,11 +2442,18 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
   ];
   const aoa: any[][] = [header];
   for (const r of rows) {
+    // Write Excel serials directly rather than Date objects: a Date is serialised by
+    // the server's wall clock, which put every order_date (a date-only value, UTC
+    // midnight) at 03:00 once read in Kuwait (+3).
     let orderDate: any = "";
     if (r.order_date) {
       const [y, mo, d] = String(r.order_date).split("-").map(Number);
-      if (y && mo && d) orderDate = new Date(Date.UTC(y, mo - 1, d));
+      if (y && mo && d) orderDate = Date.UTC(y, mo - 1, d) / 86400000 + EXCEL_EPOCH_DAYS;
     }
+    // uploaded_at is a real instant, so it gets a genuine time — in Kuwait local.
+    const uploadedAt = r.uploaded_at
+      ? (new Date(r.uploaded_at).getTime() + KW_OFFSET_MS) / 86400000 + EXCEL_EPOCH_DAYS
+      : "";
     aoa.push([
       orderDate,
       r.brand_name || "",
@@ -2461,10 +2470,17 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
       r.action_note || "",
       r.served_by || "",
       r.uploaded_by_name || "",
-      r.uploaded_at ? new Date(r.uploaded_at) : "",
+      uploadedAt,
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+  // Date column shows the day only; Uploaded At shows day + Kuwait time.
+  for (let i = 2; i <= aoa.length; i++) {
+    const dateCell = ws[`A${i}`];
+    if (dateCell && dateCell.t === "n") dateCell.z = "yyyy-mm-dd";
+    const upCell = ws[`P${i}`];
+    if (upCell && upCell.t === "n") upCell.z = "yyyy-mm-dd hh:mm";
+  }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Reviews");
   const file = XLSX.write(wb, { type: "base64", bookType: "xlsx", cellDates: true });
