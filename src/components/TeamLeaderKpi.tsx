@@ -164,7 +164,7 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
                 <div key={l.id} className="flex-1 flex flex-col items-center justify-end gap-2 h-full">
                   <span className="text-xs font-mono font-bold text-amber-400">{l.completed}</span>
                   <div className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-lg" style={{ height: `${Math.max(Math.round((l.completed / maxCompleted) * 100), l.completed > 0 ? 6 : 2)}%` }}></div>
-                  <span className="text-[10px] font-bold text-[var(--muted)] text-center truncate w-full" title={l.full_name}>{l.full_name.split(" ")[0]}</span>
+                  <span className="text-[10px] font-bold text-[var(--muted)] text-center truncate w-full" title={l.full_name}>{l.full_name.split(" ").slice(0, 2).join(" ")}</span>
                 </div>
               ))}
             </div>
