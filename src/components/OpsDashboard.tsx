@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { ClipboardList, CheckCircle2, Clock, FolderOpen, CalendarDays, TrendingUp, Users, Award, MessageSquareWarning, Wrench, GraduationCap, AlertCircle, Timer, Filter, X, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import TeamOfTheMonth from "./TeamOfTheMonth.tsx";
 
 interface OpsDashboardProps {
   currentUser: User;
@@ -253,6 +254,8 @@ export default function OpsDashboard({ currentUser }: OpsDashboardProps) {
         <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Welcome, {currentUser.name || currentUser.full_name}</h1>
         <p className="text-[var(--muted)] text-sm mt-1 font-light">{d.department ? `Department: ${d.department}` : "All departments"}</p>
       </div>
+
+      <TeamOfTheMonth />
 
       {isAgent ? (
         <>

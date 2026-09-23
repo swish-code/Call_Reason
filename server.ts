@@ -2492,7 +2492,11 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
 // Team Leader KPI dashboard — per Team Leader task counts, and (once Agents are
 // linked via Users Management) their team's counts nested underneath.
 app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req: any, res) => {
-  if (req.user.role === "agent" || req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
+  // Agents can read this too — the main Dashboard shows the "Team of the Month" banner to
+  // everyone as motivation. Only the Operations module and Marketing (unrelated hierarchies)
+  // are excluded. Department scoping below still applies to non-executive roles, agents
+  // included, so an agent only ever sees their own department's leaders.
+  if (req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
     return res.status(403).json({ error: "Access denied." });
   }
   // Dates come in as bare YYYY-MM-DD (Kuwait-day granularity); widen to that day's real
