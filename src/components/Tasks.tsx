@@ -19,6 +19,11 @@ const DEPT_ACTIVITY_KEY: Record<string, string> = {
   "Quality": "quality_activity",
 };
 
+// Supervisor → Team Leader assignments draw from a separate, Leader-specific task list.
+const DEPT_LEADER_TASK_KEY: Record<string, string> = {
+  "Call Center": "cc_leader_task",
+};
+
 export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const isAgent = currentUser.role === "agent";
   const view: TaskMode = mode || (isAgent ? "mine" : "assign");
@@ -27,10 +32,15 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const orgWide = !currentUser.department;
 
   const [tasks, setTasks] = useState<AssignedTask[]>([]);
-  const [agents, setAgents] = useState<{ id: string; full_name: string; department?: string; job_title?: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; full_name: string; department?: string; job_title?: string; role?: string }[]>([]);
   const [taskTypes, setTaskTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Supervisors choose who the task is for: an Agent (unchanged flow) or a Team Leader
+  // (separate task list, employee field appears only once a task is picked).
+  const isSupervisor = currentUser.role === "supervisor";
+  const [assignRole, setAssignRole] = useState<"agent" | "leader">("agent");
 
   // Create form (managers, assign view)
   const [title, setTitle] = useState("");
@@ -51,11 +61,25 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
 
-  const loadActivities = (dept?: string) => {
-    const key = DEPT_ACTIVITY_KEY[dept || ""];
+  const loadActivities = (dept?: string, keyMap: Record<string, string> = DEPT_ACTIVITY_KEY) => {
+    const key = keyMap[dept || ""];
     if (!key) { setTaskTypes([]); return; }
     apiFetch(`/api/options/${key}`).then((r) => r.ok ? r.json() : []).then((opts: any[]) => setTaskTypes(opts.map((o) => o.label))).catch(() => setTaskTypes([]));
   };
+
+  // Switch between assigning to an Agent or a Team Leader (Supervisor only) — resets the
+  // in-progress selection and reloads the right task list for the new mode.
+  const switchAssignRole = (r: "agent" | "leader") => {
+    setAssignRole(r);
+    setTitle("");
+    setAssignTo("");
+    loadActivities(currentUser.department, r === "leader" ? DEPT_LEADER_TASK_KEY : DEPT_ACTIVITY_KEY);
+  };
+
+  // Supervisor: split the shared subordinate list by tier once a mode is chosen.
+  const roleFilteredAgents = isSupervisor
+    ? agents.filter((a) => a.role === (assignRole === "leader" ? "leader" : "agent"))
+    : agents;
 
   useEffect(() => {
     fetchTasks();
@@ -168,21 +192,54 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
         <form onSubmit={createTask} className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-lg space-y-4">
           <h3 className="text-sm font-extrabold text-[var(--heading)]">New Task</h3>
           {formMsg && <div className="text-xs text-rose-400 font-bold flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> {formMsg}</div>}
+          {isSupervisor && (
+            <div className="flex items-center gap-2">
+              {(["agent", "leader"] as const).map((r) => (
+                <button key={r} type="button" onClick={() => switchAssignRole(r)}
+                  className={`px-4 py-2 rounded-xl text-xs font-extrabold border transition ${assignRole === r ? "bg-blue-600 text-white border-blue-600" : "bg-[var(--bg)] text-[var(--text)] border-[var(--border)] hover:bg-[var(--surface-2)]"}`}>
+                  {r === "agent" ? "Agent" : "Team Leader"}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Assign To (employee):</label>
-              <select value={assignTo} onChange={(e) => { const v = e.target.value; setAssignTo(v); if (orgWide) { setTitle(""); loadActivities(agents.find((x) => x.id === v)?.department); } }} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
-                <option value="">— Select employee —</option>
-                {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}{a.job_title ? ` — ${a.job_title}` : ""}{a.department ? ` (${a.department})` : ""}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Task:</label>
-              <select value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
-                <option value="">— Select a task —</option>
-                {taskTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
-              </select>
-            </div>
+            {isSupervisor && assignRole === "leader" ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[var(--text)]">Task:</label>
+                  <select value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                    <option value="">— Select a task —</option>
+                    {taskTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
+                  </select>
+                </div>
+                {title && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[var(--text)]">Assign To (Team Leader):</label>
+                    <select value={assignTo} onChange={(e) => setAssignTo(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                      <option value="">— Select employee —</option>
+                      {roleFilteredAgents.map((a) => <option key={a.id} value={a.id}>{a.full_name}{a.job_title ? ` — ${a.job_title}` : ""}{a.department ? ` (${a.department})` : ""}</option>)}
+                    </select>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[var(--text)]">Assign To (employee):</label>
+                  <select value={assignTo} onChange={(e) => { const v = e.target.value; setAssignTo(v); if (orgWide) { setTitle(""); loadActivities(agents.find((x) => x.id === v)?.department); } }} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                    <option value="">— Select employee —</option>
+                    {roleFilteredAgents.map((a) => <option key={a.id} value={a.id}>{a.full_name}{a.job_title ? ` — ${a.job_title}` : ""}{a.department ? ` (${a.department})` : ""}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[var(--text)]">Task:</label>
+                  <select value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                    <option value="">— Select a task —</option>
+                    {taskTypes.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
+                  </select>
+                </div>
+              </>
+            )}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[var(--text)]">Due Date &amp; Time:</label>
               <input type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} className={inputCls} />

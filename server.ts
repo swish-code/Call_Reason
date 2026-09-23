@@ -1341,7 +1341,7 @@ app.get("/api/tasks/agents", authenticateJWT, asyncHandler(async (req: any, res:
   if (req.user.role === "agent") return res.status(403).json({ error: "Forbidden" });
   const subs = (await DB.getUsers())
     .filter((u) => u.id !== req.user.id && u.status !== "Inactive" && canAssignTo(req.user, u));
-  res.json(subs.map((u) => ({ id: u.id, full_name: u.full_name, department: u.department, job_title: u.job_title, level: u.level })));
+  res.json(subs.map((u) => ({ id: u.id, full_name: u.full_name, department: u.department, job_title: u.job_title, level: u.level, role: u.role })));
 }));
 
 // Update a task (agent owner updates status; manager/admin can update)

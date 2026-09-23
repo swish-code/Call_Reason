@@ -88,6 +88,17 @@ const DEFAULT_OPTIONS: Record<string, string[]> = {
   complaint_activity: ["Validation", "Escalation", "Coupon Request", "Email Complaint", "Social Media Complaint", "Agent Inquiry", "Customer Review", "Survey Result", "Follow-up Store", "Other"],
   quality_activity: ["Call Monitoring & Evaluation", "Review Escalated Complaints", "Root Cause Analysis", "SOP & Policy Compliance", "Operational Accuracy", "QA Documentation", "Quality Reporting", "Calibration Management", "Coaching & Performance Follow-up", "Quality Improvement & Special Projects"],
   tl_activity: ["Agent Coaching", "One-to-One Session", "Monthly Meeting", "Floor Task", "Validation Quality Review", "Agent Mistake Review", "Performance Feedback", "Other"],
+  // Call Center Supervisor → Team Leader assignment: the Team Leader's own task list
+  // (distinct from cc_activity, which is for Supervisor → Agent assignments).
+  cc_leader_task: [
+    "Floor Monitoring & Operations Control", "Quality Follow-up", "CC Mistakes Validation",
+    "Catering Orders", "Large Orders", "Pre-Orders", "Floor Management",
+    "Daily Reports & Daily Handover", "Customer Surveys & Reviews", "Complaints & Escalations",
+    "Agent Coaching & Development", "Training & New Joiner Follow-up", "Systems & Technical Follow-up",
+    "Escalation Handling & Real-Time Decision Making", "Performance & KPI Follow-up",
+    "General KPI's & Internal Kpi's", "Daily Menu & Brand Updates Follow-up",
+    "Shift Closing Responsibilities", "Handling Marketing Orders", "Updates & Briefings Training",
+  ],
   cc_status: ["Open", "In Progress", "Completed"],
   complaint_status: ["Solved", "Not Solved", "Waiting Feedback"],
   // Operations module (brands & branches): placeholder task titles until the

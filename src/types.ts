@@ -491,6 +491,7 @@ export const CONFIGURABLE_LISTS: { key: string; title: string; description: stri
   { key: "complaint_activity", title: "Complaints — Types", description: "Complaint log types" },
   { key: "quality_activity", title: "Quality — Activities", description: "Quality log activity types" },
   { key: "tl_activity", title: "Team Leader — Activities", description: "Team Leader log activity types" },
+  { key: "cc_leader_task", title: "Call Center — Leader Tasks", description: "Task list for Supervisor → Team Leader assignments" },
   { key: "cc_status", title: "Log Status (CC/Technical)", description: "Open / In Progress / Completed" },
   { key: "complaint_status", title: "Complaint Status", description: "Solved / Not Solved / Waiting Feedback" },
 ];
