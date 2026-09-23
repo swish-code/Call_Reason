@@ -1544,6 +1544,39 @@ export class DB {
     return DB.getRatingById(id);
   }
 
+  /**
+   * Ratings still missing a customer phone on the given platforms — the rows
+   * an enrichment pass can help. Newest first, since a recent order is the one
+   * the scraper is most likely to still hold a phone for.
+   */
+  static async getRatingsMissingPhone(
+    platformIds: string[], limit: number
+  ): Promise<{ id: string; platform_id: string; order_id: string; rating: number;
+               review_text: string | null; action_status: string; customer_name: string | null }[]> {
+    if (!platformIds.length) return [];
+    const res = await pool.query(
+      `SELECT id, platform_id, order_id, rating, review_text, action_status, customer_name
+         FROM ratings
+        WHERE (customer_phone IS NULL OR customer_phone = '')
+          AND platform_id = ANY($1)
+        ORDER BY uploaded_at DESC NULLS LAST
+        LIMIT $2`,
+      [platformIds, limit]
+    );
+    return res.rows;
+  }
+
+  /** Write an enriched phone. Only fills a blank name — never overwrites one an agent typed. */
+  static async setRatingContact(id: string, phone: string, name?: string): Promise<void> {
+    await pool.query(
+      `UPDATE ratings
+          SET customer_phone = $2,
+              customer_name  = COALESCE(NULLIF(customer_name, ''), NULLIF($3, ''))
+        WHERE id = $1`,
+      [id, phone, name || ""]
+    );
+  }
+
   static async bulkAssignRatings(ids: string[], agentId: string | null): Promise<number> {
     if (!ids.length) return 0;
     const res = await pool.query("UPDATE ratings SET assigned_agent_id = $1 WHERE id = ANY($2)", [agentId, ids]);

@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB } from "./server/db.js";
+import { lookupOrders, enrichablePlatforms } from "./server/enrich.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -2128,7 +2129,27 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
     .map((u: any) => u.id);
   let rrPointer = 0;
 
-  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, errors: [] as { row: number; message: string }[] };
+  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, enriched: 0, errors: [] as { row: number; message: string }[] };
+
+  // Fill missing phones from our own scrapers BEFORE the triage below, because
+  // triage turns a 1-3 star row with no phone into an auto-closed row. Getting
+  // the phone first is what makes those rows callable tasks instead.
+  const enrichMap = new Map<string, { phone: string; name?: string }>();
+  {
+    const wanted = new Map<string, Set<string>>();   // platform (lower) -> order ids
+    for (const r of rows) {
+      const plat = pick(r, "Platform").trim().toLowerCase();
+      const oid = pick(r, "Order ID", "OrderID", "Order").trim();
+      if (!plat || !oid) continue;
+      if (normalisePhone(pick(r, "Phone Number"))) continue;   // already has one
+      if (!wanted.has(plat)) wanted.set(plat, new Set());
+      wanted.get(plat)!.add(oid);
+    }
+    for (const [plat, ids] of wanted) {
+      const hits = await lookupOrders(plat, [...ids]);
+      for (const [oid, hit] of hits) enrichMap.set(`${plat}|${oid}`, { phone: hit.phone, name: hit.name });
+    }
+  }
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -2151,7 +2172,12 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       if (!platform_id) { result.errors.push({ row: lineNum, message: `Unknown platform: ${platformName}` }); continue; }
 
       const review_text = pick(r, "Customer Comment");
-      const phone = normalisePhone(pick(r, "Phone Number"));
+      let phone = normalisePhone(pick(r, "Phone Number"));
+      let enrichedName = "";
+      if (!phone) {
+        const hit = enrichMap.get(`${platformName.trim().toLowerCase()}|${orderId.trim()}`);
+        if (hit) { phone = normalisePhone(hit.phone); enrichedName = hit.name || ""; result.enriched++; }
+      }
       // Auto-triage (no manual Status column):
       //   TASK       = has a comment (any rating) OR (rating 1-3 AND has a phone)
       //                -> pending, auto-assigned to an agent. A commented row with no phone is
@@ -2175,7 +2201,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
         customer_phone: phone || undefined,
         requires_action, action_status, assigned_agent_id, uploaded_by: req.user.id,
         order_date: normaliseExcelDate(pick(r, "Date")) || undefined,
-        customer_name: pick(r, "Customer Name") || undefined,
+        customer_name: pick(r, "Customer Name") || enrichedName || undefined,
         branch: pick(r, "Branch") || undefined,
         filled_by: pick(r, "Served By", "Filled By") || undefined,
         following_date: normaliseExcelDate(pick(r, "Following Date")) || undefined,
@@ -2239,6 +2265,96 @@ app.get("/api/feedback/dashboard", authenticateJWT, asyncHandler(async (req: any
   const toISO = to ? kwToUtc(to, true) : null;
   res.json(await DB.getFeedbackDashboard(fromISO, toISO));
 }));
+
+// ---------------------------------------------------------------------------
+//  Backfill: fill missing phones on reviews already in the table.
+//
+//  `retriage` is off by default. A 1-3 star row with no comment was auto-closed
+//  precisely because it had no phone; now that it has one it *would* qualify as
+//  a task, but flipping hundreds of closed rows into assigned work is a
+//  workload decision, not a technical one. Off = report how many would flip.
+// ---------------------------------------------------------------------------
+const CLOSED_NO_ACTION = "no_action_needed";
+
+async function runPhoneBackfill(opts: { limit: number; retriage: boolean; uploadedBy?: string }) {
+  const platforms = await DB.getPlatforms();
+  const enrichable = new Set(enrichablePlatforms());
+  const usable = platforms.filter((p: any) => enrichable.has(p.name.trim().toLowerCase()));
+  const summary = {
+    platforms: usable.map((p: any) => p.name),
+    scanned: 0, found: 0, filled: 0, retriaged: 0, would_retriage: 0,
+  };
+  if (!usable.length) return summary;
+
+  const idToName = new Map(usable.map((p: any) => [p.id, p.name.trim().toLowerCase()]));
+  const pending = await DB.getRatingsMissingPhone(usable.map((p: any) => p.id), opts.limit);
+  summary.scanned = pending.length;
+  if (!pending.length) return summary;
+
+  // One request per platform, not per row.
+  const byPlatform = new Map<string, string[]>();
+  for (const r of pending) {
+    const name = idToName.get(r.platform_id)!;
+    if (!byPlatform.has(name)) byPlatform.set(name, []);
+    byPlatform.get(name)!.push(r.order_id);
+  }
+  const hits = new Map<string, { phone: string; name?: string }>();
+  for (const [name, ids] of byPlatform) {
+    for (const [oid, hit] of await lookupOrders(name, ids)) hits.set(`${name}|${oid}`, hit);
+  }
+
+  // Agents for re-assignment, same round-robin rule the upload path uses.
+  const ccAgentIds = (await DB.getUsers())
+    .filter((u: any) => u.role === "agent" && u.status === "Active" && u.department === "Call Center")
+    .map((u: any) => u.id);
+  let rr = 0;
+
+  for (const r of pending) {
+    const hit = hits.get(`${idToName.get(r.platform_id)}|${r.order_id}`);
+    if (!hit?.phone) continue;
+    summary.found++;
+    await DB.setRatingContact(r.id, normalisePhone(hit.phone), hit.name);
+    summary.filled++;
+
+    const hasComment = !!(r.review_text && r.review_text.trim());
+    const nowQualifies = !hasComment && r.rating <= 3 && r.action_status === CLOSED_NO_ACTION;
+    if (!nowQualifies) continue;
+    if (!opts.retriage) { summary.would_retriage++; continue; }
+    await DB.updateRating(r.id, {
+      action_status: "pending",
+      assigned_agent_id: ccAgentIds.length ? ccAgentIds[rr++ % ccAgentIds.length] : null,
+      resolved_at: null,
+    });
+    summary.retriaged++;
+  }
+  return summary;
+}
+
+app.post("/api/ratings/backfill-phones", authenticateJWT, requireUpload, asyncHandler(async (req: any, res) => {
+  const limit = Math.min(Number(req.body?.limit) || 5000, 20000);
+  const retriage = req.body?.retriage === true;
+  const summary = await runPhoneBackfill({ limit, retriage, uploadedBy: req.user.id });
+  await DB.addAuditLog({
+    operator_id: req.user.id, operator_name: req.user.name || req.user.id,
+    operator_role: req.user.role, action: "ratings.backfill_phones",
+    details: `عمّر ${summary.filled} رقم من ${summary.scanned} سجل ناقص` +
+      (retriage ? ` · أعاد فتح ${summary.retriaged}` : ` · ${summary.would_retriage} مؤهّل لإعادة الفتح`),
+  }).catch(() => {});
+  res.json(summary);
+}));
+
+// Periodic retry. A review uploaded before the scraper saw that order finds
+// nothing on the first pass; the scraper catches the order minutes later.
+// Without this the row stays permanently blank. Recent rows only (newest
+// first inside the query), so this stays cheap.
+const ENRICH_EVERY_MIN = Number(process.env.ENRICH_RETRY_MINUTES || 60);
+if (ENRICH_EVERY_MIN > 0) {
+  setInterval(() => {
+    runPhoneBackfill({ limit: 1000, retriage: false })
+      .then((s) => { if (s.filled) console.log(`[enrich] عمّر ${s.filled} رقم تلقائياً`); })
+      .catch((e) => console.warn("[enrich] retry failed:", e?.message || e));
+  }, ENRICH_EVERY_MIN * 60000).unref?.();
+}
 
 // Delete reviews (admin only) — by ids, or all uploaded on a given Kuwait day
 app.post("/api/ratings/delete", authenticateJWT, asyncHandler(async (req: any, res) => {

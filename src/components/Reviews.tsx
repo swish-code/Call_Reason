@@ -34,8 +34,14 @@ interface CallAttempt {
 }
 interface UploadResult {
   total: number; inserted: number; duplicates: number; overwritten: number;
-  tasks?: number; auto_closed?: number;
+  tasks?: number; auto_closed?: number; enriched?: number;
   errors: { row: number; message: string }[];
+}
+
+// Result of /api/ratings/backfill-phones
+interface BackfillResult {
+  platforms: string[]; scanned: number; found: number; filled: number;
+  retriaged: number; would_retriage: number;
 }
 
 interface ReviewsProps { currentUser: User; }
@@ -145,6 +151,11 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploadError, setUploadError] = useState("");
+
+  // Backfill-phones state (fills blank phones from the Keeta/Snoonu scrapers)
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<BackfillResult | null>(null);
+  const [backfillError, setBackfillError] = useState("");
 
   // Detail state
   const [detailLoading, setDetailLoading] = useState(false);
@@ -293,6 +304,32 @@ export default function Reviews({ currentUser }: ReviewsProps) {
       setUploadError(e.message || "Upload error.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Ask the scrapers for phones on every review that still has none.
+  // First pass reports how many closed rows would reopen; a second click with
+  // retriage=true actually reopens them — kept explicit because it creates work.
+  const handleBackfill = async (retriage = false) => {
+    if (retriage && !window.confirm(
+      `Reopen ${backfillResult?.would_retriage ?? 0} auto-closed 1–3 star review(s) as tasks now that they have a phone?`
+    )) return;
+    setBackfilling(true);
+    setBackfillError("");
+    try {
+      const res = await apiFetch('/api/ratings/backfill-phones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ retriage }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setBackfillError(data.error || "Backfill failed."); return; }
+      setBackfillResult(data);
+      fetchRatings();
+    } catch (e: any) {
+      setBackfillError(e.message || "Backfill error.");
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -458,6 +495,14 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 <FileDown className="w-4 h-4" /> Template
               </button>
               <button
+                onClick={() => handleBackfill(false)}
+                disabled={backfilling}
+                title="Fill blank customer phones from the Keeta/Snoonu scrapers, matched by order id"
+                className="px-4 py-2.5 bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-50 border border-violet-500/20 text-violet-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
+              >
+                <Phone className="w-4 h-4" /> {backfilling ? 'Filling…' : 'Fill Phones'}
+              </button>
+              <button
                 onClick={() => { setShowUpload(true); setUploadResult(null); setUploadError(""); setUploadFile(null); }}
                 className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold rounded-2xl text-xs flex items-center gap-1.5 transition"
               >
@@ -476,6 +521,34 @@ export default function Reviews({ currentUser }: ReviewsProps) {
           )}
         </div>
       </div>
+
+      {/* Backfill-phones result banner */}
+      {(backfillResult || backfillError) && (
+        <div className={`mb-4 px-4 py-3 rounded-2xl border text-xs flex flex-wrap items-center gap-x-5 gap-y-2 ${backfillError ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-violet-500/10 border-violet-500/20 text-[var(--text)]'}`}>
+          {backfillError ? (
+            <span className="font-bold">{backfillError}</span>
+          ) : backfillResult && (
+            <>
+              <span><span className="text-[var(--muted)]">Platforms:</span> <b>{backfillResult.platforms.join(', ') || '— (none configured)'}</b></span>
+              <span><span className="text-[var(--muted)]">Missing phone:</span> <b>{backfillResult.scanned}</b></span>
+              <span><span className="text-[var(--muted)]">Found &amp; filled:</span> <b className="text-violet-400">{backfillResult.filled}</b></span>
+              {backfillResult.retriaged > 0 && (
+                <span><span className="text-[var(--muted)]">Reopened as tasks:</span> <b className="text-amber-400">{backfillResult.retriaged}</b></span>
+              )}
+              {backfillResult.would_retriage > 0 && (
+                <button
+                  onClick={() => handleBackfill(true)}
+                  disabled={backfilling}
+                  className="px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 font-bold rounded-xl transition active:scale-95 disabled:opacity-50"
+                >
+                  Reopen {backfillResult.would_retriage} auto-closed 1–3★ as tasks
+                </button>
+              )}
+            </>
+          )}
+          <button onClick={() => { setBackfillResult(null); setBackfillError(""); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
@@ -849,6 +922,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   <span className="text-[var(--muted)]">Overwritten:</span><span className="font-bold">{uploadResult.overwritten}</span>
                   <span className="text-[var(--muted)]">Tasks (assigned):</span><span className="font-bold text-amber-400">{uploadResult.tasks ?? 0}</span>
                   <span className="text-[var(--muted)]">Auto-closed:</span><span className="font-bold text-zinc-400">{uploadResult.auto_closed ?? 0}</span>
+                  <span className="text-[var(--muted)]">Phones filled:</span><span className="font-bold text-violet-400">{uploadResult.enriched ?? 0}</span>
                 </div>
                 {uploadResult.errors.length > 0 && (
                   <div className="mt-2 space-y-1">
