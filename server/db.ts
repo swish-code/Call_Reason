@@ -237,6 +237,26 @@ export class DB {
         related_ref TEXT,
         ip_address TEXT
       );
+      -- One row per file upload (ratings, survey numbers, survey records). The
+      -- generic audit_logs middleware only stores the route + a truncated body,
+      -- so the Audit page needs the counts and a batch id the data rows point
+      -- back to (upload_batch_id on ratings / survey_assignments / survey_records).
+      CREATE TABLE IF NOT EXISTS upload_batches (
+        id TEXT PRIMARY KEY,
+        upload_type TEXT NOT NULL,
+        sub_type TEXT,
+        ref_id TEXT,
+        ref_label TEXT,
+        uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        uploaded_by_name TEXT,
+        uploaded_at TIMESTAMPTZ DEFAULT now(),
+        total_rows INTEGER DEFAULT 0,
+        inserted INTEGER DEFAULT 0,
+        skipped INTEGER DEFAULT 0,
+        errors INTEGER DEFAULT 0,
+        tasks INTEGER DEFAULT 0,
+        reconstructed BOOLEAN DEFAULT false
+      );
       CREATE TABLE IF NOT EXISTS options (
         id TEXT PRIMARY KEY,
         list_key TEXT NOT NULL,
@@ -553,6 +573,13 @@ export class DB {
       -- reports to (plain column, set per-Agent from Users Management; NULL until
       -- a Supervisor assigns it, so every leader's "team" starts empty).
       ALTER TABLE users ADD COLUMN IF NOT EXISTS team_leader_id TEXT;
+      -- Audit page: which upload each row came from (see upload_batches).
+      ALTER TABLE ratings ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
+      ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
+      CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
+      CREATE INDEX IF NOT EXISTS idx_survey_records_upload_batch ON survey_records(upload_batch_id);
     `);
 
     // FM staff are supervised by Quality — move any existing FM accounts there
@@ -785,6 +812,63 @@ export class DB {
   static async getAuditLogs(): Promise<AuditLog[]> {
     const { rows } = await pool.query<AuditLog>("SELECT * FROM audit_logs ORDER BY timestamp DESC");
     return rows;
+  }
+
+  // ---- Upload batches (Audit page) ----
+  static async addUploadBatch(b: {
+    id: string; upload_type: string; sub_type?: string | null; ref_id?: string | null; ref_label?: string | null;
+    uploaded_by: string; uploaded_by_name?: string | null;
+    total_rows: number; inserted: number; skipped: number; errors: number; tasks?: number;
+  }): Promise<void> {
+    await pool.query(
+      `INSERT INTO upload_batches (id, upload_type, sub_type, ref_id, ref_label, uploaded_by, uploaded_by_name, uploaded_at, total_rows, inserted, skipped, errors, tasks)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$9,$10,$11,$12)`,
+      [b.id, b.upload_type, b.sub_type ?? null, b.ref_id ?? null, b.ref_label ?? null, b.uploaded_by, b.uploaded_by_name ?? null,
+       b.total_rows, b.inserted, b.skipped, b.errors, b.tasks ?? 0]
+    );
+  }
+
+  // Batches plus, per batch, how many of its rows have since reached a "done" state. What
+  // "done" means depends on the table: ratings = an actionable row that was closed (rows
+  // auto-closed at upload were never open, so they aren't counted as work done);
+  // survey numbers = any terminal call outcome; survey records = answered (fixed at upload).
+  static async getUploadBatches(filter: { type?: string; uploaded_by?: string; from?: string; to?: string } = {}): Promise<any[]> {
+    const clauses: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (filter.type) { clauses.push(`upload_type = $${idx++}`); values.push(filter.type); }
+    if (filter.uploaded_by) { clauses.push(`uploaded_by = $${idx++}`); values.push(filter.uploaded_by); }
+    if (filter.from) { clauses.push(`uploaded_at >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`uploaded_at <= $${idx++}`); values.push(filter.to); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const { rows: batches } = await pool.query(`SELECT * FROM upload_batches ${where} ORDER BY uploaded_at DESC LIMIT 2000`, values);
+    if (!batches.length) return [];
+
+    const ids = batches.map((b) => b.id);
+    const [rat, sa, sr] = await Promise.all([
+      pool.query(`
+        SELECT upload_batch_id AS id,
+               count(*) FILTER (WHERE requires_action)::int AS denominator,
+               count(*) FILTER (WHERE requires_action AND action_status IN ('resolved','no_action_needed','unreachable'))::int AS completed
+        FROM ratings WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
+      pool.query(`
+        SELECT upload_batch_id AS id,
+               count(*)::int AS denominator,
+               count(*) FILTER (WHERE status IN ('successful','unreachable','declined','refused','not_interested'))::int AS completed,
+               count(*) FILTER (WHERE status = 'successful')::int AS successful
+        FROM survey_assignments WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
+      pool.query(`
+        SELECT upload_batch_id AS id,
+               count(*)::int AS denominator,
+               count(*) FILTER (WHERE answered)::int AS completed
+        FROM survey_records WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
+    ]);
+    const stats = new Map<string, any>();
+    [...rat.rows, ...sa.rows, ...sr.rows].forEach((r) => stats.set(r.id, r));
+    return batches.map((b) => {
+      const s = stats.get(b.id) || {};
+      return { ...b, completed: s.completed ?? 0, denominator: s.denominator ?? 0, successful: s.successful ?? null };
+    });
   }
 
   static async addAuditLog(log: Omit<AuditLog, "id" | "timestamp">): Promise<AuditLog> {
@@ -1501,29 +1585,30 @@ export class DB {
     filled_by?: string; following_date?: string; surveyed_by?: string;
     complaint_type?: string; complaint_cases?: string; complaint_status?: string;
     served_by?: string; note?: string; assigned_agent_id?: string | null;
+    upload_batch_id?: string | null;
   }, mode: "skip" | "overwrite"): Promise<"inserted" | "skipped" | "overwritten"> {
     const id = "rat-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
     if (mode === "skip") {
       const res = await pool.query(`
-        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note,assigned_agent_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note,assigned_agent_id,upload_batch_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
         ON CONFLICT (brand_id,platform_id,order_id) DO NOTHING
-      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null,data.assigned_agent_id??null]);
+      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null,data.assigned_agent_id??null,data.upload_batch_id??null]);
       return (res.rowCount ?? 0) > 0 ? "inserted" : "skipped";
     } else {
       const res = await pool.query(`
-        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note,assigned_agent_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+        INSERT INTO ratings (id,brand_id,platform_id,order_id,rating,review_text,customer_phone,requires_action,action_status,uploaded_by,uploaded_at,order_date,customer_name,branch,filled_by,following_date,surveyed_by,complaint_type,complaint_cases,complaint_status,served_by,note,assigned_agent_id,upload_batch_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
         ON CONFLICT (brand_id,platform_id,order_id) DO UPDATE SET
           rating=EXCLUDED.rating,review_text=EXCLUDED.review_text,customer_phone=EXCLUDED.customer_phone,
           requires_action=EXCLUDED.requires_action,action_status=EXCLUDED.action_status,
-          uploaded_by=EXCLUDED.uploaded_by,uploaded_at=now(),
+          uploaded_by=EXCLUDED.uploaded_by,uploaded_at=now(),upload_batch_id=EXCLUDED.upload_batch_id,
           order_date=EXCLUDED.order_date,customer_name=EXCLUDED.customer_name,branch=EXCLUDED.branch,
           filled_by=EXCLUDED.filled_by,following_date=EXCLUDED.following_date,surveyed_by=EXCLUDED.surveyed_by,
           complaint_type=EXCLUDED.complaint_type,complaint_cases=EXCLUDED.complaint_cases,
           complaint_status=EXCLUDED.complaint_status,served_by=EXCLUDED.served_by,note=EXCLUDED.note
         RETURNING (xmax = 0) AS inserted
-      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null,data.assigned_agent_id??null]);
+      `, [id,data.brand_id,data.platform_id,data.order_id,data.rating,data.review_text||null,data.customer_phone||null,data.requires_action,data.action_status,data.uploaded_by,data.order_date||null,data.customer_name||null,data.branch||null,data.filled_by||null,data.following_date||null,data.surveyed_by||null,data.complaint_type||null,data.complaint_cases||null,data.complaint_status||null,data.served_by||null,data.note||null,data.assigned_agent_id??null,data.upload_batch_id??null]);
       return res.rows[0]?.inserted ? "inserted" : "overwritten";
     }
   }
@@ -1904,7 +1989,7 @@ export class DB {
     return m;
   }
 
-  static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment?: string | null }[]): Promise<number> {
+  static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment?: string | null }[], uploadBatchId?: string | null): Promise<number> {
     if (!rows.length) return 0;
     const client = await pool.connect();
     try {
@@ -1913,9 +1998,9 @@ export class DB {
         const a = rows[i];
         const id = "sasg-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(
-          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at)
-           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now())`,
-          [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date, a.segment || null]
+          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at,upload_batch_id)
+           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now(),$8)`,
+          [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date, a.segment || null, uploadBatchId ?? null]
         );
       }
       await client.query("COMMIT");
@@ -2366,7 +2451,7 @@ export class DB {
   // ----------------------------------------------------
   // Surveys — Records (uploaded results)
   // ----------------------------------------------------
-  static async addSurveyRecords(records: any[]): Promise<number> {
+  static async addSurveyRecords(records: any[], uploadBatchId?: string | null): Promise<number> {
     if (!records.length) return 0;
     const client = await pool.connect();
     try {
@@ -2375,13 +2460,13 @@ export class DB {
         const r = records[i];
         const id = "srec-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(`
-          INSERT INTO survey_records (id,record_type,brand_id,brand_label,platform_id,platform_label,order_id,phone,customer_name,item_name,rate,product_feedback,served_by,answered,customer_suggestion,comment,complaint,note,trials,segment,extra,record_date,uploaded_by,created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,now())
+          INSERT INTO survey_records (id,record_type,brand_id,brand_label,platform_id,platform_label,order_id,phone,customer_name,item_name,rate,product_feedback,served_by,answered,customer_suggestion,comment,complaint,note,trials,segment,extra,record_date,uploaded_by,created_at,upload_batch_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,now(),$24)
         `, [id, r.record_type, r.brand_id || null, r.brand_label || null, r.platform_id || null, r.platform_label || null,
             r.order_id || null, r.phone || null, r.customer_name || null, r.item_name || null,
             r.rate ?? null, r.product_feedback || null, r.served_by || null, !!r.answered,
             r.customer_suggestion || null, r.comment || null, r.complaint || null, r.note || null,
-            r.trials || null, r.segment || null, r.extra ? JSON.stringify(r.extra) : null, r.record_date || null, r.uploaded_by]);
+            r.trials || null, r.segment || null, r.extra ? JSON.stringify(r.extra) : null, r.record_date || null, r.uploaded_by, uploadBatchId ?? null]);
       }
       await client.query("COMMIT");
       return records.length;

@@ -148,6 +148,14 @@ const requireManagerOrAdmin = (req: any, res: any, next: any) => {
   }
 };
 
+const requireAdminOrSupervisor = (req: any, res: any, next: any) => {
+  if (req.user && (req.user.role === "admin" || req.user.role === "supervisor")) {
+    next();
+  } else {
+    res.status(403).json({ error: "This action requires Supervisor or Admin privileges." });
+  }
+};
+
 // Roles outside the old department/level system entirely — view-only Marketing,
 // and the Operations module's own separately-scoped hierarchy. Neither should
 // ever be implicitly swept in by a broad "not an agent" check.
@@ -2130,6 +2138,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   let rrPointer = 0;
 
   const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, enriched: 0, errors: [] as { row: number; message: string }[] };
+  const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
 
   // Fill missing phones from our own scrapers BEFORE the triage below, because
   // triage turns a 1-3 star row with no phone into an auto-closed row. Getting
@@ -2210,6 +2219,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
         complaint_cases: pick(r, "Complaint Cases") || undefined,
         complaint_status: pick(r, "Note", "Complaint Status") || undefined,
         served_by: pick(r, "Served By", "Filled By") || undefined,
+        upload_batch_id: uploadBatchId,
       }, mode as "skip" | "overwrite");
 
       if (outcome === "inserted") result.inserted++;
@@ -2220,6 +2230,15 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       result.errors.push({ row: lineNum, message: e.message || "Unknown error." });
     }
   }
+  // Overwritten rows now point at this batch too (upsert moves upload_batch_id), so they
+  // count with inserted — that keeps the batch's row count equal to what the Audit page
+  // finds when it joins back on upload_batch_id.
+  await DB.addUploadBatch({
+    id: uploadBatchId, upload_type: "ratings", sub_type: mode,
+    uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
+    total_rows: result.total, inserted: result.inserted + result.overwritten,
+    skipped: result.duplicates, errors: result.errors.length, tasks: result.tasks,
+  });
   res.json(result);
 }));
 
@@ -2741,6 +2760,22 @@ app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req
   res.json({ summary, leaders: leaderRows, trend, monthComparison });
 }));
 
+// Audit page — every file upload (ratings, survey numbers, survey records) with its counts
+// and, per batch, how many of its rows have since been completed.
+app.get("/api/audit/uploads", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
+  const kwToUtc = (dateStr: string, endOfDay: boolean) => {
+    const [y, mo, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0) - KW_OFFSET_MS).toISOString();
+  };
+  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? String(req.query[k]) : "");
+  res.json(await DB.getUploadBatches({
+    type: q("type") || undefined,
+    uploaded_by: q("uploaded_by") || undefined,
+    from: q("from") ? kwToUtc(q("from"), false) : undefined,
+    to: q("to") ? kwToUtc(q("to"), true) : undefined,
+  }));
+}));
+
 // ----------------------------------------------------
 // Surveys Module (Call Campaigns + Survey Records)
 // ----------------------------------------------------
@@ -3021,12 +3056,20 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     byDay.set(date, (byDay.get(date) || 0) + 1);
     toInsert.push({ campaign_id: campaign.id, brand_id: campaign.brand_id, customer_phone: cand.phone, assigned_agent_id: assignedAgent, scheduled_date: date, segment: cand.segment });
   }
-  result.inserted = await DB.addSurveyAssignments(toInsert);
+  const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
+  result.inserted = await DB.addSurveyAssignments(toInsert, uploadBatchId);
   result.scheduled = Array.from(byDay.entries()).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
   result.first_date = result.scheduled[0]?.date || "";
   // Today already at/over the limit → new numbers start on a later day (spec §5.2)
   result.today_full = candidates.length > 0 && (byDay.get(today) || 0) === 0;
   if (result.inserted > 0 && campaign.status === "pending") await DB.setSurveyCampaignStatus(campaign.id, "active");
+  await DB.addUploadBatch({
+    id: uploadBatchId, upload_type: "survey_numbers",
+    ref_id: campaign.id, ref_label: [campaign.brand_name, campaign.template_name].filter(Boolean).join(" · ") || null,
+    uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
+    total_rows: result.total, inserted: result.inserted,
+    skipped: result.duplicates_file + result.duplicates_10day + result.already_queued, errors: result.errors.length,
+  });
   res.json(result);
 }));
 
@@ -3214,7 +3257,14 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
       result.errors.push({ row: i + 2, message: e.message || "Unknown error." });
     }
   }
-  result.inserted = await DB.addSurveyRecords(records);
+  const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
+  result.inserted = await DB.addSurveyRecords(records, uploadBatchId);
+  await DB.addUploadBatch({
+    id: uploadBatchId, upload_type: "survey_records", sub_type: req.params.type,
+    uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
+    total_rows: result.total, inserted: result.inserted,
+    skipped: result.invalid, errors: result.errors.length,
+  });
   res.json(result);
 }));
 

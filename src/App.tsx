@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
 import { User, UserRole } from "./types.js";
 import UsersManagement from "./components/UsersManagement.tsx";
+import AuditUploads from "./components/AuditUploads.tsx";
 import Configuration from "./components/Configuration.tsx";
 import OpsLogForm from "./components/OpsLogForm.tsx";
 import OpsLogsList from "./components/OpsLogsList.tsx";
@@ -40,6 +41,7 @@ import {
   ChevronRight,
   UserCheck,
   ShieldAlert,
+  FileSearch,
   Loader2,
   Eye,
   EyeOff,
@@ -61,7 +63,7 @@ import {
   KeyRound
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
+type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
@@ -69,7 +71,7 @@ const PAGE_GROUP: Record<string, string> = {
   mytasks: "tasks", tasks: "tasks", pool: "tasks", tracker: "tasks", recurring: "tasks",
   reports: "insights", performance: "insights",
   reviews: "feedback", surveys: "feedback", feedbackdash: "feedback",
-  users: "admin", configuration: "admin",
+  users: "admin", configuration: "admin", audit: "admin",
 };
 
 export default function App() {
@@ -399,6 +401,7 @@ export default function App() {
   const isAdmin = role === "admin";
   const isManager = role === "manager";
   const isLeader = role === "leader";
+  const isSupervisor = role === "supervisor";
   const logsLabel = isAgent ? "My Logs" : isAdmin ? "All Logs" : "Team Logs";
 
   type NavItem = { page: ActivePage; label: string; icon: any; visible: boolean; onClick?: () => void; badge?: number; accent?: "amber" };
@@ -437,6 +440,7 @@ export default function App() {
     { type: "group", key: "admin", label: "Administration", icon: ShieldAlert, items: [
       { page: "users", label: "User Management", icon: ShieldAlert, visible: isAdmin || isManager, accent: "amber" },
       { page: "configuration", label: "Configuration", icon: SlidersHorizontal, visible: isAdmin },
+      { page: "audit", label: "Audit", icon: FileSearch, visible: isAdmin || isSupervisor },
     ] },
   ];
 
@@ -597,6 +601,7 @@ export default function App() {
               {activePage === "performance" && "Team Performance"}
               {activePage === "teamleaderkpi" && "Team Leader KPI"}
               {activePage === "users" && "User and Access Role Management"}
+              {activePage === "audit" && "Upload Audit"}
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
@@ -701,6 +706,9 @@ export default function App() {
           )}
           {activePage === "users" && currentUser.role !== "marketing" && !isOpsRole && (
             <UsersManagement currentUser={currentUser} />
+          )}
+          {activePage === "audit" && (isAdmin || isSupervisor) && (
+            <AuditUploads currentUser={currentUser} />
           )}
           {activePage === "configuration" && currentUser.role !== "marketing" && !isOpsRole && (
             <Configuration currentUser={currentUser} />
