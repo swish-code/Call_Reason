@@ -58,6 +58,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
   const [brandIds, setBrandIds] = useState<string[]>([]); // ops_manager: one or more brands
   const [branchIds, setBranchIds] = useState<string[]>([]); // area_manager: hand-picked branches
   const [branchFilterBrand, setBranchFilterBrand] = useState(""); // area_manager form: narrows the branch list below
+  const [teamLeaderId, setTeamLeaderId] = useState(""); // agent: which Team Leader they report to
   const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
 
@@ -97,7 +98,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setPassword("");
     setUserType("Call Center Agent");
     setStatus("Active");
-    setBranchId(""); setBrandIds([]); setBranchIds([]); setBranchFilterBrand("");
+    setBranchId(""); setBrandIds([]); setBranchIds([]); setBranchFilterBrand(""); setTeamLeaderId("");
     setError("");
     setIsModalOpen(true);
   };
@@ -109,7 +110,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
     setPassword(""); // don't fill password
     setUserType(userTypeLabel(user));
     setStatus(user.status || "Active");
-    setBranchId(user.branch_id || ""); setBrandIds(user.brand_ids || []); setBranchIds(user.branch_ids || []); setBranchFilterBrand("");
+    setBranchId(user.branch_id || ""); setBrandIds(user.brand_ids || []); setBranchIds(user.branch_ids || []); setBranchFilterBrand(""); setTeamLeaderId(user.team_leader_id || "");
     setError("");
     setIsModalOpen(true);
   };
@@ -139,6 +140,7 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
       branch_id: role === "branch_manager" ? (branchId || null) : null,
       brand_ids: role === "ops_manager" ? brandIds : [],
       branch_ids: role === "area_manager" ? branchIds : [],
+      team_leader_id: role === "agent" ? (teamLeaderId || null) : null,
       ...(password && { password })
     };
 
@@ -488,6 +490,22 @@ export default function UsersManagement({ currentUser }: UsersManagementProps) {
                   >
                     <option value="">— Select —</option>
                     {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name}{b.brand ? ` (${b.brand})` : ""}</option>))}
+                  </select>
+                </div>
+              )}
+
+              {resolveUserType(userType).role === "agent" && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[var(--muted)] block">Team Leader:</label>
+                  <select
+                    value={teamLeaderId}
+                    onChange={(e) => setTeamLeaderId(e.target.value)}
+                    className="w-full px-3 py-2 bg-[var(--surface-2)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="">— None —</option>
+                    {users
+                      .filter((u) => u.role === "leader" && u.department === resolveUserType(userType).department)
+                      .map((u) => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
                   </select>
                 </div>
               )}

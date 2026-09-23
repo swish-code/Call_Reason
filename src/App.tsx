@@ -7,6 +7,7 @@ import OpsLogsList from "./components/OpsLogsList.tsx";
 import OpsDashboard from "./components/OpsDashboard.tsx";
 import OpsReports from "./components/OpsReports.tsx";
 import PerformanceReport from "./components/PerformanceReport.tsx";
+import TeamLeaderKpi from "./components/TeamLeaderKpi.tsx";
 import HistoryLogs from "./components/HistoryLogs.tsx";
 import Tasks from "./components/Tasks.tsx";
 import RecurringTasks from "./components/RecurringTasks.tsx";
@@ -46,6 +47,7 @@ import {
   ShieldCheck,
   Zap,
   BarChart2,
+  Crown,
   Sun,
   Moon,
   Bell,
@@ -59,7 +61,7 @@ import {
   KeyRound
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
+type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "users" | "configuration" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
@@ -419,6 +421,7 @@ export default function App() {
     { type: "group", key: "insights", label: "Reports", icon: BarChart2, items: [
       { page: "reports", label: "Reports & Export", icon: FileText, visible: notAgent },
       { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
+      { page: "teamleaderkpi", label: "Team Leader KPI", icon: Crown, visible: notAgent },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
       { page: "feedbackdash", label: "Feedback Dashboard", icon: BarChart2, visible: notAgent },
@@ -590,6 +593,7 @@ export default function App() {
               {activePage === "dashboard" && "Dashboard Overview"}
               {activePage === "reports" && "Reports & Export"}
               {activePage === "performance" && "Team Performance"}
+              {activePage === "teamleaderkpi" && "Team Leader KPI"}
               {activePage === "users" && "User and Access Role Management"}
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
@@ -707,6 +711,9 @@ export default function App() {
           )}
           {activePage === "performance" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
             <PerformanceReport currentUser={currentUser} />
+          )}
+          {activePage === "teamleaderkpi" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
+            <TeamLeaderKpi currentUser={currentUser} />
           )}
           {activePage === "reviews" && !isOpsRole && (
             <Reviews currentUser={currentUser} />

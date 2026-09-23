@@ -130,6 +130,7 @@ export interface User {
   branch_id?: string | null;      // Operations module: set for branch_manager (exactly one branch)
   brand_ids?: string[] | null;    // Operations module: set for ops_manager (one or more brands; scope = every branch under them)
   branch_ids?: string[] | null;   // Operations module: set for area_manager (a hand-picked set of branches, any brand)
+  team_leader_id?: string | null; // Reporting link: set for agent (which Team Leader they report to)
   status: "Active" | "Inactive";
   can_upload?: boolean; // Agent may upload rating/survey Excel files
   work_type?: "calls" | "survey" | "both"; // Survey eligibility for the queue

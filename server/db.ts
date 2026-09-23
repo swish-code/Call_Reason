@@ -129,7 +129,7 @@ const SEED_INTERACTIONS: Interaction[] = [
 
 // Columns that may be updated through the API (whitelist guards against
 // arbitrary fields in request bodies being written to the table).
-const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "level", "job_title", "team", "department", "branch_id", "brand_ids", "branch_ids", "status", "created_by"] as const;
+const USER_UPDATE_COLS = ["full_name", "name", "username", "email", "password_hash", "role", "level", "job_title", "team", "department", "branch_id", "brand_ids", "branch_ids", "team_leader_id", "status", "created_by"] as const;
 const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_id", "agent_name", "customer_name", "customer_phone", "interaction_type", "communication_type", "call_direction", "brand", "category", "call_reason", "order_number", "branch", "team", "customer_type", "call_from", "aggregator_name", "comments", "complaint_reason", "fcr", "priority", "status", "summary", "action_taken", "follow_up_required", "follow_up_date", "follow_up_notes", "attachments", "created_at"] as const;
 
 const LOG_COLS = ["log_type", "department", "activity_type", "status", "agent_id", "agent_name", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "calls_reviewed", "created_at", "updated_at", "created_by"] as const;
@@ -549,6 +549,10 @@ export class DB {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS brand_ids JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_ids JSONB DEFAULT '[]'::jsonb;
+      -- Reporting link for the Team Leader KPI page: which Team Leader an Agent
+      -- reports to (plain column, set per-Agent from Users Management; NULL until
+      -- a Supervisor assigns it, so every leader's "team" starts empty).
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS team_leader_id TEXT;
     `);
 
     // FM staff are supervised by Quality — move any existing FM accounts there
@@ -733,9 +737,9 @@ export class DB {
 
   static async addUser(user: User): Promise<User> {
     const { rows } = await pool.query<User>(
-      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, level, job_title, team, department, branch_id, brand_ids, branch_ids, status, created_at, updated_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
-      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.level ?? null, user.job_title ?? null, user.team ?? "Call Center", user.department ?? null, user.branch_id ?? null, JSON.stringify(user.brand_ids ?? []), JSON.stringify(user.branch_ids ?? []), user.status, user.created_at, user.updated_at, user.created_by ?? null]
+      `INSERT INTO users (id, full_name, name, username, email, password_hash, role, level, job_title, team, department, branch_id, brand_ids, branch_ids, team_leader_id, status, created_at, updated_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+      [user.id, user.full_name, user.name ?? user.full_name, user.username, user.email, user.password_hash, user.role, user.level ?? null, user.job_title ?? null, user.team ?? "Call Center", user.department ?? null, user.branch_id ?? null, JSON.stringify(user.brand_ids ?? []), JSON.stringify(user.branch_ids ?? []), user.team_leader_id ?? null, user.status, user.created_at, user.updated_at, user.created_by ?? null]
     );
     return rows[0];
   }
@@ -1102,6 +1106,20 @@ export class DB {
     let idx = 1;
     if (filter.assigned_to) { clauses.push(`assigned_to = $${idx++}`); values.push(filter.assigned_to); }
     if (filter.department) { clauses.push(`department = $${idx++}`); values.push(filter.department); }
+    const where = `WHERE ${clauses.join(" AND ")}`;
+    const { rows } = await pool.query<AssignedTask>(`SELECT * FROM assigned_tasks ${where} ORDER BY created_at DESC`, values);
+    return rows;
+  }
+
+  // Team Leader KPI page: every task (any department, any assignee) created within an
+  // optional date range, for in-memory per-user aggregation — mirrors getAssignedTasks
+  // above but filters by created_at instead of assigned_to/department.
+  static async getAssignedTasksForKpi(from?: string, to?: string): Promise<AssignedTask[]> {
+    const clauses: string[] = ["status != 'Cancelled'"];
+    const values: any[] = [];
+    let idx = 1;
+    if (from) { clauses.push(`created_at >= $${idx++}`); values.push(from); }
+    if (to) { clauses.push(`created_at <= $${idx++}`); values.push(to); }
     const where = `WHERE ${clauses.join(" AND ")}`;
     const { rows } = await pool.query<AssignedTask>(`SELECT * FROM assigned_tasks ${where} ORDER BY created_at DESC`, values);
     return rows;

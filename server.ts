@@ -265,7 +265,7 @@ app.get("/api/users", authenticateJWT, requireLeaderManagerOrAdmin, asyncHandler
 }));
 
 app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(async (req, res) => {
-  const { full_name, username, password, role, status, team, department, branch_id, brand_ids, branch_ids } = req.body;
+  const { full_name, username, password, role, status, team, department, branch_id, brand_ids, branch_ids, team_leader_id } = req.body;
   const isOpsRole = role === "ops_manager" || role === "area_manager" || role === "branch_manager";
 
   if (!full_name || !username || !password || !role || !status) {
@@ -325,6 +325,7 @@ app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(asyn
     branch_id: role === "branch_manager" ? (branch_id || null) : null,
     brand_ids: role === "ops_manager" ? (Array.isArray(brand_ids) ? brand_ids : []) : [],
     branch_ids: role === "area_manager" ? (Array.isArray(branch_ids) ? branch_ids : []) : [],
+    team_leader_id: role === "agent" ? (team_leader_id || null) : null,
     status,
     created_at: nowString,
     updated_at: nowString,
@@ -347,7 +348,7 @@ app.post("/api/users", authenticateJWT, requireManagerOrAdmin, asyncHandler(asyn
 
 app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { full_name, username, email, role, status, password, team, department, level, job_title, branch_id, brand_ids, branch_ids } = req.body;
+  const { full_name, username, email, role, status, password, team, department, level, job_title, branch_id, brand_ids, branch_ids, team_leader_id } = req.body;
 
   const targetUser = await DB.getUserById(id);
   if (!targetUser) {
@@ -383,6 +384,7 @@ app.put("/api/users/:id", authenticateJWT, requireAdmin, asyncHandler(async (req
     branch_id: branch_id !== undefined ? (branch_id || null) : (targetUser as any).branch_id,
     brand_ids: brand_ids !== undefined ? (Array.isArray(brand_ids) ? brand_ids : []) : (targetUser as any).brand_ids,
     branch_ids: branch_ids !== undefined ? (Array.isArray(branch_ids) ? branch_ids : []) : (targetUser as any).branch_ids,
+    team_leader_id: team_leader_id !== undefined ? (team_leader_id || null) : (targetUser as any).team_leader_id,
   };
 
   if (password && password.trim() !== "") {
@@ -2485,6 +2487,49 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
   XLSX.utils.book_append_sheet(wb, ws, "Reviews");
   const file = XLSX.write(wb, { type: "base64", bookType: "xlsx", cellDates: true });
   res.json({ filename: `all_reviews_${new Date().toISOString().slice(0, 10)}.xlsx`, file, rows: rows.length });
+}));
+
+// Team Leader KPI dashboard — per Team Leader task counts, and (once Agents are
+// linked via Users Management) their team's counts nested underneath.
+app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "agent" || req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
+    return res.status(403).json({ error: "Access denied." });
+  }
+  const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
+  const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
+
+  const users = await DB.getUsers();
+  const leaders = users.filter((u) => u.role === "leader" && u.status !== "Inactive");
+  const tasks = await DB.getAssignedTasksForKpi(from, to);
+
+  const statsFor = (userId: string) => {
+    const mine = tasks.filter((t) => t.assigned_to === userId);
+    const completed = mine.filter((t) => t.status === "Completed");
+    const avgDurationSeconds = completed.length
+      ? Math.round(completed.reduce((a, t) => a + Number(t.duration_seconds || 0), 0) / completed.length)
+      : 0;
+    return { assigned: mine.length, completed: completed.length, pending: mine.length - completed.length, avgDurationSeconds };
+  };
+
+  const leaderRows = leaders.map((l) => {
+    const team = users
+      .filter((u) => u.role === "agent" && u.status !== "Inactive" && (u as any).team_leader_id === l.id)
+      .map((a) => ({ id: a.id, full_name: a.full_name, ...statsFor(a.id) }));
+    return { id: l.id, full_name: l.full_name, department: l.department || null, ...statsFor(l.id), team };
+  }).sort((a, b) => b.completed - a.completed);
+
+  const completedRows = leaderRows.filter((l) => l.completed > 0);
+  const summary = {
+    totalLeaders: leaderRows.length,
+    totalAssigned: leaderRows.reduce((a, l) => a + l.assigned, 0),
+    totalCompleted: leaderRows.reduce((a, l) => a + l.completed, 0),
+    totalPending: leaderRows.reduce((a, l) => a + l.pending, 0),
+    avgDurationSeconds: completedRows.length
+      ? Math.round(completedRows.reduce((a, l) => a + l.avgDurationSeconds, 0) / completedRows.length)
+      : 0,
+  };
+
+  res.json({ summary, leaders: leaderRows });
 }));
 
 // ----------------------------------------------------
