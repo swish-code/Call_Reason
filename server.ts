@@ -2520,20 +2520,39 @@ app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req
     (isExecutive(req.user) || u.department === req.user.department)
   );
   const tasks = await DB.getAssignedTasksForKpi(from, to);
+  const lastCompletedByUser = await DB.getLastCompletedAtByUser();
+  const nowISO = new Date().toISOString();
 
   const statsFor = (userId: string) => {
     const mine = tasks.filter((t) => t.assigned_to === userId);
     const completed = mine.filter((t) => t.status === "Completed");
+    const pendingTasks = mine.filter((t) => t.status !== "Completed");
+    const overdue = pendingTasks.filter((t) => t.due_date && t.due_date < nowISO).length;
+    const pendingByPriority = {
+      High: pendingTasks.filter((t) => t.priority === "High").length,
+      Medium: pendingTasks.filter((t) => t.priority === "Medium").length,
+      Low: pendingTasks.filter((t) => t.priority === "Low").length,
+    };
     const avgDurationSeconds = completed.length
       ? Math.round(completed.reduce((a, t) => a + Number(t.duration_seconds || 0), 0) / completed.length)
       : 0;
-    return { assigned: mine.length, completed: completed.length, pending: mine.length - completed.length, avgDurationSeconds };
+    const typeCounts: Record<string, number> = {};
+    completed.forEach((t) => { typeCounts[t.title] = (typeCounts[t.title] || 0) + 1; });
+    const topTaskTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([title, count]) => ({ title, count }));
+    return {
+      assigned: mine.length, completed: completed.length, pending: pendingTasks.length, overdue,
+      avgDurationSeconds, pendingByPriority, topTaskTypes,
+      lastCompletedAt: lastCompletedByUser[userId] || null,
+    };
   };
 
   const leaderRows = leaders.map((l) => {
     const team = users
       .filter((u) => u.role === "agent" && u.status !== "Inactive" && (u as any).team_leader_id === l.id)
-      .map((a) => ({ id: a.id, full_name: a.full_name, ...statsFor(a.id) }));
+      .map((a) => {
+        const { topTaskTypes, ...rest } = statsFor(a.id);
+        return { id: a.id, full_name: a.full_name, ...rest };
+      });
     return { id: l.id, full_name: l.full_name, department: l.department || null, ...statsFor(l.id), team };
   }).sort((a, b) => b.completed - a.completed);
 
@@ -2543,12 +2562,67 @@ app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req
     totalAssigned: leaderRows.reduce((a, l) => a + l.assigned, 0),
     totalCompleted: leaderRows.reduce((a, l) => a + l.completed, 0),
     totalPending: leaderRows.reduce((a, l) => a + l.pending, 0),
+    totalOverdue: leaderRows.reduce((a, l) => a + l.overdue, 0),
     avgDurationSeconds: completedRows.length
       ? Math.round(completedRows.reduce((a, l) => a + l.avgDurationSeconds, 0) / completedRows.length)
       : 0,
   };
 
-  res.json({ summary, leaders: leaderRows });
+  // 14-day completion trend — fixed window, independent of the page's own from/to filter.
+  const visibleIds = new Set(leaderRows.flatMap((l) => [l.id, ...l.team.map((m) => m.id)]));
+  const kwDay = (iso: string) => new Date(new Date(iso).getTime() + KW_OFFSET_MS).toISOString().slice(0, 10);
+  const kwDaysAgo = (n: number) => new Date(Date.now() + KW_OFFSET_MS - n * 86400000).toISOString().slice(0, 10);
+  const trendDays = Array.from({ length: 14 }, (_, i) => kwDaysAgo(13 - i));
+  const trendTasks = await DB.getAssignedTasksForKpi(kwToUtc(trendDays[0], false), kwToUtc(trendDays[13], true));
+  const trendMap: Record<string, number> = {};
+  trendDays.forEach((d) => { trendMap[d] = 0; });
+  trendTasks.forEach((t) => {
+    if (t.status === "Completed" && t.completed_at && visibleIds.has(t.assigned_to) && trendMap[kwDay(t.completed_at)] !== undefined) {
+      trendMap[kwDay(t.completed_at)]++;
+    }
+  });
+  const trend = trendDays.map((date) => ({ date, completed: trendMap[date] }));
+
+  // Month-over-month comparison — current vs previous calendar month (Kuwait time), same
+  // created_at semantics as the page's own filter for consistency.
+  const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const kwNow = new Date(Date.now() + KW_OFFSET_MS);
+  const curY = kwNow.getUTCFullYear(), curM = kwNow.getUTCMonth();
+  const prevRefDate = new Date(Date.UTC(curY, curM - 1, 1));
+  const prevY = prevRefDate.getUTCFullYear(), prevM = prevRefDate.getUTCMonth();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const monthRange = (y: number, m: number) => ({
+    start: `${y}-${pad(m + 1)}-01`,
+    end: new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10),
+  });
+  const curRange = monthRange(curY, curM);
+  const today10 = kwNow.toISOString().slice(0, 10);
+  const curEnd = today10 < curRange.end ? today10 : curRange.end;
+  const prevRange = monthRange(prevY, prevM);
+  const [curMonthTasks, prevMonthTasks] = await Promise.all([
+    DB.getAssignedTasksForKpi(kwToUtc(curRange.start, false), kwToUtc(curEnd, true)),
+    DB.getAssignedTasksForKpi(kwToUtc(prevRange.start, false), kwToUtc(prevRange.end, true)),
+  ]);
+  const summarizeMonth = (arr: any[]) => {
+    const visible = arr.filter((t) => visibleIds.has(t.assigned_to));
+    const completed = visible.filter((t) => t.status === "Completed");
+    return {
+      assigned: visible.length,
+      completed: completed.length,
+      pending: visible.length - completed.length,
+      avgDurationSeconds: completed.length
+        ? Math.round(completed.reduce((a, t) => a + Number(t.duration_seconds || 0), 0) / completed.length)
+        : 0,
+    };
+  };
+  const monthComparison = {
+    label: `${MONTH_NAMES[curM]} ${curY}`,
+    previousLabel: `${MONTH_NAMES[prevM]} ${prevY}`,
+    current: summarizeMonth(curMonthTasks),
+    previous: summarizeMonth(prevMonthTasks),
+  };
+
+  res.json({ summary, leaders: leaderRows, trend, monthComparison });
 }));
 
 // ----------------------------------------------------

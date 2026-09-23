@@ -1125,6 +1125,17 @@ export class DB {
     return rows;
   }
 
+  // Team Leader KPI page: last completion per user, all-time (independent of the page's
+  // own date filter, so "last activity" never disappears just because it's outside range).
+  static async getLastCompletedAtByUser(): Promise<Record<string, string>> {
+    const { rows } = await pool.query<{ assigned_to: string; last: string }>(
+      `SELECT assigned_to, MAX(completed_at) AS last FROM assigned_tasks WHERE status = 'Completed' AND assigned_to IS NOT NULL GROUP BY assigned_to`
+    );
+    const map: Record<string, string> = {};
+    rows.forEach((r) => { if (r.last) map[r.assigned_to] = r.last; });
+    return map;
+  }
+
   static async getAssignedTaskById(id: string): Promise<AssignedTask | undefined> {
     const { rows } = await pool.query<AssignedTask>("SELECT * FROM assigned_tasks WHERE id = $1 LIMIT 1", [id]);
     return rows[0];

@@ -9,6 +9,8 @@ interface TasksProps {
   currentUser: User;
   onSeen?: () => void;
   mode?: TaskMode;
+  initialAssignee?: string;       // deep link (e.g. from Team Leader KPI): pre-select a Tracker filter
+  clearInitialAssignee?: () => void;
 }
 
 // Each department's task options come from its own activity list
@@ -24,7 +26,7 @@ const DEPT_LEADER_TASK_KEY: Record<string, string> = {
   "Call Center": "cc_leader_task",
 };
 
-export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
+export default function Tasks({ currentUser, onSeen, mode, initialAssignee, clearInitialAssignee }: TasksProps) {
   const isAgent = currentUser.role === "agent";
   const view: TaskMode = mode || (isAgent ? "mine" : "assign");
   const isManager = view !== "mine"; // assign / tracker are the management views
@@ -173,9 +175,13 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
 
   // ---- Tracker filters: role (Agent/Team Leader), specific assignee, due-date range ----
   const [trackerRole, setTrackerRole] = useState<"" | "agent" | "leader">("");
-  const [trackerAssignee, setTrackerAssignee] = useState("");
+  const [trackerAssignee, setTrackerAssignee] = useState(initialAssignee || "");
   const [trackerFrom, setTrackerFrom] = useState("");
   const [trackerTo, setTrackerTo] = useState("");
+
+  // Consume a deep-linked assignee once (e.g. "View Tasks" from Team Leader KPI) so a later,
+  // ordinary visit to Tracker via the sidebar starts unfiltered instead of replaying it.
+  useEffect(() => { if (initialAssignee) clearInitialAssignee?.(); }, []);
   const roleById = new Map(agents.map((a) => [a.id, a.role]));
   const trackerAssigneeOptions = trackerRole ? agents.filter((a) => a.role === trackerRole) : agents;
   const displayedTasks = view !== "tracker" ? visibleTasks : visibleTasks.filter((t) => {

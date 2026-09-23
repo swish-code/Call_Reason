@@ -75,6 +75,8 @@ const PAGE_GROUP: Record<string, string> = {
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
+  // Deep link: "View Tasks" from Team Leader KPI pre-filters Task Tracker to that person.
+  const [trackerFocusUserId, setTrackerFocusUserId] = useState("");
   const [showChangePassword, setShowChangePassword] = useState(false);
   // Open by default on desktop, closed (drawer) on mobile
   const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 768 : true));
@@ -689,7 +691,7 @@ export default function App() {
             <Tasks currentUser={currentUser} mode="assign" />
           )}
           {activePage === "tracker" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
-            <Tasks currentUser={currentUser} mode="tracker" />
+            <Tasks currentUser={currentUser} mode="tracker" initialAssignee={trackerFocusUserId} clearInitialAssignee={() => setTrackerFocusUserId("")} />
           )}
           {activePage === "recurring" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
             <RecurringTasks currentUser={currentUser} />
@@ -713,7 +715,7 @@ export default function App() {
             <PerformanceReport currentUser={currentUser} />
           )}
           {activePage === "teamleaderkpi" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
-            <TeamLeaderKpi currentUser={currentUser} />
+            <TeamLeaderKpi currentUser={currentUser} onViewTasks={(id) => { setTrackerFocusUserId(id); setActivePage("tracker"); }} />
           )}
           {activePage === "reviews" && !isOpsRole && (
             <Reviews currentUser={currentUser} />

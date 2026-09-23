@@ -2,19 +2,38 @@ import React, { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Crown, ListChecks, Hourglass, Timer, Users2, ChevronRight, Filter, X, Download, AlertCircle, UserCog } from "lucide-react";
+import {
+  Crown, ListChecks, Hourglass, Timer, Users2, ChevronRight, Filter, X, Download, AlertCircle, UserCog,
+  ArrowUp, ArrowDown, ArrowUpRight, TrendingUp, AlertTriangle, Search,
+} from "lucide-react";
 import TeamOfTheMonth from "./TeamOfTheMonth.tsx";
 
-interface Props { currentUser: User; }
+interface Props { currentUser: User; onViewTasks?: (userId: string) => void; }
 
-interface MemberStat { id: string; full_name: string; assigned: number; completed: number; pending: number; avgDurationSeconds: number; }
-interface LeaderStat extends MemberStat { department: string | null; team: MemberStat[]; }
+interface Priority { High: number; Medium: number; Low: number; }
+interface MemberStat {
+  id: string; full_name: string;
+  assigned: number; completed: number; pending: number; overdue: number;
+  avgDurationSeconds: number; lastCompletedAt: string | null; pendingByPriority: Priority;
+}
+interface LeaderStat extends MemberStat { department: string | null; team: MemberStat[]; topTaskTypes: { title: string; count: number }[]; }
+interface MonthSummary { assigned: number; completed: number; pending: number; avgDurationSeconds: number; }
 interface KpiData {
-  summary: { totalLeaders: number; totalAssigned: number; totalCompleted: number; totalPending: number; avgDurationSeconds: number };
+  summary: { totalLeaders: number; totalAssigned: number; totalCompleted: number; totalPending: number; totalOverdue: number; avgDurationSeconds: number };
   leaders: LeaderStat[];
+  trend: { date: string; completed: number }[];
+  monthComparison: { label: string; previousLabel: string; current: MonthSummary; previous: MonthSummary };
 }
 
-export default function TeamLeaderKpi({ currentUser }: Props) {
+const fmtDur = (s: number) => {
+  if (!s) return "—";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${s}s`;
+};
+const pct = (completed: number, assigned: number) => (assigned ? Math.round((completed / assigned) * 100) : 0);
+const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : null);
+
+export default function TeamLeaderKpi({ currentUser, onViewTasks }: Props) {
   const [d, setD] = useState<KpiData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -22,6 +41,7 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
   const [to, setTo] = useState("");
   const [activePeriod, setActivePeriod] = useState<"today" | "week" | "month" | "">("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const kwToday = () => new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const kwWeekStart = () => { const kw = new Date(Date.now() + 3 * 60 * 60 * 1000); kw.setUTCDate(kw.getUTCDate() - kw.getUTCDay()); return kw.toISOString().slice(0, 10); };
@@ -49,12 +69,6 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
   };
   const clearFilter = () => { setFrom(""); setTo(""); setActivePeriod(""); load("", ""); };
 
-  const fmtDur = (s: number) => {
-    if (!s) return "—";
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${s}s`;
-  };
-
   const exportExcel = () => {
     if (!d) return;
     const wb = XLSX.utils.book_new();
@@ -69,20 +83,22 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
       ["Tasks Assigned", d.summary.totalAssigned],
       ["Tasks Completed", d.summary.totalCompleted],
       ["Tasks Pending", d.summary.totalPending],
+      ["Tasks Overdue", d.summary.totalOverdue],
       ["Avg Completion Time", fmtDur(d.summary.avgDurationSeconds)],
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "Summary");
 
-    const header = ["Team Leader", "Department", "Assigned", "Completed", "Pending", "Avg Time", "Agent", "Agent Assigned", "Agent Completed", "Agent Pending", "Agent Avg Time"];
+    const header = ["Team Leader", "Department", "Assigned", "Completed", "Completion %", "Pending", "Overdue", "Avg Time", "Agent", "Agent Assigned", "Agent Completed", "Agent Completion %", "Agent Pending", "Agent Overdue", "Agent Avg Time"];
     const rows: any[][] = [];
     d.leaders.forEach((l) => {
+      const base = [l.full_name, l.department || "", l.assigned, l.completed, `${pct(l.completed, l.assigned)}%`, l.pending, l.overdue, fmtDur(l.avgDurationSeconds)];
       if (l.team.length === 0) {
-        rows.push([l.full_name, l.department || "", l.assigned, l.completed, l.pending, fmtDur(l.avgDurationSeconds), "", "", "", "", ""]);
+        rows.push([...base, "", "", "", "", "", "", ""]);
       } else {
         l.team.forEach((m, i) => {
           rows.push([
-            i === 0 ? l.full_name : "", i === 0 ? (l.department || "") : "", i === 0 ? l.assigned : "", i === 0 ? l.completed : "", i === 0 ? l.pending : "", i === 0 ? fmtDur(l.avgDurationSeconds) : "",
-            m.full_name, m.assigned, m.completed, m.pending, fmtDur(m.avgDurationSeconds),
+            ...(i === 0 ? base : ["", "", "", "", "", "", "", ""]),
+            m.full_name, m.assigned, m.completed, `${pct(m.completed, m.assigned)}%`, m.pending, m.overdue, fmtDur(m.avgDurationSeconds),
           ]);
         });
       }
@@ -96,17 +112,78 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
   if (!d) return null;
 
   const s = d.summary;
+  const mc = d.monthComparison;
   const ranked = [...d.leaders].sort((a, b) => b.completed - a.completed);
   const maxCompleted = Math.max(...ranked.map((l) => l.completed), 1);
+  const maxTrend = Math.max(...d.trend.map((t) => t.completed), 1);
 
-  const Card = ({ label, value, icon: Icon, tone }: { label: string; value: any; icon: any; tone: string }) => (
+  const query = search.trim().toLowerCase();
+  const matchesQuery = (name: string) => !query || name.toLowerCase().includes(query);
+  const filteredRanked = !query ? ranked : ranked.filter((l) => matchesQuery(l.full_name) || l.team.some((m) => matchesQuery(m.full_name)));
+
+  const Card = ({ label, value, icon: Icon, tone, delta }: { label: string; value: any; icon: any; tone: string; delta?: React.ReactNode }) => (
     <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl flex items-center gap-4">
-      <div className={`p-3 rounded-xl bg-opacity-10 ${tone} bg-current/10`}><Icon className={`w-6 h-6 ${tone}`} /></div>
-      <div>
+      <div className={`p-3 rounded-xl bg-opacity-10 ${tone} bg-current/10 shrink-0`}><Icon className={`w-6 h-6 ${tone}`} /></div>
+      <div className="min-w-0">
         <p className="text-[10px] text-[var(--muted)] font-bold uppercase">{label}</p>
         <h3 className="text-2xl font-bold text-[var(--heading)] tracking-tight font-mono">{value}</h3>
+        {delta}
       </div>
     </div>
+  );
+
+  // invert=true means a lower number is the good direction (Pending, Overdue, Avg Time)
+  const Delta = ({ current, previous, invert = false, format = (n: number) => String(n) }: { current: number; previous: number; invert?: boolean; format?: (n: number) => string }) => {
+    const diff = current - previous;
+    if (diff === 0) return <span className="text-[10px] text-[var(--muted)]">No change vs {mc.previousLabel}</span>;
+    const up = diff > 0;
+    const good = invert ? !up : up;
+    const Icon = up ? ArrowUp : ArrowDown;
+    return (
+      <span className={`text-[10px] font-bold inline-flex items-center gap-0.5 ${good ? "text-emerald-400" : "text-rose-400"}`}>
+        <Icon className="w-3 h-3" /> {format(Math.abs(diff))} vs {mc.previousLabel}
+      </span>
+    );
+  };
+
+  const PriorityChips = ({ p }: { p: Priority }) => (
+    <span className="inline-flex items-center gap-1.5 font-mono text-[10px]">
+      <span className={p.High > 0 ? "text-rose-400 font-bold" : "text-[var(--muted)]"}>H{p.High}</span>
+      <span className={p.Medium > 0 ? "text-amber-400 font-bold" : "text-[var(--muted)]"}>M{p.Medium}</span>
+      <span className={p.Low > 0 ? "text-[var(--text)] font-bold" : "text-[var(--muted)]"}>L{p.Low}</span>
+    </span>
+  );
+
+  const InactiveChip = ({ lastCompletedAt }: { lastCompletedAt: string | null }) => {
+    const ds = daysSince(lastCompletedAt);
+    if (ds !== null && ds < 3) return null;
+    return (
+      <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-md text-[9px] font-bold shrink-0">
+        {ds === null ? "No activity yet" : `Inactive ${ds}d`}
+      </span>
+    );
+  };
+
+  const ViewTasksBtn = ({ id }: { id: string }) => onViewTasks ? (
+    <button onClick={(e) => { e.stopPropagation(); onViewTasks(id); }} title="View this person's tasks in Task Tracker"
+      className="p-1 text-[var(--muted)] hover:text-amber-400 transition"><ArrowUpRight className="w-3.5 h-3.5" /></button>
+  ) : null;
+
+  const StatRow: React.FC<{ m: MemberStat; indent: boolean }> = ({ m, indent }) => (
+    <tr key={m.id} className={indent ? "border-b border-[var(--border)]/30 bg-[var(--surface-2)]/30" : undefined}>
+      <td className={`py-2 px-2 ${indent ? "pl-8 text-[var(--text)]" : ""}`}>
+        <span className="inline-flex items-center gap-1.5 flex-wrap">
+          {indent && "↳"} {m.full_name} <InactiveChip lastCompletedAt={m.lastCompletedAt} />
+        </span>
+      </td>
+      <td className="py-2 px-2 text-center font-mono text-blue-400">{m.assigned}</td>
+      <td className="py-2 px-2 text-center font-mono text-emerald-400">{m.completed} <span className="text-[var(--muted)]">({pct(m.completed, m.assigned)}%)</span></td>
+      <td className="py-2 px-2 text-center font-mono text-[var(--muted)]">{m.pending}</td>
+      <td className="py-2 px-2 text-center font-mono">{m.overdue > 0 ? <span className="text-rose-400 font-bold">{m.overdue}</span> : <span className="text-[var(--muted)]">0</span>}</td>
+      <td className="py-2 px-2 text-center"><PriorityChips p={m.pendingByPriority} /></td>
+      <td className="py-2 px-2 text-center font-mono text-[var(--muted)]">{fmtDur(m.avgDurationSeconds)}</td>
+      <td className="py-2 px-2 text-center"><ViewTasksBtn id={m.id} /></td>
+    </tr>
   );
 
   return (
@@ -144,23 +221,31 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
         {(from || to) && <span className="text-[11px] text-[var(--muted)] font-medium ml-auto">Showing {from || "start"} → {to || "today"}</span>}
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Search */}
+      <div className="relative">
+        <Search className="w-4 h-4 text-[var(--muted)] absolute left-4 top-1/2 -translate-y-1/2" />
+        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search a Team Leader or Agent by name…"
+          className="w-full pl-11 pr-4 py-3 bg-[var(--surface)] text-[var(--heading)] border border-[var(--border)] rounded-2xl text-sm shadow-lg focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+      </div>
+
+      {/* Summary cards, with month-over-month deltas */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <Card label="Team Leaders" value={s.totalLeaders} icon={Crown} tone="text-amber-400" />
-        <Card label="Tasks Completed" value={s.totalCompleted} icon={ListChecks} tone="text-emerald-400" />
-        <Card label="Tasks Pending" value={s.totalPending} icon={Hourglass} tone="text-blue-400" />
-        <Card label="Avg Completion Time" value={fmtDur(s.avgDurationSeconds)} icon={Timer} tone="text-sky-400" />
+        <Card label="Tasks Completed" value={s.totalCompleted} icon={ListChecks} tone="text-emerald-400" delta={<Delta current={mc.current.completed} previous={mc.previous.completed} />} />
+        <Card label="Tasks Pending" value={s.totalPending} icon={Hourglass} tone="text-blue-400" delta={<Delta current={mc.current.pending} previous={mc.previous.pending} invert />} />
+        <Card label="Overdue" value={s.totalOverdue} icon={AlertTriangle} tone="text-rose-400" />
+        <Card label="Avg Completion Time" value={fmtDur(s.avgDurationSeconds)} icon={Timer} tone="text-sky-400" delta={<Delta current={mc.current.avgDurationSeconds} previous={mc.previous.avgDurationSeconds} invert format={fmtDur} />} />
       </div>
 
       {/* Completion chart: bar chart per leader + overall completion ring */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
           <h2 className="text-md font-bold text-[var(--heading)] mb-6 flex items-center gap-2"><Crown className="w-5 h-5 text-amber-400" /> Tasks Completed by Team Leader</h2>
-          {ranked.length === 0 ? (
-            <div className="text-center py-10 text-[var(--muted)] text-xs">No Team Leaders yet.</div>
+          {filteredRanked.length === 0 ? (
+            <div className="text-center py-10 text-[var(--muted)] text-xs">{query ? "No match." : "No Team Leaders yet."}</div>
           ) : (
             <div className="flex items-end justify-between gap-3 h-48">
-              {ranked.map((l) => (
+              {filteredRanked.map((l) => (
                 <div key={l.id} className="flex-1 flex flex-col items-center justify-end gap-2 h-full">
                   <span className="text-xs font-mono font-bold text-amber-400">{l.completed}</span>
                   <div className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-lg" style={{ height: `${Math.max(Math.round((l.completed / maxCompleted) * 100), l.completed > 0 ? 6 : 2)}%` }}></div>
@@ -174,9 +259,9 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
           <h2 className="text-md font-bold text-[var(--heading)] mb-4 self-start flex items-center gap-2"><ListChecks className="w-5 h-5 text-amber-400" /> Overall Completion</h2>
           {(() => {
             const total = s.totalCompleted + s.totalPending;
-            const pct = total ? Math.round((s.totalCompleted / total) * 100) : 0;
+            const p = total ? Math.round((s.totalCompleted / total) * 100) : 0;
             const r = 42, c = 2 * Math.PI * r;
-            const dash = (pct / 100) * c;
+            const dash = (p / 100) * c;
             return (
               <div className="relative w-32 h-32">
                 <svg viewBox="0 0 100 100" className="w-32 h-32 -rotate-90">
@@ -184,7 +269,7 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
                   <circle cx="50" cy="50" r={r} fill="none" strokeWidth="10" strokeLinecap="round" className="stroke-amber-500" strokeDasharray={`${dash} ${c - dash}`} />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-2xl font-extrabold text-[var(--heading)] font-mono">{pct}%</span>
+                  <span className="text-2xl font-extrabold text-[var(--heading)] font-mono">{p}%</span>
                   <span className="text-[9px] font-bold text-[var(--muted)] uppercase">Completed</span>
                 </div>
               </div>
@@ -194,11 +279,25 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
         </div>
       </div>
 
+      {/* 14-day completion trend */}
+      <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+        <h2 className="text-md font-bold text-[var(--heading)] mb-6 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-amber-400" /> Completion Trend · last 14 days</h2>
+        <div className="flex items-end justify-between gap-1.5 h-36">
+          {d.trend.map((t) => (
+            <div key={t.date} className="flex-1 flex flex-col items-center justify-end gap-1.5 h-full">
+              <span className="text-[9px] font-mono font-bold text-amber-400">{t.completed || ""}</span>
+              <div className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-md" style={{ height: `${Math.max(Math.round((t.completed / maxTrend) * 100), t.completed > 0 ? 4 : 1)}%` }}></div>
+              <span className="text-[9px] font-mono text-[var(--muted)]">{t.date.slice(8, 10)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Team Leaders table — click a row to reveal their team */}
       <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
         <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Users2 className="w-5 h-5 text-amber-400" /> Team Leaders</h2>
-        {ranked.length === 0 ? (
-          <div className="text-center py-6 text-[var(--muted)] text-xs">No Team Leaders yet.</div>
+        {filteredRanked.length === 0 ? (
+          <div className="text-center py-6 text-[var(--muted)] text-xs">{query ? "No match." : "No Team Leaders yet."}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -208,13 +307,18 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
                   <th className="text-center py-2 px-2">Assigned</th>
                   <th className="text-center py-2 px-2">Completed</th>
                   <th className="text-center py-2 px-2">Pending</th>
+                  <th className="text-center py-2 px-2">Overdue</th>
+                  <th className="text-center py-2 px-2">Pending Priority</th>
                   <th className="text-center py-2 px-2">Avg Time</th>
+                  <th className="text-center py-2 px-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {ranked.map((l) => {
-                  const open = expanded === l.id;
+                {filteredRanked.map((l) => {
                   const hasTeam = l.team.length > 0;
+                  const autoOpen = !!query && !matchesQuery(l.full_name) && l.team.some((m) => matchesQuery(m.full_name));
+                  const open = autoOpen || expanded === l.id;
+                  const visibleTeam = !query ? l.team : l.team.filter((m) => matchesQuery(m.full_name) || matchesQuery(l.full_name));
                   return (
                     <React.Fragment key={l.id}>
                       <tr
@@ -223,26 +327,29 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
                         title={hasTeam ? (open ? "Hide team" : "Show team") : "No agents linked to this Team Leader yet"}
                       >
                         <td className="py-2.5 px-2 font-bold text-[var(--heading)]">
-                          <span className="inline-flex items-center gap-1.5">
-                            {hasTeam && <ChevronRight className={`w-3.5 h-3.5 text-[var(--muted)] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />}
-                            {l.full_name}
-                            {l.department && <span className="text-[10px] font-normal text-[var(--muted)]">· {l.department}</span>}
-                          </span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="inline-flex items-center gap-1.5 flex-wrap">
+                              {hasTeam && <ChevronRight className={`w-3.5 h-3.5 text-[var(--muted)] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />}
+                              {l.full_name}
+                              {l.department && <span className="text-[10px] font-normal text-[var(--muted)]">· {l.department}</span>}
+                              <InactiveChip lastCompletedAt={l.lastCompletedAt} />
+                            </span>
+                            {open && l.topTaskTypes.length > 0 && (
+                              <span className="text-[10px] font-normal text-[var(--muted)] pl-5">
+                                Top: {l.topTaskTypes.map((t) => `${t.title} (${t.count})`).join(", ")}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2.5 px-2 text-center font-mono text-blue-400">{l.assigned}</td>
-                        <td className="py-2.5 px-2 text-center font-mono text-emerald-400">{l.completed}</td>
-                        <td className="py-2.5 px-2 text-center font-mono text-amber-400">{l.pending}</td>
+                        <td className="py-2.5 px-2 text-center font-mono text-emerald-400">{l.completed} <span className="text-[var(--muted)]">({pct(l.completed, l.assigned)}%)</span></td>
+                        <td className="py-2.5 px-2 text-center font-mono text-[var(--muted)]">{l.pending}</td>
+                        <td className="py-2.5 px-2 text-center font-mono">{l.overdue > 0 ? <span className="text-rose-400 font-bold">{l.overdue}</span> : <span className="text-[var(--muted)]">0</span>}</td>
+                        <td className="py-2.5 px-2 text-center"><PriorityChips p={l.pendingByPriority} /></td>
                         <td className="py-2.5 px-2 text-center font-mono text-[var(--muted)]">{fmtDur(l.avgDurationSeconds)}</td>
+                        <td className="py-2.5 px-2 text-center"><ViewTasksBtn id={l.id} /></td>
                       </tr>
-                      {open && l.team.map((m) => (
-                        <tr key={m.id} className="border-b border-[var(--border)]/30 bg-[var(--surface-2)]/30">
-                          <td className="py-2 pl-8 text-[var(--text)]">↳ {m.full_name}</td>
-                          <td className="py-2 text-center font-mono text-[var(--muted)]">{m.assigned}</td>
-                          <td className="py-2 text-center font-mono text-[var(--muted)]">{m.completed}</td>
-                          <td className="py-2 text-center font-mono text-[var(--muted)]">{m.pending}</td>
-                          <td className="py-2 text-center font-mono text-[var(--muted)]">{fmtDur(m.avgDurationSeconds)}</td>
-                        </tr>
-                      ))}
+                      {open && visibleTeam.map((m) => <StatRow key={m.id} m={m} indent />)}
                     </React.Fragment>
                   );
                 })}
