@@ -2499,7 +2499,13 @@ app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req
   const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
 
   const users = await DB.getUsers();
-  const leaders = users.filter((u) => u.role === "leader" && u.status !== "Inactive");
+  // Executives (Assistant Manager+, admin, owner) see every department; a Supervisor or
+  // Leader only sees Team Leaders in their own department, matching every other page's
+  // department scoping (e.g. GET /api/tasks).
+  const leaders = users.filter((u) =>
+    u.role === "leader" && u.status !== "Inactive" &&
+    (isExecutive(req.user) || u.department === req.user.department)
+  );
   const tasks = await DB.getAssignedTasksForKpi(from, to);
 
   const statsFor = (userId: string) => {
