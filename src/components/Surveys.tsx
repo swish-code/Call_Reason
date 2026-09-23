@@ -1,15 +1,16 @@
 import { useState, type ReactNode } from "react";
 import { User } from "../types.js";
-import { Megaphone, ListChecks, ClipboardList, Database, LayoutList } from "lucide-react";
+import { Megaphone, ListChecks, ClipboardList, Database, LayoutList, BarChart2 } from "lucide-react";
 import SurveyCampaigns from "./SurveyCampaigns.tsx";
 import SurveyQueue from "./SurveyQueue.tsx";
 import SurveyTemplates from "./SurveyTemplates.tsx";
 import SurveysData from "./SurveysData.tsx";
 import AllSurveys from "./AllSurveys.tsx";
+import SurveysDashboard from "./SurveysDashboard.tsx";
 
 interface SurveysProps { currentUser: User; }
 
-type Tab = "campaigns" | "queue" | "all" | "templates" | "data";
+type Tab = "dashboard" | "campaigns" | "queue" | "all" | "templates" | "data";
 
 export default function Surveys({ currentUser }: SurveysProps) {
   const role = currentUser.role;
@@ -17,6 +18,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
   const isMarketing = role === "marketing";
 
   const tabs: { key: Tab; label: string; icon: ReactNode; visible: boolean }[] = [
+    { key: "dashboard", label: "Dashboard", icon: <BarChart2 className="w-4 h-4" />, visible: !isAgent && !isMarketing },
     { key: "campaigns", label: "Campaigns", icon: <Megaphone className="w-4 h-4" />, visible: !isAgent && !isMarketing },
     { key: "queue", label: "Survey Queue", icon: <ListChecks className="w-4 h-4" />, visible: !isMarketing },
     { key: "all", label: "All Surveys", icon: <LayoutList className="w-4 h-4" />, visible: !isAgent },
@@ -50,6 +52,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
       </div>
 
       {/* Content */}
+      {activeTab === "dashboard" && <SurveysDashboard currentUser={currentUser} />}
       {activeTab === "campaigns" && <SurveyCampaigns currentUser={currentUser} />}
       {activeTab === "queue" && <SurveyQueue currentUser={currentUser} />}
       {activeTab === "all" && <AllSurveys currentUser={currentUser} />}

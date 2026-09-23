@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Star, MessageSquare, ClipboardList, CheckCircle2, AlertCircle, Users, Filter, X, PhoneCall, Flag, Megaphone, ThumbsUp, ChevronRight } from "lucide-react";
+import { Star, MessageSquare, ClipboardList, CheckCircle2, AlertCircle, Users, Filter, X, PhoneCall, Flag, Megaphone, ChevronRight } from "lucide-react";
 
 interface Props { currentUser: User; }
 type NC = { name: string; count: number };
@@ -15,22 +15,11 @@ interface FeedbackData {
     brandBranchPerf?: { brand: string; name: string; count: number; avg: number }[];
     byAgent: { name: string; assigned: number; done: number }[];
   };
-  surveys: {
-    campaigns: { total: number; byStatus: NC[] };
-    assignments: { total: number; successful: number; successRate: number; byStatus: NC[] };
-    records: { total: number; answered: number; noAnswer: number; byType: NC[]; byBrand: NC[];
-      byAgent: { name: string; count: number; answered: number; avg: number }[] };
-    topAgents: { name: string; successful: number }[];
-  };
 }
 
 const ratingStatusLabel = (s: string) =>
   s === 'resolved' ? 'Complaint Recorded' : s === 'no_action_needed' ? 'No Action Required'
   : s === 'in_progress' ? 'In Progress' : s === 'unreachable' ? 'Unreachable' : 'Pending';
-const surveyStatusLabel = (s: string) =>
-  s === 'successful' ? 'Successful' : s === 'in_progress' ? 'In Progress' : s === 'no_answer' ? 'No Answer'
-  : s === 'unreachable' ? 'Unreachable' : s === 'declined' ? 'Declined' : s === 'full_today' ? 'Full Today'
-  : s === 'active' ? 'Active' : s === 'completed' ? 'Completed' : s === 'cancelled' ? 'Cancelled' : 'Pending';
 
 export default function FeedbackDashboard({ currentUser }: Props) {
   const [d, setD] = useState<FeedbackData | null>(null);
@@ -158,15 +147,15 @@ export default function FeedbackDashboard({ currentUser }: Props) {
     );
   };
 
-  const r = d.ratings, s = d.surveys;
+  const r = d.ratings;
 
   return (
     <div className="space-y-8 animate-fade-in text-[var(--text)]">
       {/* Banner */}
       <div className="bg-gradient-to-r from-[var(--surface)] via-[var(--surface-2)] to-[var(--bg)] border border-[var(--border)] p-6 md:p-8 rounded-3xl shadow-xl">
         <span className="bg-blue-950/45 text-blue-400 text-xs font-bold px-3 py-1 rounded-full border border-blue-500/30">Feedback Analytics</span>
-        <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Ratings, Reviews &amp; Surveys</h1>
-        <p className="text-[var(--muted)] text-sm mt-1 font-light">Consolidated performance across all feedback channels</p>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Ratings &amp; Reviews</h1>
+        <p className="text-[var(--muted)] text-sm mt-1 font-light">Consolidated performance across ratings and review handling</p>
       </div>
 
       {/* Date filter */}
@@ -234,56 +223,6 @@ export default function FeedbackDashboard({ currentUser }: Props) {
                       </tr>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ================= SURVEYS ================= */}
-      <div className="space-y-5">
-        <h2 className="text-lg font-extrabold text-[var(--heading)] flex items-center gap-2"><MessageSquare className="w-5 h-5 text-violet-400" /> Surveys</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <Card label="Campaigns" value={s.campaigns.total} icon={Megaphone} tone="text-violet-400" />
-          <Card label="Numbers" value={s.assignments.total} icon={PhoneCall} tone="text-blue-400" />
-          <Card label="Successful" value={s.assignments.successful} icon={CheckCircle2} tone="text-emerald-400" />
-          <Card label="Success Rate" value={`${s.assignments.successRate}%`} icon={ThumbsUp} tone="text-emerald-400" />
-          <Card label="Records" value={s.records.total} icon={ClipboardList} tone="text-sky-400" />
-          <Card label="Answered" value={s.records.answered} icon={CheckCircle2} tone="text-emerald-400" />
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Bar title="Campaigns by Status" data={s.campaigns.byStatus} color="bg-violet-500" icon={Megaphone} label={surveyStatusLabel} />
-          <Bar title="Call Numbers by Status" data={s.assignments.byStatus} color="bg-blue-500" icon={PhoneCall} label={surveyStatusLabel} />
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Bar title="Survey Records by Type" data={s.records.byType} color="bg-sky-500" icon={ClipboardList} />
-          <Bar title="Survey Records by Brand" data={s.records.byBrand} color="bg-emerald-500" icon={Megaphone} />
-        </div>
-        {/* Top survey agents */}
-        <Bar title="Top Survey Agents (successful calls)" data={s.topAgents.map((a) => ({ name: a.name, count: a.successful }))} color="bg-violet-500" icon={Users} />
-
-        {/* Survey records per employee (Served By) — includes historical imports */}
-        <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
-          <h3 className="text-sm font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Users className="w-4 h-4 text-violet-400" /> Survey Records by Employee (Served By)</h3>
-          {(!s.records.byAgent || s.records.byAgent.length === 0) ? <div className="text-center py-6 text-[var(--muted)] text-xs">No survey records yet.</div> : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
-                  <th className="text-left py-2 px-2">Employee</th>
-                  <th className="text-center py-2 px-2">Records</th>
-                  <th className="text-center py-2 px-2">Answered</th>
-                  <th className="text-center py-2 px-2">Avg Rate</th>
-                </tr></thead>
-                <tbody>
-                  {s.records.byAgent.map((a) => (
-                    <tr key={a.name} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30 transition">
-                      <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.name}</td>
-                      <td className="py-2 px-2 text-center font-mono text-blue-400">{a.count}</td>
-                      <td className="py-2 px-2 text-center font-mono text-emerald-400">{a.answered}</td>
-                      <td className="py-2 px-2 text-center font-mono text-amber-400">{a.avg ? a.avg.toFixed(1) : '—'}</td>
-                    </tr>
-                  ))}
                 </tbody>
               </table>
             </div>
