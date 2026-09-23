@@ -2495,8 +2495,17 @@ app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req
   if (req.user.role === "agent" || req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
     return res.status(403).json({ error: "Access denied." });
   }
-  const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
-  const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
+  // Dates come in as bare YYYY-MM-DD (Kuwait-day granularity); widen to that day's real
+  // UTC boundaries before comparing against created_at (a full ISO timestamp) — a plain
+  // date string compared as text would exclude every timestamped row on that day.
+  const kwToUtc = (dateStr: string, endOfDay: boolean) => {
+    const [y, mo, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0) - KW_OFFSET_MS).toISOString();
+  };
+  const fromRaw = typeof req.query.from === "string" ? req.query.from : "";
+  const toRaw = typeof req.query.to === "string" ? req.query.to : "";
+  const from = fromRaw ? kwToUtc(fromRaw, false) : undefined;
+  const to = toRaw ? kwToUtc(toRaw, true) : undefined;
 
   const users = await DB.getUsers();
   // Executives (Assistant Manager+, admin, owner) see every department; a Supervisor or

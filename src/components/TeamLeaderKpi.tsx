@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Crown, ListChecks, Hourglass, Timer, Users2, ChevronRight, Filter, X, Download, AlertCircle, UserCog } from "lucide-react";
+import { Crown, ListChecks, Hourglass, Timer, Users2, ChevronRight, Filter, X, Download, AlertCircle, UserCog, Trophy } from "lucide-react";
 
 interface Props { currentUser: User; }
 
@@ -22,6 +22,11 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
   const [activePeriod, setActivePeriod] = useState<"today" | "week" | "month" | "">("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // Team of the Month — always the current calendar month, independent of the filter above.
+  const [monthChampion, setMonthChampion] = useState<LeaderStat | null>(null);
+  const [monthLoading, setMonthLoading] = useState(true);
+  const [monthLabel, setMonthLabel] = useState("");
+
   const kwToday = () => new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const kwWeekStart = () => { const kw = new Date(Date.now() + 3 * 60 * 60 * 1000); kw.setUTCDate(kw.getUTCDate() - kw.getUTCDay()); return kw.toISOString().slice(0, 10); };
   const kwMonthStart = () => new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 7) + "-01";
@@ -38,7 +43,22 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
     } catch (err: any) { setError(err.message); } finally { setLoading(false); }
   };
 
-  useEffect(() => { load("", ""); }, []);
+  const loadMonthChampion = async () => {
+    try {
+      setMonthLoading(true);
+      const monthStart = kwMonthStart(), today = kwToday();
+      const res = await apiFetch(`/api/reports/team-leader-kpi?from=${monthStart}&to=${today}`);
+      if (res.ok) {
+        const data: KpiData = await res.json();
+        const top = [...data.leaders].sort((a, b) => b.completed - a.completed)[0];
+        setMonthChampion(top && top.completed > 0 ? top : null);
+      }
+      setMonthLabel(new Date(monthStart + "T00:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric" }));
+    } catch { /* silent — this widget is a bonus, not the page's core data */ }
+    finally { setMonthLoading(false); }
+  };
+
+  useEffect(() => { load("", ""); loadMonthChampion(); }, []);
 
   const applyPeriod = (p: "today" | "week" | "month") => {
     const today = kwToday();
@@ -117,6 +137,34 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
         <p className="text-[var(--muted)] text-sm mt-1 font-light">How much every Team Leader has executed, and who's on their team.</p>
       </div>
 
+      {/* Team of the Month — current calendar month, regardless of the filter below */}
+      {!monthLoading && monthChampion && (
+        <div className="relative overflow-hidden bg-gradient-to-br from-amber-500/15 via-amber-400/5 to-transparent border border-amber-500/30 rounded-3xl p-6 md:p-8 shadow-xl">
+          <div className="flex items-start gap-4">
+            <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/30 shrink-0"><Trophy className="w-8 h-8 text-amber-400" /></div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wide">Team of the Month · {monthLabel}</p>
+              <h2 className="text-xl md:text-2xl font-extrabold text-[var(--heading)] mt-1">{monthChampion.full_name}{monthChampion.department ? ` · ${monthChampion.department}` : ""}</h2>
+              <p className="text-sm text-[var(--muted)] mt-1">
+                {monthChampion.completed} task{monthChampion.completed === 1 ? "" : "s"} completed this month{monthChampion.team.length ? `, leading a team of ${monthChampion.team.length}` : ""}.
+              </p>
+              {monthChampion.team.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {monthChampion.team.map((m) => (
+                    <span key={m.id} className="px-2.5 py-1 bg-[var(--surface)] border border-[var(--border)] rounded-full text-[11px] font-bold text-[var(--text)]">{m.full_name}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {!monthLoading && !monthChampion && (
+        <div className="bg-[var(--surface)] border border-dashed border-[var(--border)] rounded-3xl p-6 text-center text-[var(--muted)] text-sm">
+          No completed tasks yet this month ({monthLabel}) — the Team of the Month will appear here once one comes in.
+        </div>
+      )}
+
       {/* Date-range filter */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-lg flex flex-wrap items-end gap-3">
         <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Filter className="w-4 h-4 text-amber-400" /> Filter by date</div>
@@ -149,20 +197,45 @@ export default function TeamLeaderKpi({ currentUser }: Props) {
         <Card label="Avg Completion Time" value={fmtDur(s.avgDurationSeconds)} icon={Timer} tone="text-sky-400" />
       </div>
 
-      {/* Ranked list */}
-      <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
-        <h2 className="text-md font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Crown className="w-5 h-5 text-amber-400" /> Tasks Completed by Team Leader</h2>
-        <div className="space-y-3">
-          {ranked.map((l, i) => (
-            <div key={l.id} className="flex items-center gap-3">
-              <span className="w-5 text-[11px] font-mono text-[var(--muted)] text-right shrink-0">{i + 1}</span>
-              <div className="flex-1 space-y-1">
-                <div className="flex justify-between items-center text-xs font-bold"><span className="text-[var(--heading)] truncate pr-2">{l.full_name}</span><span className="text-[var(--muted)] font-mono shrink-0">{l.completed}</span></div>
-                <div className="w-full bg-[var(--surface-2)] border border-[var(--border)]/60 h-2 rounded-full overflow-hidden"><div className="h-full rounded-full bg-amber-500" style={{ width: `${Math.round((l.completed / maxCompleted) * 100)}%` }}></div></div>
-              </div>
+      {/* Completion chart: bar chart per leader + overall completion ring */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+          <h2 className="text-md font-bold text-[var(--heading)] mb-6 flex items-center gap-2"><Crown className="w-5 h-5 text-amber-400" /> Tasks Completed by Team Leader</h2>
+          {ranked.length === 0 ? (
+            <div className="text-center py-10 text-[var(--muted)] text-xs">No Team Leaders yet.</div>
+          ) : (
+            <div className="flex items-end justify-between gap-3 h-48">
+              {ranked.map((l) => (
+                <div key={l.id} className="flex-1 flex flex-col items-center justify-end gap-2 h-full">
+                  <span className="text-xs font-mono font-bold text-amber-400">{l.completed}</span>
+                  <div className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-lg" style={{ height: `${Math.max(Math.round((l.completed / maxCompleted) * 100), l.completed > 0 ? 6 : 2)}%` }}></div>
+                  <span className="text-[10px] font-bold text-[var(--muted)] text-center truncate w-full" title={l.full_name}>{l.full_name.split(" ")[0]}</span>
+                </div>
+              ))}
             </div>
-          ))}
-          {ranked.length === 0 && <div className="text-center py-6 text-[var(--muted)] text-xs">No Team Leaders yet.</div>}
+          )}
+        </div>
+        <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl flex flex-col items-center justify-center text-center">
+          <h2 className="text-md font-bold text-[var(--heading)] mb-4 self-start flex items-center gap-2"><ListChecks className="w-5 h-5 text-amber-400" /> Overall Completion</h2>
+          {(() => {
+            const total = s.totalCompleted + s.totalPending;
+            const pct = total ? Math.round((s.totalCompleted / total) * 100) : 0;
+            const r = 42, c = 2 * Math.PI * r;
+            const dash = (pct / 100) * c;
+            return (
+              <div className="relative w-32 h-32">
+                <svg viewBox="0 0 100 100" className="w-32 h-32 -rotate-90">
+                  <circle cx="50" cy="50" r={r} fill="none" strokeWidth="10" className="stroke-[var(--surface-2)]" />
+                  <circle cx="50" cy="50" r={r} fill="none" strokeWidth="10" strokeLinecap="round" className="stroke-amber-500" strokeDasharray={`${dash} ${c - dash}`} />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-2xl font-extrabold text-[var(--heading)] font-mono">{pct}%</span>
+                  <span className="text-[9px] font-bold text-[var(--muted)] uppercase">Completed</span>
+                </div>
+              </div>
+            );
+          })()}
+          <p className="text-[11px] text-[var(--muted)] mt-4">{s.totalCompleted} completed · {s.totalPending} pending</p>
         </div>
       </div>
 
