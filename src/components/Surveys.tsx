@@ -18,12 +18,12 @@ export default function Surveys({ currentUser }: SurveysProps) {
   const isMarketing = role === "marketing";
 
   const tabs: { key: Tab; label: string; icon: ReactNode; visible: boolean }[] = [
-    { key: "dashboard", label: "Dashboard", icon: <BarChart2 className="w-4 h-4" />, visible: !isAgent && !isMarketing },
+    { key: "templates", label: "Templates", icon: <ClipboardList className="w-4 h-4" />, visible: ["admin", "manager", "supervisor", "leader"].includes(role) },
     { key: "campaigns", label: "Campaigns", icon: <Megaphone className="w-4 h-4" />, visible: !isAgent && !isMarketing },
     { key: "queue", label: "Survey Queue", icon: <ListChecks className="w-4 h-4" />, visible: !isMarketing },
     { key: "all", label: "All Surveys", icon: <LayoutList className="w-4 h-4" />, visible: !isAgent },
-    { key: "templates", label: "Templates", icon: <ClipboardList className="w-4 h-4" />, visible: ["admin", "manager", "supervisor", "leader"].includes(role) },
     { key: "data", label: "Survey Data", icon: <Database className="w-4 h-4" />, visible: !isAgent },
+    { key: "dashboard", label: "Dashboard", icon: <BarChart2 className="w-4 h-4" />, visible: !isAgent && !isMarketing },
   ];
 
   const visibleTabs = tabs.filter(t => t.visible);
