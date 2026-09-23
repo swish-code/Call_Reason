@@ -171,6 +171,22 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
   const editDept = tasks.find((t) => t.id === editing)?.department;
   const editAgents = editDept ? agents.filter((a) => a.department === editDept) : agents;
 
+  // ---- Tracker filters: role (Agent/Team Leader), specific assignee, due-date range ----
+  const [trackerRole, setTrackerRole] = useState<"" | "agent" | "leader">("");
+  const [trackerAssignee, setTrackerAssignee] = useState("");
+  const [trackerFrom, setTrackerFrom] = useState("");
+  const [trackerTo, setTrackerTo] = useState("");
+  const roleById = new Map(agents.map((a) => [a.id, a.role]));
+  const trackerAssigneeOptions = trackerRole ? agents.filter((a) => a.role === trackerRole) : agents;
+  const displayedTasks = view !== "tracker" ? visibleTasks : visibleTasks.filter((t) => {
+    if (trackerRole && roleById.get(t.assigned_to) !== trackerRole) return false;
+    if (trackerAssignee && t.assigned_to !== trackerAssignee) return false;
+    const dueDay = t.due_date ? t.due_date.slice(0, 10) : "";
+    if (trackerFrom && (!dueDay || dueDay < trackerFrom)) return false;
+    if (trackerTo && (!dueDay || dueDay > trackerTo)) return false;
+    return true;
+  });
+
   const headerTitle = view === "assign" ? "Assign Tasks" : view === "tracker" ? "Task Tracker" : "My Tasks";
   const headerSub = view === "assign" ? "Create tasks for your team." : view === "tracker" ? "Track and manage your team's tasks." : "Tasks assigned to you.";
 
@@ -181,7 +197,7 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
           <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl"><ClipboardCheck className="w-6 h-6" /></div>
           <div>
             <h2 className="text-md font-extrabold text-[var(--heading)]">{headerTitle}</h2>
-            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{headerSub}{view !== "assign" ? ` · ${visibleTasks.length} task(s)` : ""}</p>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{headerSub}{view !== "assign" ? ` · ${displayedTasks.length} task(s)` : ""}</p>
           </div>
         </div>
         <button onClick={fetchTasks} className="p-3 text-[var(--text)] hover:text-[var(--heading)] bg-[var(--bg)] hover:bg-[var(--surface-2)] border border-[var(--border)] rounded-2xl active:scale-95 transition"><RefreshCw className="w-4 h-4" /></button>
@@ -267,15 +283,35 @@ export default function Tasks({ currentUser, onSeen, mode }: TasksProps) {
 
       {error && <div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-3xl text-sm text-rose-400 flex items-center gap-2"><AlertCircle className="w-5 h-5" /> {error}</div>}
 
+      {/* Tracker filters: role, specific assignee, due-date range */}
+      {view === "tracker" && (
+        <div className="flex flex-wrap items-center gap-3">
+          <select value={trackerRole} onChange={(e) => { const r = e.target.value as "" | "agent" | "leader"; setTrackerRole(r); setTrackerAssignee(""); }} className={smallCls + " font-bold"}>
+            <option value="">All (Agent + Team Leader)</option>
+            <option value="agent">Agent</option>
+            <option value="leader">Team Leader</option>
+          </select>
+          <select value={trackerAssignee} onChange={(e) => setTrackerAssignee(e.target.value)} className={smallCls + " font-bold"}>
+            <option value="">All names</option>
+            {trackerAssigneeOptions.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+          </select>
+          <input type="date" value={trackerFrom} onChange={(e) => setTrackerFrom(e.target.value)} className={smallCls} title="Due from" />
+          <input type="date" value={trackerTo} onChange={(e) => setTrackerTo(e.target.value)} className={smallCls} title="Due to" />
+          {(trackerRole || trackerAssignee || trackerFrom || trackerTo) && (
+            <button type="button" onClick={() => { setTrackerRole(""); setTrackerAssignee(""); setTrackerFrom(""); setTrackerTo(""); }} className="text-[11px] font-bold text-blue-500 hover:text-blue-400 underline underline-offset-2 transition">Clear filters</button>
+          )}
+        </div>
+      )}
+
       {/* Tasks list — tracker (managers) & agent views */}
       {view !== "assign" && (
         loading ? (
           <div className="flex flex-col items-center justify-center min-h-[160px]"><div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
-        ) : visibleTasks.length === 0 ? (
+        ) : displayedTasks.length === 0 ? (
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-10 text-center text-[var(--muted)] text-sm">{view === "mine" ? "No tasks assigned to you yet." : "No tasks yet."}</div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {visibleTasks.map((t) => (
+            {displayedTasks.map((t) => (
               <div key={t.id} className={`bg-[var(--surface)] border rounded-3xl p-5 shadow-lg space-y-3 ${overdue(t) ? "border-rose-500/40" : "border-[var(--border)]"}`}>
                 {editing === t.id ? (
                   /* ---- Manager edit form ---- */
