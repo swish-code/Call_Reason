@@ -45,12 +45,16 @@ const KW_MS = 3 * 60 * 60 * 1000;
 const fmtDate = (ts?: string) => {
   if (!ts) return '—';
   const s = String(ts).trim();
+  // order_date is a bare YYYY-MM-DD with no time of day. Parsing it lands on UTC
+  // midnight, which the +3 shift below would render as 03:00 on every single row.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   // Excel serial date stored as a bare number (days since 1899-12-30)
   if (/^\d{4,6}(\.\d+)?$/.test(s)) {
     const serial = Number(s);
     if (serial > 20000 && serial < 90000) {
       const ms = Math.round((serial - 25569) * 86400 * 1000);
-      return new Date(ms + KW_MS).toISOString().replace('T', ' ').slice(0, 16);
+      const out = new Date(ms + KW_MS).toISOString().replace('T', ' ');
+      return Number.isInteger(serial) ? out.slice(0, 10) : out.slice(0, 16);
     }
   }
   const t = new Date(s).getTime();
