@@ -135,6 +135,18 @@ const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_
 const LOG_COLS = ["log_type", "department", "activity_type", "status", "agent_id", "agent_name", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "calls_reviewed", "created_at", "updated_at", "created_by"] as const;
 const LOG_UPDATE_COLS = ["department", "activity_type", "status", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "calls_reviewed"] as const;
 
+// All Surveys (survey_assignments) filters. from/to are UTC instants on created_at.
+export type SurveyListFilter = {
+  brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string;
+  segment?: string; template_id?: string; phone?: string; from?: string; to?: string;
+};
+// Survey Data (survey_records) filters. from/to = register date (UTC instants on created_at);
+// order_from/order_to = order date (YYYY-MM-DD on record_date).
+export type SurveyRecordFilter = {
+  record_type?: string; brand_id?: string; answered?: boolean; segment?: string;
+  from?: string; to?: string; order_from?: string; order_to?: string;
+};
+
 export class DB {
   // ----------------------------------------------------
   // Schema creation + one-time seeding
@@ -2238,9 +2250,7 @@ export class DB {
   }
 
   // All survey assignments across campaigns, for the "View All Surveys" page + reporting
-  static async getAllSurveyAssignments(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; segment?: string; from?: string; to?: string;
-  } = {}): Promise<{ records: any[]; total: number; cap: number }> {
+  static async getAllSurveyAssignments(filter: SurveyListFilter = {}): Promise<{ records: any[]; total: number; cap: number }> {
     const { where, values } = DB.surveyFilterSql(filter);
     const CAP = 1000;
     const { rows } = await pool.query(`
@@ -2262,12 +2272,14 @@ export class DB {
    * counts and the per-agent stats can never disagree about what "the current
    * filter" means.
    */
-  private static surveyFilterSql(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string;
-    survey_type?: string; segment?: string; from?: string; to?: string;
-  }, startIdx = 1): { where: string; values: any[]; nextIdx: number } {
+  private static surveyFilterSql(filter: SurveyListFilter, startIdx = 1): { where: string; values: any[]; nextIdx: number } {
     const clauses: string[] = []; const values: any[] = []; let idx = startIdx;
     if (filter.brand_id) { clauses.push(`a.brand_id = $${idx++}`); values.push(filter.brand_id); }
+    if (filter.template_id) {
+      clauses.push(`EXISTS (SELECT 1 FROM survey_campaigns sc WHERE sc.id = a.campaign_id AND sc.template_id = $${idx++})`);
+      values.push(filter.template_id);
+    }
+    if (filter.phone) { clauses.push(`a.customer_phone ILIKE $${idx++}`); values.push(`%${filter.phone.replace(/[%_\\]/g, "\\$&")}%`); }
     // survey_type lives on the campaign, so this is a correlated lookup rather
     // than a column on the assignment itself.
     if (filter.survey_type) {
@@ -2302,9 +2314,7 @@ export class DB {
    *                                  neither "collected a survey" nor "never got them")
    *   pending / in_progress       -> Pending
    */
-  static async getSurveyOverview(filter: {
-    brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string; segment?: string; from?: string; to?: string;
-  } = {}): Promise<{
+  static async getSurveyOverview(filter: SurveyListFilter = {}): Promise<{
     summary: { total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number };
     byTemplate: { template_name: string; total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
     byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
@@ -2478,17 +2488,28 @@ export class DB {
     }
   }
 
-  static async getSurveyRecords(filter: {
-    record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string; segment?: string;
-  } = {}): Promise<{ records: any[]; total: number; cap: number }> {
+  // Shared by the Survey Data list and "Delete filtered", so a delete can never hit a
+  // different set of rows than the table shows. `p` is the column prefix ("r." or "").
+  private static surveyRecordClauses(filter: SurveyRecordFilter, p: string): { clauses: string[]; values: any[] } {
     const clauses: string[] = []; const values: any[] = []; let idx = 1;
-    if (filter.record_type) { clauses.push(`r.record_type = $${idx++}`); values.push(filter.record_type); }
-    if (filter.brand_id) { clauses.push(`r.brand_id = $${idx++}`); values.push(filter.brand_id); }
-    if (filter.answered != null) { clauses.push(`r.answered = $${idx++}`); values.push(filter.answered); }
-    if (filter.from) { clauses.push(`r.created_at >= $${idx++}`); values.push(filter.from); }
-    if (filter.to) { clauses.push(`r.created_at <= $${idx++}`); values.push(filter.to); }
-    if (filter.segment === "none") { clauses.push(`r.segment IS NULL`); }
-    else if (filter.segment) { clauses.push(`r.segment = $${idx++}`); values.push(filter.segment); }
+    if (filter.record_type) { clauses.push(`${p}record_type = $${idx++}`); values.push(filter.record_type); }
+    if (filter.brand_id) { clauses.push(`${p}brand_id = $${idx++}`); values.push(filter.brand_id); }
+    if (filter.answered != null) { clauses.push(`${p}answered = $${idx++}`); values.push(filter.answered); }
+    // Register date: when the row entered the system (upload, or call completion for live rows).
+    if (filter.from) { clauses.push(`${p}created_at >= $${idx++}`); values.push(filter.from); }
+    if (filter.to) { clauses.push(`${p}created_at <= $${idx++}`); values.push(filter.to); }
+    // Order date: record_date is normalised YYYY-MM-DD text, so a text compare is a date compare.
+    // survey_live rows store the call date there, not an order date, so they're excluded.
+    if (filter.order_from || filter.order_to) clauses.push(`${p}record_type <> 'survey_live'`);
+    if (filter.order_from) { clauses.push(`${p}record_date >= $${idx++}`); values.push(filter.order_from); }
+    if (filter.order_to) { clauses.push(`${p}record_date <= $${idx++}`); values.push(filter.order_to); }
+    if (filter.segment === "none") { clauses.push(`${p}segment IS NULL`); }
+    else if (filter.segment) { clauses.push(`${p}segment = $${idx++}`); values.push(filter.segment); }
+    return { clauses, values };
+  }
+
+  static async getSurveyRecords(filter: SurveyRecordFilter = {}): Promise<{ records: any[]; total: number; cap: number }> {
+    const { clauses, values } = DB.surveyRecordClauses(filter, "r.");
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const LIST_CAP = 1000;
     const { rows } = await pool.query(`
@@ -2513,19 +2534,12 @@ export class DB {
    * guard sits inside the query itself rather than relying on every caller
    * remembering to exclude it.
    */
-  static async deleteSurveyRecords(filter: {
-    record_type?: string; brand_id?: string; answered?: boolean; from?: string; to?: string;
-  } = {}): Promise<number> {
+  static async deleteSurveyRecords(filter: SurveyRecordFilter = {}): Promise<number> {
     if (filter.record_type === "survey_live") {
       throw new Error("Survey responses recorded by agents cannot be deleted.");
     }
-    const clauses: string[] = ["record_type <> 'survey_live'"]; const values: any[] = []; let idx = 1;
-    if (filter.record_type) { clauses.push(`record_type = $${idx++}`); values.push(filter.record_type); }
-    if (filter.brand_id) { clauses.push(`brand_id = $${idx++}`); values.push(filter.brand_id); }
-    if (filter.answered != null) { clauses.push(`answered = $${idx++}`); values.push(filter.answered); }
-    if (filter.from) { clauses.push(`created_at >= $${idx++}`); values.push(filter.from); }
-    if (filter.to) { clauses.push(`created_at <= $${idx++}`); values.push(filter.to); }
-    const where = `WHERE ${clauses.join(" AND ")}`;
+    const { clauses, values } = DB.surveyRecordClauses(filter, "");
+    const where = `WHERE ${["record_type <> 'survey_live'", ...clauses].join(" AND ")}`;
     const res = await pool.query(`DELETE FROM survey_records ${where}`, values);
     return res.rowCount ?? 0;
   }

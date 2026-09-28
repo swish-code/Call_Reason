@@ -707,6 +707,14 @@ const LOG_FIELDS = ["department", "activity_type", "status", "branch", "brand", 
 // Recurring tasks — date helpers & lazy daily generation (Kuwait time, UTC+3)
 // ----------------------------------------------------
 const KW_OFFSET_MS = 3 * 3600 * 1000;
+// A bare YYYY-MM-DD Kuwait day → the UTC instant at its start (or end), for comparing
+// against TIMESTAMPTZ columns. Compared raw, a date-only `to` would drop that whole day.
+const kwDayToUtc = (dateStr: string | undefined, endOfDay: boolean): string | undefined => {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return undefined;
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0) - KW_OFFSET_MS).toISOString();
+};
+const qs = (v: any): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 // Days between the Excel serial epoch (1899-12-30) and the Unix epoch.
 const EXCEL_EPOCH_DAYS = 25569;
 function kuwaitToday(): { date: string; weekday: number } {
@@ -3145,34 +3153,28 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
 }));
 
 // View All Surveys — every assignment across campaigns, with filters (for reporting + supervision)
+// Shared by the All Surveys list and its overview so both always use the same filter set.
+const surveyListFilter = (q: any) => ({
+  brand_id: qs(q.brand_id),
+  agent_id: qs(q.agent_id),
+  status: qs(q.status),
+  action_type: qs(q.action_type),
+  survey_type: qs(q.survey_type),
+  segment: qs(q.segment),
+  template_id: qs(q.template_id),
+  phone: qs(q.phone),
+  from: kwDayToUtc(qs(q.from), false),
+  to: kwDayToUtc(qs(q.to), true),
+});
+
 app.get("/api/surveys/all", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { brand_id, agent_id, status, action_type, survey_type, segment, from, to } = req.query;
-  res.json(await DB.getAllSurveyAssignments({
-    brand_id: brand_id as string || undefined,
-    agent_id: agent_id as string || undefined,
-    status: status as string || undefined,
-    action_type: action_type as string || undefined,
-    survey_type: survey_type as string || undefined,
-    segment: segment as string || undefined,
-    from: from as string || undefined,
-    to: to as string || undefined,
-  }));
+  res.json(await DB.getAllSurveyAssignments(surveyListFilter(req.query)));
 }));
 
 // Survey overview: headline counts, per-survey breakdown and per-agent stats.
 // Takes the same filters as /api/surveys/all so the numbers always match the list.
 app.get("/api/surveys/overview", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { brand_id, agent_id, status, action_type, survey_type, segment, from, to } = req.query;
-  res.json(await DB.getSurveyOverview({
-    brand_id: brand_id as string || undefined,
-    agent_id: agent_id as string || undefined,
-    status: status as string || undefined,
-    action_type: action_type as string || undefined,
-    survey_type: survey_type as string || undefined,
-    segment: segment as string || undefined,
-    from: from as string || undefined,
-    to: to as string || undefined,
-  }));
+  res.json(await DB.getSurveyOverview(surveyListFilter(req.query)));
 }));
 
 // Manually assign / reassign / unassign a single survey to any active agent (supervisors+)
@@ -3268,16 +3270,25 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
   res.json(result);
 }));
 
+// Survey Data filters, shared by the list and "Delete filtered" so a delete always removes
+// exactly the rows the table shows. Order date = record_date (YYYY-MM-DD text);
+// register date = created_at (Kuwait days). Legacy from/to still mean register date.
+const surveyRecordFilter = (src: any) => {
+  const ans = src.answered;
+  return {
+    record_type: qs(src.type),
+    brand_id: qs(src.brand_id),
+    answered: ans === true || ans === "true" ? true : ans === false || ans === "false" ? false : undefined,
+    segment: qs(src.segment),
+    order_from: qs(src.order_from),
+    order_to: qs(src.order_to),
+    from: kwDayToUtc(qs(src.reg_from) || qs(src.from), false),
+    to: kwDayToUtc(qs(src.reg_to) || qs(src.to), true),
+  };
+};
+
 app.get("/api/survey-records", authenticateJWT, asyncHandler(async (req: any, res) => {
-  const { type, brand_id, answered, from, to, segment } = req.query;
-  res.json(await DB.getSurveyRecords({
-    record_type: type || undefined,
-    brand_id: brand_id || undefined,
-    answered: answered === "true" ? true : answered === "false" ? false : undefined,
-    from: from || undefined,
-    to: to || undefined,
-    segment: segment || undefined,
-  }));
+  res.json(await DB.getSurveyRecords(surveyRecordFilter(req.query)));
 }));
 
 // Remove duplicate survey records (admin only)
@@ -3290,14 +3301,7 @@ app.post("/api/survey-records/dedupe", authenticateJWT, asyncHandler(async (req:
 // Delete survey records — all, or scoped by current filters (admin only)
 app.post("/api/survey-records/delete", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Access denied." });
-  const { type, brand_id, answered, from, to } = req.body;
-  const deleted = await DB.deleteSurveyRecords({
-    record_type: type || undefined,
-    brand_id: brand_id || undefined,
-    answered: answered === true ? true : answered === false ? false : undefined,
-    from: from || undefined,
-    to: to || undefined,
-  });
+  const deleted = await DB.deleteSurveyRecords(surveyRecordFilter(req.body || {}));
   res.json({ deleted });
 }));
 

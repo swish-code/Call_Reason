@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw, UserX } from "lucide-react";
+import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw, UserX, Search, X } from "lucide-react";
 
 interface AllSurveysProps { currentUser: User; }
 
@@ -66,6 +66,7 @@ const actionView = (a?: string | null) =>
     : <span className="text-[var(--muted)]">No Action</span>;
 
 const selCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs font-bold focus:ring-1 focus:ring-blue-500 focus:outline-none [&>option]:bg-[var(--surface)]";
+const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none";
 
 export default function AllSurveys({ currentUser }: AllSurveysProps) {
   const canAssign = ['admin', 'owner', 'manager', 'supervisor', 'leader'].includes(currentUser.role);
@@ -86,6 +87,20 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
   const [actionType, setActionType] = useState("");
   const [surveyType, setSurveyType] = useState("");
   const [segment, setSegment] = useState("");
+  const [templateId, setTemplateId] = useState("");
+  const [from, setFrom] = useState(""); // upload date, Kuwait day
+  const [to, setTo] = useState("");
+  // Phone is typed, so it's debounced — otherwise every keystroke refetches.
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phone, setPhone] = useState("");
+  useEffect(() => { const t = setTimeout(() => setPhone(phoneInput.trim()), 300); return () => clearTimeout(t); }, [phoneInput]);
+  const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
+
+  const hasFilter = !!(brandId || agentId || status || actionType || surveyType || segment || templateId || from || to || phoneInput);
+  const clearFilters = () => {
+    setBrandId(""); setAgentId(""); setStatus(""); setActionType(""); setSurveyType(""); setSegment("");
+    setTemplateId(""); setFrom(""); setTo(""); setPhoneInput(""); setPhone("");
+  };
 
   const [savingId, setSavingId] = useState<string | null>(null);
 
@@ -97,8 +112,12 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
     if (actionType) p.set('action_type', actionType);
     if (surveyType) p.set('survey_type', surveyType);
     if (segment) p.set('segment', segment);
+    if (templateId) p.set('template_id', templateId);
+    if (phone) p.set('phone', phone);
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
     return p.toString();
-  }, [brandId, agentId, status, actionType, surveyType, segment]);
+  }, [brandId, agentId, status, actionType, surveyType, segment, templateId, phone, from, to]);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -125,6 +144,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
 
   useEffect(() => {
     apiFetch('/api/brands').then(r => r.ok ? r.json() : []).then(setBrands).catch(() => {});
+    apiFetch('/api/survey-templates').then(r => r.ok ? r.json() : []).then(setTemplates).catch(() => {});
     if (canAssign) apiFetch('/api/surveys/agents/workload').then(r => r.ok ? r.json() : []).then(setAgents).catch(() => {});
   }, [canAssign]);
 
@@ -225,6 +245,25 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
           <option value="none">— No segment —</option>
         </select>
+        <select value={templateId} onChange={e => setTemplateId(e.target.value)} className={selCls} title="Survey template">
+          <option value="">All Templates</option>
+          {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+          <input type="text" value={phoneInput} onChange={e => setPhoneInput(e.target.value)} placeholder="Search phone…" className={inputCls + " pl-8 w-40"} />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold text-[var(--muted)] uppercase">Uploaded</span>
+          <input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} className={inputCls} title="Uploaded from" />
+          <span className="text-[var(--muted)] text-xs">→</span>
+          <input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} className={inputCls} title="Uploaded to" />
+        </div>
+        {hasFilter && (
+          <button onClick={clearFilters} className="px-3 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs flex items-center gap-1.5 transition">
+            <X className="w-3.5 h-3.5" /> Clear
+          </button>
+        )}
       </div>
 
       {error && <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400">{error}</div>}

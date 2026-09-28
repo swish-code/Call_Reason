@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SurveyRecord, SurveyRecordType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { Database, RefreshCw, AlertCircle, Copy, Trash2, Download } from "lucide-react";
+import { Database, RefreshCw, AlertCircle, Copy, Trash2, Download, X } from "lucide-react";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 
 interface SurveysDataProps { currentUser: User; }
@@ -46,8 +46,17 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
   const [brandId, setBrandId] = useState("");
   const [answered, setAnswered] = useState(""); // "", "answered", "no_answer"
   const [segment, setSegment] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // Order date = the order's own date (record_date); register date = when the row
+  // entered the system (created_at, Kuwait days).
+  const [orderFrom, setOrderFrom] = useState("");
+  const [orderTo, setOrderTo] = useState("");
+  const [regFrom, setRegFrom] = useState("");
+  const [regTo, setRegTo] = useState("");
+  const hasFilter = !!(type || brandId || answered || segment || orderFrom || orderTo || regFrom || regTo);
+  const clearFilters = () => {
+    setType(""); setBrandId(""); setAnswered(""); setSegment("");
+    setOrderFrom(""); setOrderTo(""); setRegFrom(""); setRegTo("");
+  };
 
   const typeLabel = useCallback((key?: string) => {
     if (key === 'survey_live') return 'Survey (Live)';
@@ -62,10 +71,12 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     if (answered === 'answered') p.set('answered', 'true');
     else if (answered === 'no_answer') p.set('answered', 'false');
     if (segment) p.set('segment', segment);
-    if (from) p.set('from', from);
-    if (to) p.set('to', to);
+    if (orderFrom) p.set('order_from', orderFrom);
+    if (orderTo) p.set('order_to', orderTo);
+    if (regFrom) p.set('reg_from', regFrom);
+    if (regTo) p.set('reg_to', regTo);
     return p.toString();
-  }, [type, brandId, answered, segment, from, to]);
+  }, [type, brandId, answered, segment, orderFrom, orderTo, regFrom, regTo]);
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -105,12 +116,16 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
     const res = await apiFetch('/api/survey-records/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Same filter set as the list, so it deletes exactly the rows on screen.
       body: JSON.stringify({
         type: type || undefined,
         brand_id: brandId || undefined,
         answered: answered === 'answered' ? true : answered === 'no_answer' ? false : undefined,
-        from: from || undefined,
-        to: to || undefined,
+        segment: segment || undefined,
+        order_from: orderFrom || undefined,
+        order_to: orderTo || undefined,
+        reg_from: regFrom || undefined,
+        reg_to: regTo || undefined,
       }),
     });
     if (res.ok) { const d = await res.json(); fetchRecords(); alert(`${d.deleted} record(s) deleted.`); }
@@ -230,8 +245,23 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
           {SURVEY_SEGMENTS.map(s => <option key={s} value={s}>{s}</option>)}
           <option value="none">— No segment —</option>
         </select>
-        <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} title="From" />
-        <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} title="To" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold text-[var(--muted)] uppercase">Order date</span>
+          <input type="date" value={orderFrom} max={orderTo || undefined} onChange={e => setOrderFrom(e.target.value)} className={inputCls} title="Order date from" />
+          <span className="text-[var(--muted)] text-xs">→</span>
+          <input type="date" value={orderTo} min={orderFrom || undefined} onChange={e => setOrderTo(e.target.value)} className={inputCls} title="Order date to" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold text-[var(--muted)] uppercase">Register date</span>
+          <input type="date" value={regFrom} max={regTo || undefined} onChange={e => setRegFrom(e.target.value)} className={inputCls} title="Register date from" />
+          <span className="text-[var(--muted)] text-xs">→</span>
+          <input type="date" value={regTo} min={regFrom || undefined} onChange={e => setRegTo(e.target.value)} className={inputCls} title="Register date to" />
+        </div>
+        {hasFilter && (
+          <button onClick={clearFilters} className="px-3 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs flex items-center gap-1.5 transition">
+            <X className="w-3.5 h-3.5" /> Clear
+          </button>
+        )}
       </div>
 
       {error && (
@@ -261,7 +291,8 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                   <th className="p-4">Served By</th>
                   <th className="p-4 text-center">Answered</th>
                   <th className="p-4">Uploaded By</th>
-                  <th className="p-4">Date</th>
+                  <th className="p-4">Order Date</th>
+                  <th className="p-4">Registered</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -291,12 +322,14 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                         : <span className="text-[var(--muted)]">No</span>}
                     </td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{r.uploaded_by_name || '—'}</td>
+                    {/* record_date is a bare YYYY-MM-DD — shown raw, fmtDate would add a fake 03:00 */}
+                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{r.record_type === 'survey_live' ? '—' : (r.record_date || '—')}</td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.created_at)}</td>
                   </tr>
                 ))}
                 {records.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="p-8 text-center text-[var(--muted)]">No survey data found.</td>
+                    <td colSpan={12} className="p-8 text-center text-[var(--muted)]">{hasFilter ? "No survey data matches this filter." : "No survey data found."}</td>
                   </tr>
                 )}
               </tbody>

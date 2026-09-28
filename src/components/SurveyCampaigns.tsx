@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { User, SurveyCampaign, SurveyTemplate, Brand } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 import {
-  Megaphone, RefreshCw, Plus, X, AlertCircle, Upload, FileDown, Users, Ban, RotateCcw,
+  Megaphone, RefreshCw, Plus, X, AlertCircle, Upload, FileDown, Users, Ban, RotateCcw, Filter,
 } from "lucide-react";
 
 interface SurveyCampaignsProps { currentUser: User; }
@@ -63,6 +63,33 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
   const [error, setError] = useState("");
 
   const isLeader = LEADER_ROLES.includes(currentUser.role);
+
+  // Filters — the campaign list is small and fully loaded, so this runs client-side.
+  const [fBrand, setFBrand] = useState("");
+  const [fStatus, setFStatus] = useState("");
+  const [fMode, setFMode] = useState("");
+  const [fContinuity, setFContinuity] = useState("");
+  const [fRequester, setFRequester] = useState("");
+  const [fFrom, setFFrom] = useState("");
+  const [fTo, setFTo] = useState("");
+  const hasFilter = !!(fBrand || fStatus || fMode || fContinuity || fRequester || fFrom || fTo);
+  const clearFilters = () => { setFBrand(""); setFStatus(""); setFMode(""); setFContinuity(""); setFRequester(""); setFFrom(""); setFTo(""); };
+  const requesters = useMemo(
+    () => Array.from(new Set(campaigns.map(c => c.requested_by_name).filter(Boolean) as string[])).sort(),
+    [campaigns],
+  );
+  const kwDay = (ts?: string) => (ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().slice(0, 10) : "");
+  const visibleCampaigns = useMemo(() => campaigns.filter(c => {
+    if (fBrand === "general" ? !!c.brand_id : fBrand && c.brand_id !== fBrand) return false;
+    if (fStatus && c.status !== fStatus) return false;
+    if (fMode && c.assignment_mode !== fMode) return false;
+    if (fContinuity === "continuous" ? c.continuity_type !== "continuous" : fContinuity === "one_time" && c.continuity_type === "continuous") return false;
+    if (fRequester && c.requested_by_name !== fRequester) return false;
+    const day = kwDay(c.created_at);
+    if (fFrom && day < fFrom) return false;
+    if (fTo && day > fTo) return false;
+    return true;
+  }), [campaigns, fBrand, fStatus, fMode, fContinuity, fRequester, fFrom, fTo]);
 
   // Request modal
   const [showRequest, setShowRequest] = useState(false);
@@ -245,7 +272,9 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
           </div>
           <div>
             <h2 className="text-md font-extrabold text-[var(--heading)]">Survey Campaigns</h2>
-            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{campaigns.length} campaign(s)</p>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">
+              {hasFilter ? `${visibleCampaigns.length} of ${campaigns.length} campaign(s)` : `${campaigns.length} campaign(s)`}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -274,6 +303,47 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
         </div>
       )}
 
+      {/* Filters */}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--heading)] pb-2.5"><Filter className="w-4 h-4 text-blue-400" /> Filter</div>
+        <select value={fBrand} onChange={e => setFBrand(e.target.value)} className={selCls}>
+          <option value="">All Brands</option>
+          <option value="general">General (no brand)</option>
+          {brands.map(b => <option key={b.id} value={b.id}>{b.brand_name}</option>)}
+        </select>
+        <select value={fStatus} onChange={e => setFStatus(e.target.value)} className={selCls}>
+          <option value="">All Statuses</option>
+          {['pending', 'active', 'full_today', 'completed', 'cancelled'].map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
+        </select>
+        <select value={fMode} onChange={e => setFMode(e.target.value)} className={selCls}>
+          <option value="">All Modes</option>
+          <option value="open">Open</option>
+          <option value="assigned">Assigned</option>
+        </select>
+        <select value={fContinuity} onChange={e => setFContinuity(e.target.value)} className={selCls}>
+          <option value="">All Continuity</option>
+          <option value="one_time">One-time</option>
+          <option value="continuous">Continuous</option>
+        </select>
+        <select value={fRequester} onChange={e => setFRequester(e.target.value)} className={selCls}>
+          <option value="">All Requesters</option>
+          {requesters.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <div className="space-y-1">
+          <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">Created from</label>
+          <input type="date" value={fFrom} max={fTo || undefined} onChange={e => setFFrom(e.target.value)} className={inputCls} />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-[10px] font-bold text-[var(--muted)] uppercase">Created to</label>
+          <input type="date" value={fTo} min={fFrom || undefined} onChange={e => setFTo(e.target.value)} className={inputCls} />
+        </div>
+        {hasFilter && (
+          <button onClick={clearFilters} className="px-3 py-2.5 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs flex items-center gap-1.5 transition">
+            <X className="w-3.5 h-3.5" /> Clear
+          </button>
+        )}
+      </div>
+
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center min-h-[240px]">
@@ -296,7 +366,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {campaigns.map(c => (
+                {visibleCampaigns.map(c => (
                   <tr key={c.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
                     <td className="p-4 font-bold text-[var(--heading)]">{c.brand_name || <span className="text-[var(--muted)] font-normal">General</span>}</td>
                     <td className="p-4 text-[var(--text)]">{c.template_name || '—'}</td>
@@ -358,9 +428,9 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                     </td>
                   </tr>
                 ))}
-                {campaigns.length === 0 && (
+                {visibleCampaigns.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-[var(--muted)]">No campaigns found.</td>
+                    <td colSpan={8} className="p-8 text-center text-[var(--muted)]">{hasFilter ? "No campaigns match this filter." : "No campaigns found."}</td>
                   </tr>
                 )}
               </tbody>
