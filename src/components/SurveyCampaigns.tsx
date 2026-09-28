@@ -362,6 +362,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                   <th className="p-4">Progress</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">Requested By</th>
+                  <th className="p-4">Created</th>
                   <th className="p-4 text-center">Actions</th>
                 </tr>
               </thead>
@@ -391,6 +392,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                       </span>
                     </td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{c.requested_by_name || '—'}</td>
+                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(c.created_at)}</td>
                     <td className="p-4">
                       <div className="flex items-center justify-center gap-1.5 flex-wrap">
                         <button
@@ -430,7 +432,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                 ))}
                 {visibleCampaigns.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-[var(--muted)]">{hasFilter ? "No campaigns match this filter." : "No campaigns found."}</td>
+                    <td colSpan={9} className="p-8 text-center text-[var(--muted)]">{hasFilter ? "No campaigns match this filter." : "No campaigns found."}</td>
                   </tr>
                 )}
               </tbody>
