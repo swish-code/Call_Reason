@@ -656,6 +656,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   )}
                   <th className="p-4">Date</th>
                   <th className="p-4">Source</th>
+                  <th className="p-4">Customer</th>
                   <th className="p-4">Rate</th>
                   <th className="p-4">Review</th>
                   <th className="p-4">Served By</th>
@@ -681,6 +682,18 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                         <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">{r.platform_name}</span>
                         <div className="font-mono text-[10px] text-[var(--muted)]">#{r.order_id}</div>
                       </div>
+                    </td>
+                    {/* Customer phone/name — filled on upload or by Fill Phones; blank means
+                        the scraper never saw this order (Keeta masks the number within hours). */}
+                    <td className="p-4 whitespace-nowrap">
+                      {r.customer_phone ? (
+                        <div className="space-y-0.5">
+                          <div className="font-mono text-[12px] font-bold text-[var(--heading)] select-all" dir="ltr">{r.customer_phone}</div>
+                          {r.customer_name && <div className="text-[10px] text-[var(--muted)] max-w-[140px] truncate" title={r.customer_name}>{r.customer_name}</div>}
+                        </div>
+                      ) : (
+                        <span className="text-[var(--muted)]" title="No phone yet — retried automatically every hour">—</span>
+                      )}
                     </td>
                     <td className="p-4"><Stars n={r.rating} /></td>
                     <td className="p-4 max-w-[180px]">
@@ -743,7 +756,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 ))}
                 {ratings.length === 0 && (
                   <tr>
-                    <td colSpan={9 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
+                    <td colSpan={10 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
                   </tr>
                 )}
               </tbody>
