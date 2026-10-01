@@ -1,10 +1,30 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { User, SurveyRecord, SurveyRecordType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { Database, RefreshCw, AlertCircle, Copy, Trash2, Download, X } from "lucide-react";
 import SurveyDataUploadButton from "./SurveyDataUploadButton.tsx";
 
 interface SurveysDataProps { currentUser: User; }
+
+// Readable labels for the per-type fields kept in survey_records.extra.
+const EXTRA_LABELS: Record<string, string> = {
+  branch: "Branch", order_time: "Order time", completion_time: "Survey / completion date",
+  recommending: "Recommending", reachability: "Reachability", action: "Action",
+  action_type: "Action type", outcome: "Outcome", template: "Template", segment: "Segment", campaign_id: "Campaign",
+};
+const extraOf = (r: SurveyRecord): Record<string, any> => {
+  const e = r.extra;
+  if (!e) return {};
+  if (typeof e === "string") { try { return JSON.parse(e) || {}; } catch { return {}; } }
+  return e;
+};
+const reachColor = (v?: string) => {
+  const s = (v || "").toLowerCase();
+  if (!s) return "text-[var(--muted)]";
+  if (s.includes("not")) return "text-rose-400";
+  if (s.includes("reach")) return "text-emerald-400";
+  return "text-amber-400";
+};
 
 const KW_MS = 3 * 60 * 60 * 1000;
 const fmtDate = (ts?: string) => {
@@ -52,6 +72,7 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
   const [orderTo, setOrderTo] = useState("");
   const [regFrom, setRegFrom] = useState("");
   const [regTo, setRegTo] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const hasFilter = !!(type || brandId || answered || segment || orderFrom || orderTo || regFrom || regTo);
   const clearFilters = () => {
     setType(""); setBrandId(""); setAnswered(""); setSegment("");
@@ -151,7 +172,10 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
       { key: 'comment', label: 'Comment', val: r => r.comment || '' },
       { key: 'complaint', label: 'Complaint', val: r => r.complaint || '' },
       { key: 'note', label: 'Note', val: r => r.note || '' },
+      { key: 'branch', label: 'Branch', val: r => extraOf(r).branch || '' },
+      { key: 'reachability', label: 'Reachability', val: r => extraOf(r).reachability || '' },
       { key: 'record_date', label: 'Record Date', val: r => r.record_date || '' },
+      { key: 'survey_date', label: 'Survey / Completion Date', val: r => extraOf(r).completion_time || '' },
       { key: 'uploaded_by', label: 'Uploaded By', val: r => r.uploaded_by_name || '' },
       { key: 'created_at', label: 'Created At', val: r => r.created_at || '' },
     ];
@@ -283,10 +307,14 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                 <tr>
                   <th className="p-4">Type</th>
                   <th className="p-4">Brand</th>
+                  <th className="p-4">Customer</th>
+                  <th className="p-4">Platform</th>
                   <th className="p-4">Item / Order</th>
                   <th className="p-4">Phone</th>
+                  <th className="p-4">Reachability</th>
                   <th className="p-4">Rate</th>
                   <th className="p-4">Feedback</th>
+                  <th className="p-4">Comment</th>
                   <th className="p-4">Segment</th>
                   <th className="p-4">Served By</th>
                   <th className="p-4 text-center">Answered</th>
@@ -296,18 +324,44 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {records.map(r => (
-                  <tr key={r.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
+                {records.map(r => {
+                  const ex = extraOf(r);
+                  const open = expandedId === r.id;
+                  const reach = ex.reachability as string | undefined;
+                  const detail: [string, any][] = [
+                    ["Order ID", r.order_id], ["Item", r.item_name], ["Customer", r.customer_name], ["Phone", r.phone],
+                    ["Brand", r.brand_name || r.brand_label], ["Platform", r.platform_name || r.platform_label],
+                    ["Rate", r.rate], ["Feedback", r.product_feedback], ["Comment", r.comment], ["Complaint", r.complaint],
+                    ["Customer suggestion", r.customer_suggestion], ["Note", r.note], ["Trials", r.trials], ["Segment", r.segment],
+                    ["Served By", r.served_by], ["Answered", r.answered ? "Yes" : "No"], ["Order date", r.record_date],
+                    ...Object.entries(ex).map(([k, v]) => [EXTRA_LABELS[k] || k, typeof v === "object" ? JSON.stringify(v) : v] as [string, any]),
+                    ["Uploaded by", r.uploaded_by_name], ["Registered", fmtDate(r.created_at)],
+                  ];
+                  return (
+                  <Fragment key={r.id}>
+                  <tr onClick={() => setExpandedId(open ? null : r.id)} title={open ? "Hide details" : "Show all fields"}
+                    className={`cursor-pointer transition align-middle ${open ? "bg-[var(--surface-2)]/60" : "hover:bg-[var(--surface-2)]/40"}`}>
                     <td className="p-4 font-bold text-[var(--heading)]">{typeLabel(r.record_type)}</td>
                     <td className="p-4 text-[var(--text)]">{r.brand_name || r.brand_label || '—'}</td>
+                    <td className="p-4 text-[var(--text)]">
+                      {r.customer_name || '—'}
+                      {ex.branch && <div className="text-[10px] text-[var(--muted)] mt-0.5">{ex.branch}</div>}
+                    </td>
+                    <td className="p-4 text-[var(--muted)]">{r.platform_name || r.platform_label || '—'}</td>
                     <td className="p-4 text-[var(--text)]">{r.item_name || r.order_id || '—'}</td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)]">{r.phone || '—'}</td>
+                    <td className={`p-4 font-bold whitespace-nowrap ${reachColor(reach)}`}>{reach || '—'}</td>
                     <td className="p-4">
                       {typeof r.rate === 'number' && r.rate > 0 ? <Stars n={r.rate} /> : <span className="text-[var(--muted)]">—</span>}
                     </td>
                     <td className="p-4">
                       {r.product_feedback
                         ? <span className={`font-bold ${feedbackColor(r.product_feedback)}`}>{r.product_feedback}</span>
+                        : <span className="text-[var(--muted)]">—</span>}
+                    </td>
+                    <td className="p-4 text-[var(--text)] max-w-[220px]">
+                      {r.comment || r.complaint || r.note
+                        ? <span className="line-clamp-2" title={r.comment || r.complaint || r.note || ''}>{r.comment || r.complaint || r.note}</span>
                         : <span className="text-[var(--muted)]">—</span>}
                     </td>
                     <td className="p-4">
@@ -323,13 +377,32 @@ export default function SurveysData({ currentUser }: SurveysDataProps) {
                     </td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{r.uploaded_by_name || '—'}</td>
                     {/* record_date is a bare YYYY-MM-DD — shown raw, fmtDate would add a fake 03:00 */}
-                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{r.record_type === 'survey_live' ? '—' : (r.record_date || '—')}</td>
+                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">
+                      {r.record_type === 'survey_live' ? '—' : (r.record_date || '—')}
+                      {ex.completion_time && <div className="text-[10px] mt-0.5" title="Survey / completion date">Survey: {ex.completion_time}</div>}
+                    </td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.created_at)}</td>
                   </tr>
-                ))}
+                  {open && (
+                    <tr className="bg-[var(--surface-2)]/30">
+                      <td colSpan={16} className="p-5">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-[11px]">
+                          {detail.filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== "").map(([k, v], i) => (
+                            <div key={`${k}-${i}`} className="min-w-0">
+                              <div className="text-[10px] font-bold text-[var(--muted)] uppercase">{k}</div>
+                              <div className="text-[var(--heading)] break-words">{String(v)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
                 {records.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-[var(--muted)]">{hasFilter ? "No survey data matches this filter." : "No survey data found."}</td>
+                    <td colSpan={16} className="p-8 text-center text-[var(--muted)]">{hasFilter ? "No survey data matches this filter." : "No survey data found."}</td>
                   </tr>
                 )}
               </tbody>
