@@ -11,6 +11,7 @@ interface SurveyRow {
   id: string;
   customer_phone: string;
   brand_name?: string;
+  item_name?: string | null;
   template_name?: string;
   assigned_agent_id?: string | null;
   agent_name?: string | null;
@@ -370,6 +371,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                 <th className="text-left p-4">Task #</th>
                 <th className="text-left p-4">Phone</th>
                 <th className="text-left p-4">Brand</th>
+                <th className="text-left p-4">Item</th>
                 <th className="text-left p-4">Type</th>
                 <th className="text-left p-4">Template</th>
                 <th className="text-left p-4">Segment</th>
@@ -385,9 +387,9 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {loading ? (
-                <tr><td colSpan={canAssign ? 14 : 13} className="p-8 text-center text-[var(--muted)]">Loading…</td></tr>
+                <tr><td colSpan={canAssign ? 15 : 14} className="p-8 text-center text-[var(--muted)]">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={canAssign ? 14 : 13} className="p-8 text-center text-[var(--muted)]">No surveys found.</td></tr>
+                <tr><td colSpan={canAssign ? 15 : 14} className="p-8 text-center text-[var(--muted)]">No surveys found.</td></tr>
               ) : rows.map(r => {
                 const sv = statusView(r.status);
                 return (
@@ -397,6 +399,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     </td>
                     <td className="p-4 font-mono text-[11px] text-[var(--heading)]">{r.customer_phone || '—'}</td>
                     <td className="p-4 text-[var(--text)]">{r.brand_name || '—'}</td>
+                    <td className="p-4 text-[var(--text)]">{r.item_name || '—'}</td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{surveyTypeLabel(r.survey_type)}</td>
                     <td className="p-4 text-[var(--muted)]">{r.template_name || '—'}</td>
                     <td className="p-4">

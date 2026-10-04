@@ -358,6 +358,7 @@ export interface SurveyAssignment {
   brand_id?: string | null;
   brand_name?: string;
   customer_phone: string;
+  item_name?: string | null; // the item to ask about (set per number on upload)
   assigned_agent_id?: string | null;
   agent_name?: string;
   attempt_count: number;

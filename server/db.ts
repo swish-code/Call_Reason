@@ -588,6 +588,8 @@ export class DB {
       -- Audit page: which upload each row came from (see upload_batches).
       ALTER TABLE ratings ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
+      -- The item the agent should ask about (e.g. a new menu item), set per number on upload.
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS item_name TEXT;
       ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
       CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
@@ -2001,7 +2003,7 @@ export class DB {
     return m;
   }
 
-  static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment?: string | null }[], uploadBatchId?: string | null): Promise<number> {
+  static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment?: string | null; item_name?: string | null }[], uploadBatchId?: string | null): Promise<number> {
     if (!rows.length) return 0;
     const client = await pool.connect();
     try {
@@ -2010,9 +2012,9 @@ export class DB {
         const a = rows[i];
         const id = "sasg-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(
-          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at,upload_batch_id)
-           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now(),$8)`,
-          [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date, a.segment || null, uploadBatchId ?? null]
+          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at,upload_batch_id,item_name)
+           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now(),$8,$9)`,
+          [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date, a.segment || null, uploadBatchId ?? null, a.item_name || null]
         );
       }
       await client.query("COMMIT");
@@ -2147,10 +2149,10 @@ export class DB {
       const agentName = asg.agent_name || (await pool.query("SELECT full_name FROM users WHERE id = $1", [data.agent_id])).rows[0]?.full_name || null;
       const srid = "srec-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
       await pool.query(
-        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,answered,note,extra,record_date,uploaded_by,created_at)
-         VALUES ($1,'survey_live',$2,$3,$4,$5,false,'no_action',$6, to_char(now() + interval '3 hours','YYYY-MM-DD'),$7, now())`,
+        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,answered,note,extra,record_date,uploaded_by,created_at,item_name)
+         VALUES ($1,'survey_live',$2,$3,$4,$5,false,'no_action',$6, to_char(now() + interval '3 hours','YYYY-MM-DD'),$7, now(),$8)`,
         [srid, asg.brand_id || null, asg.brand_name || null, asg.customer_phone || null, agentName,
-         JSON.stringify({ reachability: "not_reached", action_type: "no_action", campaign_id: asg.campaign_id, outcome: data.outcome }), data.agent_id]
+         JSON.stringify({ reachability: "not_reached", action_type: "no_action", campaign_id: asg.campaign_id, outcome: data.outcome }), data.agent_id, asg.item_name || null]
       );
     }
 
@@ -2220,10 +2222,10 @@ export class DB {
       const complaint = action_type === "complaint" ? (comment || "Complaint") : null;
       const srid = "srec-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
       await client.query(
-        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,rate,answered,comment,complaint,note,segment,extra,record_date,uploaded_by,created_at)
-         VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, to_char(now() + interval '3 hours','YYYY-MM-DD'), $13, now())`,
+        `INSERT INTO survey_records (id,record_type,brand_id,brand_label,phone,served_by,rate,answered,comment,complaint,note,segment,extra,record_date,uploaded_by,created_at,item_name)
+         VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, to_char(now() + interval '3 hours','YYYY-MM-DD'), $13, now(),$14)`,
         [srid, data.brand_id, asg?.brand_name || null, data.customer_phone, agentName, rate, answered,
-         comment, complaint, action_type, data.segment || null, JSON.stringify({ reachability, action_type, outcome: newStatus, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id]
+         comment, complaint, action_type, data.segment || null, JSON.stringify({ reachability, action_type, outcome: newStatus, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name }), data.agent_id, asg?.item_name || null]
       );
       // Update contact recency
       const ccid = "cc-" + Date.now() + "-" + Math.floor(Math.random() * 9999);

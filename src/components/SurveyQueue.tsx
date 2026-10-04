@@ -330,6 +330,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                 <tr>
                   <th className="p-4">Phone</th>
                   <th className="p-4">Brand</th>
+                  <th className="p-4">Item</th>
                   <th className="p-4">Template</th>
                   <th className="p-4">Scheduled</th>
                   <th className="p-4 text-center">Attempts</th>
@@ -342,6 +343,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                   <tr key={q.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
                     <td className="p-4 font-mono text-[var(--heading)] font-bold">{q.customer_phone}</td>
                     <td className="p-4 text-[var(--text)]">{q.brand_name || <span className="text-[var(--muted)]">—</span>}</td>
+                    <td className="p-4 text-[var(--heading)] font-bold">{q.item_name || <span className="text-[var(--muted)] font-normal">—</span>}</td>
                     <td className="p-4 text-[var(--text)]">{q.template_name || '—'}</td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDay(q.scheduled_date)}</td>
                     <td className="p-4 text-center font-bold">{q.attempt_count}/3</td>
@@ -362,7 +364,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                 ))}
                 {queue.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-[var(--muted)]">Your queue is empty.</td>
+                    <td colSpan={8} className="p-8 text-center text-[var(--muted)]">Your queue is empty.</td>
                   </tr>
                 )}
               </tbody>
@@ -385,6 +387,9 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                       {assignment?.customer_phone}{assignment?.brand_name ? ` · ${assignment.brand_name}` : ''}
                       {assignment?.template_name ? ` · ${assignment.template_name}` : ''}
                     </p>
+                    {assignment?.item_name && (
+                      <p className="mt-1 text-xs font-bold text-amber-400">Ask about: {assignment.item_name}</p>
+                    )}
                   </div>
                 </div>
                 <button onClick={closeWork} className="p-2 hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] rounded-xl transition">
