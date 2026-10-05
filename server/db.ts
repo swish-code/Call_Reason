@@ -2397,6 +2397,91 @@ export class DB {
    *                                  neither "collected a survey" nor "never got them")
    *   pending / in_progress       -> Pending
    */
+  /**
+   * Surveys Dashboard. Keeps two things apart that used to be mixed into one count:
+   *  - live work: numbers agents call inside the system (survey_assignments). The queue is a
+   *    snapshot of right now; "finished" counts calls whose result was saved in the period
+   *    (completed_at), with each call's saved answers.
+   *  - uploaded files: survey_records typed in from Excel (anything except survey_live, which is
+   *    just the system's own copy of a finished call), counted by upload time.
+   * from/to are UTC instants (Kuwait-day bounds); null means no bound.
+   */
+  static async getLiveSurveyDashboard(fromISO: string | null, toISO: string | null): Promise<any> {
+    const range = `($1::timestamptz IS NULL OR a.completed_at >= $1) AND ($2::timestamptz IS NULL OR a.completed_at <= $2)`;
+    const DONE = `('successful','unreachable','declined','refused','not_interested')`;
+    const v = [fromISO, toISO];
+    const [queue, finished, byAgent, byCampaign, results, uploaded] = await Promise.all([
+      // Same eligibility rule as the agents' queue (getSurveyQueue): pending, due, active campaign.
+      pool.query(`
+        SELECT count(*) FILTER (WHERE a.status = 'pending' AND c.status = 'active' AND a.scheduled_date <= CURRENT_DATE)::int AS due_now,
+               count(*) FILTER (WHERE a.status = 'pending' AND c.status = 'active' AND a.scheduled_date > CURRENT_DATE)::int AS later,
+               count(*) FILTER (WHERE a.status = 'in_progress')::int AS in_progress,
+               count(*) FILTER (WHERE a.status = 'pending' AND c.status <> 'active')::int AS on_hold
+        FROM survey_assignments a JOIN survey_campaigns c ON c.id = a.campaign_id`),
+      pool.query(`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE a.status = 'successful')::int AS successful,
+               count(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
+               count(*) FILTER (WHERE a.status IN ('refused','not_interested'))::int AS refused,
+               count(*) FILTER (WHERE a.action_type = 'complaint')::int AS complaints
+        FROM survey_assignments a WHERE a.status IN ${DONE} AND ${range}`, v),
+      pool.query(`
+        SELECT COALESCE(u.full_name, '(unassigned)') AS agent, count(*)::int AS finished,
+               count(*) FILTER (WHERE a.status = 'successful')::int AS successful,
+               count(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
+               count(*) FILTER (WHERE a.status IN ('refused','not_interested'))::int AS refused,
+               count(*) FILTER (WHERE a.action_type = 'complaint')::int AS complaints
+        FROM survey_assignments a LEFT JOIN users u ON u.id = a.assigned_agent_id
+        WHERE a.status IN ${DONE} AND ${range}
+        GROUP BY 1 ORDER BY 2 DESC`, v),
+      pool.query(`
+        SELECT c.id, b.brand_name, t.name AS template_name, c.status,
+               count(a.id)::int AS total,
+               count(a.id) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS open,
+               count(a.id) FILTER (WHERE a.status IN ${DONE})::int AS finished,
+               count(a.id) FILTER (WHERE a.status = 'successful')::int AS successful,
+               count(a.id) FILTER (WHERE a.status IN ${DONE} AND ${range})::int AS finished_in_period
+        FROM survey_campaigns c
+        LEFT JOIN survey_assignments a ON a.campaign_id = c.id
+        LEFT JOIN brands b ON b.id = c.brand_id
+        LEFT JOIN survey_templates t ON t.id = c.template_id
+        GROUP BY c.id, b.brand_name, t.name, c.status
+        HAVING count(a.id) > 0 AND (c.status <> 'cancelled' OR count(a.id) FILTER (WHERE a.status IN ${DONE} AND ${range}) > 0)
+        ORDER BY 6 DESC, 9 DESC`, v),
+      // Each finished call with the answers from its latest saved response.
+      pool.query(`
+        SELECT a.id, a.task_no, a.customer_phone, a.customer_name, a.order_id, a.branch, a.item_name, a.item_kind,
+               a.status, a.reachability, a.action_type, a.attempt_count, a.completed_at, a.segment,
+               b.brand_name, u.full_name AS agent_name, t.name AS template_name,
+               (SELECT json_agg(json_build_object('q', q.text, 'type', q.answer_type, 'v', x.answer_value) ORDER BY q.q_order)
+                  FROM survey_answers x LEFT JOIN survey_questions q ON q.id = x.question_id
+                  WHERE x.response_id = (SELECT r.id FROM survey_responses r WHERE r.assignment_id = a.id ORDER BY r.answered_at DESC LIMIT 1)
+                    AND COALESCE(x.answer_value, '') <> '') AS answers
+        FROM survey_assignments a
+        LEFT JOIN brands b ON b.id = a.brand_id
+        LEFT JOIN users u ON u.id = a.assigned_agent_id
+        LEFT JOIN survey_campaigns c ON c.id = a.campaign_id
+        LEFT JOIN survey_templates t ON t.id = c.template_id
+        WHERE a.status IN ${DONE} AND ${range}
+        ORDER BY a.completed_at DESC LIMIT 1000`, v),
+      pool.query(`
+        SELECT r.record_type, count(*)::int AS rows, count(*) FILTER (WHERE r.answered)::int AS answered
+        FROM survey_records r
+        WHERE r.record_type <> 'survey_live'
+          AND ($1::timestamptz IS NULL OR r.created_at >= $1) AND ($2::timestamptz IS NULL OR r.created_at <= $2)
+        GROUP BY 1 ORDER BY 2 DESC`, v),
+    ]);
+    return {
+      queue: queue.rows[0],
+      finished: finished.rows[0],
+      byAgent: byAgent.rows,
+      byCampaign: byCampaign.rows,
+      results: results.rows,
+      resultsCap: 1000,
+      uploaded: uploaded.rows,
+    };
+  }
+
   static async getSurveyOverview(filter: SurveyListFilter = {}): Promise<{
     summary: { total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number };
     byTemplate: { template_name: string; total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];

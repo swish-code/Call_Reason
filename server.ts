@@ -3241,6 +3241,14 @@ app.get("/api/surveys/overview", authenticateJWT, asyncHandler(async (req: any, 
   res.json(await DB.getSurveyOverview(surveyListFilter(req.query)));
 }));
 
+// Surveys Dashboard tab: live work vs uploaded files, kept apart (see DB.getLiveSurveyDashboard).
+app.get("/api/surveys/live-dashboard", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "agent" || req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
+    return res.status(403).json({ error: "Access denied." });
+  }
+  res.json(await DB.getLiveSurveyDashboard(kwDayToUtc(qs(req.query.from), false) ?? null, kwDayToUtc(qs(req.query.to), true) ?? null));
+}));
+
 // Manually assign / reassign / unassign a single survey to any active agent (supervisors+)
 app.post("/api/surveys/assignments/:id/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
