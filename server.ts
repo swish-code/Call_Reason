@@ -2768,6 +2768,25 @@ app.get("/api/reports/team-leader-kpi", authenticateJWT, asyncHandler(async (req
   res.json({ summary, leaders: leaderRows, trend, monthComparison });
 }));
 
+// Audit page "Delete": remove whole uploads. Admin only. dry_run=true returns the counts the
+// confirmation dialog shows; the real call deletes only rows nobody has worked on and backs
+// every deleted row up in deleted_uploads (see DB.deleteUploadBatches).
+app.post("/api/audit/uploads/delete", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x: any) => typeof x === "string" && x) : [];
+  if (!ids.length) return res.status(400).json({ error: "No uploads selected." });
+  if (ids.length > 500) return res.status(400).json({ error: "Too many uploads in one request (max 500). Narrow the filter." });
+  const dryRun = req.body?.dry_run === true;
+  const results = await DB.deleteUploadBatches(ids, { id: req.user.id, name: req.user.full_name }, dryRun);
+  if (!dryRun) {
+    await DB.addAuditLog({
+      operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role,
+      category: "Uploads", action: "Delete uploads",
+      details: `${results.reduce((a, r) => a + r.deleted, 0)} row(s) from ${results.length} upload(s)`,
+    });
+  }
+  res.json({ dry_run: dryRun, results });
+}));
+
 // Audit page — every file upload (ratings, survey numbers, survey records) with its counts
 // and, per batch, how many of its rows have since been completed.
 app.get("/api/audit/uploads", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {

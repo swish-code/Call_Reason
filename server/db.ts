@@ -253,6 +253,20 @@ export class DB {
       -- generic audit_logs middleware only stores the route + a truncated body,
       -- so the Audit page needs the counts and a batch id the data rows point
       -- back to (upload_batch_id on ratings / survey_assignments / survey_records).
+      -- Safety net for the Audit page's Delete button: every deleted upload's rows are copied
+      -- here (as JSON) in the same statement that deletes them, so a delete can be undone.
+      CREATE TABLE IF NOT EXISTS deleted_uploads (
+        id TEXT PRIMARY KEY,
+        upload_batch_id TEXT NOT NULL,
+        upload_type TEXT NOT NULL,
+        batch JSONB,
+        table_name TEXT NOT NULL,
+        row_count INTEGER NOT NULL,
+        rows JSONB,
+        deleted_by TEXT,
+        deleted_by_name TEXT,
+        deleted_at TIMESTAMPTZ DEFAULT now()
+      );
       CREATE TABLE IF NOT EXISTS upload_batches (
         id TEXT PRIMARY KEY,
         upload_type TEXT NOT NULL,
@@ -846,6 +860,61 @@ export class DB {
   // "done" means depends on the table: ratings = an actionable row that was closed (rows
   // auto-closed at upload were never open, so they aren't counted as work done);
   // survey numbers = any terminal call outcome; survey records = answered (fixed at upload).
+  // Delete whole uploads (Audit page). Only rows nobody has worked on are removed; anything a
+  // person has touched stays, and the upload's record stays with it. Deleted rows are copied to
+  // deleted_uploads in the same statement. dryRun reports the counts without changing anything.
+  static async deleteUploadBatches(ids: string[], by: { id: string; name?: string } | null, dryRun: boolean): Promise<any[]> {
+    const SPEC: Record<string, { table: string; untouched: string }> = {
+      ratings: {
+        table: "ratings",
+        untouched: `action_status IN ('pending','no_action_needed') AND recorded_by IS NULL AND resolved_at IS NULL
+          AND COALESCE(action_note,'') = '' AND NOT EXISTS (SELECT 1 FROM rating_call_attempts x WHERE x.rating_id = ratings.id)`,
+      },
+      survey_numbers: {
+        table: "survey_assignments",
+        untouched: `status = 'pending' AND attempt_count = 0 AND completed_at IS NULL`,
+      },
+      survey_records: { table: "survey_records", untouched: `record_type <> 'survey_live'` },
+    };
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: batches } = await client.query(`SELECT * FROM upload_batches WHERE id = ANY($1) ORDER BY uploaded_at`, [ids]);
+      const out: any[] = [];
+      for (const b of batches) {
+        const spec = SPEC[b.upload_type];
+        if (!spec) continue;
+        const { rows: [c] } = await client.query(
+          `SELECT count(*)::int AS total, count(*) FILTER (WHERE ${spec.untouched})::int AS deletable
+           FROM ${spec.table} WHERE upload_batch_id = $1`, [b.id]);
+        const result = { id: b.id, upload_type: b.upload_type, sub_type: b.sub_type, reconstructed: b.reconstructed,
+          total: c.total, deletable: c.deletable, protected: c.total - c.deletable, deleted: 0 };
+        if (!dryRun) {
+          if (c.deletable > 0) {
+            const delId = "del-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
+            await client.query(
+              `WITH del AS (DELETE FROM ${spec.table} WHERE upload_batch_id = $1 AND ${spec.untouched} RETURNING *)
+               INSERT INTO deleted_uploads (id, upload_batch_id, upload_type, batch, table_name, row_count, rows, deleted_by, deleted_by_name)
+               SELECT $2, $1, $3, $4::jsonb, $5, count(*)::int, json_agg(del)::jsonb, $6, $7 FROM del`,
+              [b.id, delId, b.upload_type, JSON.stringify(b), spec.table, by?.id ?? null, by?.name ?? null]);
+            result.deleted = c.deletable;
+          }
+          // Drop the upload's record once nothing of it is left.
+          const { rows: [left] } = await client.query(`SELECT count(*)::int AS n FROM ${spec.table} WHERE upload_batch_id = $1`, [b.id]);
+          if (left.n === 0) await client.query(`DELETE FROM upload_batches WHERE id = $1`, [b.id]);
+        }
+        out.push(result);
+      }
+      await client.query(dryRun ? "ROLLBACK" : "COMMIT");
+      return out;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
   static async getUploadBatches(filter: { type?: string; uploaded_by?: string; from?: string; to?: string } = {}): Promise<any[]> {
     const clauses: string[] = [];
     const values: any[] = [];

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { downloadCSV } from "../utils.js";
-import { FileSearch, Filter, X, Download, AlertCircle, RefreshCw, UploadCloud, Star, PhoneCall, ClipboardList } from "lucide-react";
+import { FileSearch, Filter, X, Download, AlertCircle, RefreshCw, UploadCloud, Star, PhoneCall, ClipboardList, Trash2, CheckCircle2 } from "lucide-react";
 
 interface Props { currentUser: User; }
 
@@ -57,12 +57,58 @@ export default function AuditUploads({ currentUser }: Props) {
       const res = await apiFetch(`/api/audit/uploads${qs.toString() ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load uploads.");
       setRows(await res.json());
+      setAppliedFilter(!!(t || u || f || tt));
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
   useEffect(() => { load("", "", "", ""); }, []);
 
   const clearFilter = () => { setType(""); setUploader(""); setFrom(""); setTo(""); load("", "", "", ""); };
   const hasFilter = !!(type || uploader || from || to);
+
+  // ---- Delete (admin only) ----
+  const isAdmin = currentUser.role === "admin";
+  const [appliedFilter, setAppliedFilter] = useState(false); // is the LIST on screen filtered (not just the inputs)?
+  const [deleting, setDeleting] = useState(false);
+  const [deleteMsg, setDeleteMsg] = useState("");
+
+  const deleteUploads = async (targets: Batch[]) => {
+    if (!targets.length) return;
+    setError(""); setDeleteMsg(""); setDeleting(true);
+    try {
+      const post = async (dry: boolean) => {
+        const res = await apiFetch("/api/audit/uploads/delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: targets.map((t) => t.id), dry_run: dry }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || "Delete failed.");
+        return d.results as { upload_type: Batch["upload_type"]; reconstructed: boolean; sub_type: string | null; total: number; deletable: number; protected: number; deleted: number }[];
+      };
+      // Dry run first, so the confirmation shows exactly what will happen.
+      const preview = await post(true);
+      const del = preview.reduce((a, r) => a + r.deletable, 0);
+      const kept = preview.reduce((a, r) => a + r.protected, 0);
+      const overwrite = preview.some((r) => r.upload_type === "ratings" && r.sub_type === "overwrite");
+      const rebuilt = preview.some((r) => r.reconstructed);
+      if (del === 0 && kept === 0) { setDeleteMsg("Nothing left to delete in the selected upload(s)."); load(); return; }
+      const msg = [
+        `Delete ${targets.length} upload(s)?`,
+        ``,
+        `• ${del} row(s) will be deleted`,
+        kept ? `• ${kept} row(s) will be KEPT because someone already worked on them` : `• No worked-on rows — nothing is protected`,
+        ``,
+        `Deleted rows are backed up and can be restored by a developer.`,
+        overwrite ? `\nWarning: an "overwrite" review upload replaced older versions of its rows — deleting it deletes those reviews entirely.` : ``,
+        rebuilt ? `\nWarning: this includes a historical upload that was rebuilt from existing data (marked Reconstructed).` : ``,
+      ].filter((l) => l !== undefined).join("\n");
+      if (del === 0) { window.alert(`Nothing can be deleted: all ${kept} row(s) were already worked on, so they're protected.`); return; }
+      if (!window.confirm(msg)) return;
+      const done = await post(false);
+      const n = done.reduce((a, r) => a + r.deleted, 0);
+      setDeleteMsg(`Deleted ${n} row(s) from ${done.length} upload(s).${kept ? ` ${kept} worked-on row(s) were kept.` : ""}`);
+      await load();
+    } catch (e: any) { setError(e.message); } finally { setDeleting(false); }
+  };
 
   // Uploader dropdown is built from whatever is loaded, so it only ever lists real uploaders.
   const uploaderMap = new Map<string, string>();
@@ -121,10 +167,16 @@ export default function AuditUploads({ currentUser }: Props) {
         </div>
         <button onClick={() => load()} disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Filter className="w-3.5 h-3.5" /> Apply</button>
         <button onClick={exportCsv} disabled={loading || rows.length === 0} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Export CSV</button>
+        {isAdmin && appliedFilter && rows.length > 0 && (
+          <button onClick={() => deleteUploads(rows)} disabled={deleting || loading} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5" title="Delete every upload currently listed">
+            <Trash2 className="w-3.5 h-3.5" /> Delete all {rows.length} shown
+          </button>
+        )}
         {hasFilter && <button onClick={clearFilter} className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><X className="w-3.5 h-3.5" /> Clear</button>}
         <button onClick={() => load()} className="ml-auto p-2.5 text-[var(--muted)] hover:text-[var(--heading)] bg-[var(--bg)] border border-[var(--border)] rounded-xl transition" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
       </div>
 
+      {deleteMsg && <div className="p-4 bg-emerald-950/20 border border-emerald-500/20 rounded-3xl text-sm text-emerald-400 flex items-center gap-2"><CheckCircle2 className="w-5 h-5" /> {deleteMsg}</div>}
       {error && <div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-3xl text-sm text-rose-400 flex items-center gap-2"><AlertCircle className="w-5 h-5" /> {error}</div>}
 
       {/* Totals for the current filter */}
@@ -164,6 +216,7 @@ export default function AuditUploads({ currentUser }: Props) {
                   <th className="text-center py-3 px-4">Skipped</th>
                   <th className="text-center py-3 px-4">Errors</th>
                   <th className="text-left py-3 px-4 min-w-[200px]">Completed</th>
+                  {isAdmin && <th className="py-3 px-4"></th>}
                 </tr>
               </thead>
               <tbody>
@@ -197,6 +250,12 @@ export default function AuditUploads({ currentUser }: Props) {
                           </div>
                         )}
                       </td>
+                      {isAdmin && (
+                        <td className="py-3 px-4 text-center">
+                          <button onClick={() => deleteUploads([r])} disabled={deleting} title="Delete this upload's rows"
+                            className="p-1.5 text-[var(--muted)] hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition disabled:opacity-40"><Trash2 className="w-4 h-4" /></button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
