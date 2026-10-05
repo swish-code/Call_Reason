@@ -12,6 +12,8 @@ interface SurveyRow {
   customer_phone: string;
   brand_name?: string;
   item_name?: string | null;
+  order_id?: string | null;
+  customer_name?: string | null;
   template_name?: string;
   assigned_agent_id?: string | null;
   agent_name?: string | null;
@@ -399,7 +401,10 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     </td>
                     <td className="p-4 font-mono text-[11px] text-[var(--heading)]">{r.customer_phone || '—'}</td>
                     <td className="p-4 text-[var(--text)]">{r.brand_name || '—'}</td>
-                    <td className="p-4 text-[var(--text)]">{r.item_name || '—'}</td>
+                    <td className="p-4 text-[var(--text)] max-w-[260px]">
+                      {r.item_name ? <span className="line-clamp-2" title={r.item_name}>{r.item_name}</span> : '—'}
+                      {(r.customer_name || r.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[r.customer_name, r.order_id].filter(Boolean).join(' · ')}</div>}
+                    </td>
                     <td className="p-4 text-[var(--muted)] text-[11px]">{surveyTypeLabel(r.survey_type)}</td>
                     <td className="p-4 text-[var(--muted)]">{r.template_name || '—'}</td>
                     <td className="p-4">

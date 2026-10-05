@@ -3030,7 +3030,12 @@ app.patch("/api/survey-campaigns/:id", authenticateJWT, asyncHandler(async (req:
 
 // Numbers upload template
 app.get("/api/survey-campaigns/numbers/template", authenticateJWT, asyncHandler(async (_req, res) => {
-  const ws = XLSX.utils.aoa_to_sheet([["Brand", "Customer Phone", "Item Name", "Segment"]]);
+  // Same layout the team works from. Only Brand, Phone Number and Products are required; the
+  // result columns (Reachability … Reachability Date) are filled in by agents inside the system,
+  // so anything typed there is ignored. Survey Date is ignored too — the system schedules by
+  // daily capacity. Segment is optional and read if present.
+  const ws = XLSX.utils.aoa_to_sheet([["Survey Date", "Order date", "Brand", "Branch", "Platform", "Order ID", "Phone Number", "Name", "Products",
+    "Reachability", "Overall Satisfaction {1-5}", "Taste & Flavor{ 1-5}", "Value for Money { 1-5}", "Purchase Intent { 1-5}", "Comment", "Served By", "Reachability Date", "Survey Type", "Segment"]]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Numbers");
   res.json({ filename: "campaign_numbers_template.xlsx", file: XLSX.write(wb, { type: "base64", bookType: "xlsx" }) });
@@ -3056,7 +3061,22 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     errors: [] as { row: number; message: string }[],
   };
   const seen = new Set<string>();
-  const candidates: { phone: string; segment: string | null; brand_id: string | null; item_name: string | null }[] = [];
+  const candidates: { phone: string; segment: string | null; brand_id: string | null; item_name: string | null;
+    order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null }[] = [];
+  // Kuwait numbers arrive as 965XXXXXXXX (11 digits); the queue and the duplicate checks use the
+  // 8-digit form, so normalise or the same customer would never be detected as a duplicate.
+  const kwPhone = (raw: string): string => {
+    const p = normalisePhone(raw);
+    const digits = p.replace(/\D/g, "");
+    return digits.length === 11 && digits.startsWith("965") ? digits.slice(3) : p;
+  };
+  // DD/MM/YYYY text must not go through new Date() (it would read 04/10 as 10 April).
+  const orderDateOf = (raw: string): string | null => {
+    if (!raw) return null;
+    const m = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    return normaliseExcelDate(raw) || null;
+  };
   // Each row may name its own brand (a "General" campaign spans several); a blank cell
   // falls back to the campaign's brand. A brand we can't match is an error, not a silent
   // fallback — otherwise the agent would call about the wrong brand.
@@ -3064,7 +3084,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const brandAlias: Record<string, string> = { shakir: "shawarma shakir", yelo: "yelo pizza" };
 
   for (let i = 0; i < rows.length; i++) {
-    const phone = normalisePhone(pick(rows[i], "Customer Phone", "Phone", "Phone Number", "Mobile", "Number"));
+    const phone = kwPhone(pick(rows[i], "Phone Number", "Customer Phone", "Phone", "Mobile", "Number"));
     if (!phone) { result.errors.push({ row: i + 2, message: "Missing phone." }); continue; }
     const brandLabel = pick(rows[i], "Brand", "Restaurant");
     let brandId: string | null = campaign.brand_id || null;
@@ -3080,15 +3100,24 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     if (await DB.wasRecentlyContacted(brandId, phone, SURVEY_DEDUP_DAYS)) { result.duplicates_10day++; continue; }
     if (await DB.isPhoneQueued(brandId, phone)) { result.already_queued++; continue; }
     const segment = pick(rows[i], "Segment", "Customer Segment") || null;
-    const itemName = pick(rows[i], "Item Name", "Item", "NewItemName", "New Item Name", "Product", "Products") || null;
-    candidates.push({ phone, segment, brand_id: brandId, item_name: itemName });
+    const itemName = pick(rows[i], "Products", "Item Name", "Item", "NewItemName", "New Item Name", "Product") || null;
+    candidates.push({
+      phone, segment, brand_id: brandId, item_name: itemName,
+      order_id: pick(rows[i], "Order ID") || null,
+      customer_name: pick(rows[i], "Name", "Customer Name") || null,
+      branch: pick(rows[i], "Branch") || null,
+      order_date: orderDateOf(pick(rows[i], "Order date", "Order Date")),
+      platform_label: pick(rows[i], "Platform") || null,
+      item_kind: pick(rows[i], "Survey Type") || null,
+    });
   }
 
   // Distribute across days honouring the global daily capacity
   const today = await DB.getToday();
   const counts = await DB.getPendingCountsByDate();
   const assignedAgent = campaign.assignment_mode === "assigned" ? (campaign.default_agent_id || null) : null;
-  const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment: string | null; item_name: string | null }[] = [];
+  const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment: string | null; item_name: string | null;
+    order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null }[] = [];
   let offset = 0;
   const byDay = new Map<string, number>();
   for (const cand of candidates) {
@@ -3096,7 +3125,8 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     while ((counts.get(date) || 0) >= DAILY_SURVEY_LIMIT) { offset++; date = addDays(today, offset); }
     counts.set(date, (counts.get(date) || 0) + 1);
     byDay.set(date, (byDay.get(date) || 0) + 1);
-    toInsert.push({ campaign_id: campaign.id, brand_id: cand.brand_id, customer_phone: cand.phone, assigned_agent_id: assignedAgent, scheduled_date: date, segment: cand.segment, item_name: cand.item_name });
+    toInsert.push({ campaign_id: campaign.id, brand_id: cand.brand_id, customer_phone: cand.phone, assigned_agent_id: assignedAgent, scheduled_date: date, segment: cand.segment, item_name: cand.item_name,
+      order_id: cand.order_id, customer_name: cand.customer_name, branch: cand.branch, order_date: cand.order_date, platform_label: cand.platform_label, item_kind: cand.item_kind });
   }
   const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
   result.inserted = await DB.addSurveyAssignments(toInsert, uploadBatchId);

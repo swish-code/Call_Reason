@@ -359,6 +359,12 @@ export interface SurveyAssignment {
   brand_name?: string;
   customer_phone: string;
   item_name?: string | null; // the item to ask about (set per number on upload)
+  order_id?: string | null;
+  customer_name?: string | null;
+  branch?: string | null;
+  order_date?: string | null;
+  platform_label?: string | null;
+  item_kind?: string | null; // "old item" / "new item"
   assigned_agent_id?: string | null;
   agent_name?: string;
   attempt_count: number;

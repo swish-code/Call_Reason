@@ -341,9 +341,15 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
               <tbody className="divide-y divide-[var(--border)]">
                 {queue.map(q => (
                   <tr key={q.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
-                    <td className="p-4 font-mono text-[var(--heading)] font-bold">{q.customer_phone}</td>
+                    <td className="p-4">
+                      <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}</div>
+                      {(q.customer_name || q.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[q.customer_name, q.order_id].filter(Boolean).join(' · ')}</div>}
+                    </td>
                     <td className="p-4 text-[var(--text)]">{q.brand_name || <span className="text-[var(--muted)]">—</span>}</td>
-                    <td className="p-4 text-[var(--heading)] font-bold">{q.item_name || <span className="text-[var(--muted)] font-normal">—</span>}</td>
+                    <td className="p-4 text-[var(--heading)] font-bold max-w-[320px]">
+                      {q.item_name ? <span className="line-clamp-2" title={q.item_name}>{q.item_name}</span> : <span className="text-[var(--muted)] font-normal">—</span>}
+                      {q.item_kind && <div className="text-[10px] font-normal text-[var(--muted)] mt-0.5">{q.item_kind}</div>}
+                    </td>
                     <td className="p-4 text-[var(--text)]">{q.template_name || '—'}</td>
                     <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDay(q.scheduled_date)}</td>
                     <td className="p-4 text-center font-bold">{q.attempt_count}/3</td>
@@ -388,7 +394,12 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                       {assignment?.template_name ? ` · ${assignment.template_name}` : ''}
                     </p>
                     {assignment?.item_name && (
-                      <p className="mt-1 text-xs font-bold text-amber-400">Ask about: {assignment.item_name}</p>
+                      <p className="mt-1 text-xs font-bold text-amber-400">Ask about: {assignment.item_name}{assignment.item_kind ? ` (${assignment.item_kind})` : ''}</p>
+                    )}
+                    {(assignment?.customer_name || assignment?.order_id || assignment?.branch || assignment?.order_date) && (
+                      <p className="mt-1 text-[11px] text-[var(--muted)]">
+                        {[assignment.customer_name, assignment.order_id && `Order ${assignment.order_id}`, assignment.branch, assignment.platform_label, assignment.order_date && `Ordered ${assignment.order_date}`].filter(Boolean).join(' · ')}
+                      </p>
                     )}
                   </div>
                 </div>
