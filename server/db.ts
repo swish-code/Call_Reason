@@ -135,6 +135,14 @@ const INTERACTION_UPDATE_COLS = ["interaction_date", "interaction_time", "agent_
 const LOG_COLS = ["log_type", "department", "activity_type", "status", "agent_id", "agent_name", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "calls_reviewed", "created_at", "updated_at", "created_by"] as const;
 const LOG_UPDATE_COLS = ["department", "activity_type", "status", "branch", "brand", "order_number", "aggregator", "customer_name", "complaint_id", "target_agent_name", "notes", "action_taken", "resolution_notes", "action_plan", "follow_up_date", "duration_seconds", "calls_reviewed"] as const;
 
+// One skipped or rejected row of an upload, as kept in upload_batches.issue_rows.
+export type UploadIssueRow = {
+  row: number; reason: string; phone?: string | null; brand?: string | null;
+  order_id?: string | null; customer_name?: string | null; detail?: string | null;
+};
+// Keeps one upload's list bounded; the per-reason counts are always complete.
+const UPLOAD_ISSUE_ROWS_CAP = 20000;
+
 // All Surveys (survey_assignments) filters. from/to are UTC instants on created_at.
 export type SurveyListFilter = {
   brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string;
@@ -612,6 +620,12 @@ export class DB {
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS platform_label TEXT;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS item_kind TEXT;
       ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
+      -- Audit page: why rows of an upload were skipped or rejected. skip_breakdown is
+      -- {reason: count}; issue_rows is one entry per skipped/rejected row (row number,
+      -- reason, phone/brand/order, detail) for the "download list" button. NULL on uploads
+      -- made before this existed.
+      ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS skip_breakdown JSONB;
+      ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS issue_rows JSONB;
       CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_records_upload_batch ON survey_records(upload_batch_id);
@@ -854,13 +868,24 @@ export class DB {
     id: string; upload_type: string; sub_type?: string | null; ref_id?: string | null; ref_label?: string | null;
     uploaded_by: string; uploaded_by_name?: string | null;
     total_rows: number; inserted: number; skipped: number; errors: number; tasks?: number;
+    skip_breakdown?: Record<string, number> | null; issue_rows?: UploadIssueRow[] | null;
   }): Promise<void> {
     await pool.query(
-      `INSERT INTO upload_batches (id, upload_type, sub_type, ref_id, ref_label, uploaded_by, uploaded_by_name, uploaded_at, total_rows, inserted, skipped, errors, tasks)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$9,$10,$11,$12)`,
+      `INSERT INTO upload_batches (id, upload_type, sub_type, ref_id, ref_label, uploaded_by, uploaded_by_name, uploaded_at, total_rows, inserted, skipped, errors, tasks, skip_breakdown, issue_rows)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb)`,
       [b.id, b.upload_type, b.sub_type ?? null, b.ref_id ?? null, b.ref_label ?? null, b.uploaded_by, b.uploaded_by_name ?? null,
-       b.total_rows, b.inserted, b.skipped, b.errors, b.tasks ?? 0]
+       b.total_rows, b.inserted, b.skipped, b.errors, b.tasks ?? 0,
+       b.skip_breakdown ? JSON.stringify(b.skip_breakdown) : null,
+       b.issue_rows ? JSON.stringify(b.issue_rows.slice(0, UPLOAD_ISSUE_ROWS_CAP)) : null]
     );
+  }
+
+  // One upload's skipped/rejected rows (Audit page "download list").
+  static async getUploadBatchIssues(id: string): Promise<{ batch: any; rows: UploadIssueRow[] } | undefined> {
+    const { rows } = await pool.query(`SELECT * FROM upload_batches WHERE id = $1`, [id]);
+    if (!rows[0]) return undefined;
+    const { issue_rows, ...batch } = rows[0];
+    return { batch, rows: Array.isArray(issue_rows) ? issue_rows : [] };
   }
 
   // Batches plus, per batch, how many of its rows have since reached a "done" state. What
@@ -931,7 +956,12 @@ export class DB {
     if (filter.from) { clauses.push(`uploaded_at >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`uploaded_at <= $${idx++}`); values.push(filter.to); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    const { rows: batches } = await pool.query(`SELECT * FROM upload_batches ${where} ORDER BY uploaded_at DESC LIMIT 2000`, values);
+    // issue_rows can be thousands of entries per upload — the list only says whether it exists.
+    const { rows: batches } = await pool.query(`
+      SELECT id, upload_type, sub_type, ref_id, ref_label, uploaded_by, uploaded_by_name, uploaded_at,
+             total_rows, inserted, skipped, errors, tasks, reconstructed, skip_breakdown,
+             COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(issue_rows) = 'array' THEN issue_rows END), 0) AS issue_count
+      FROM upload_batches ${where} ORDER BY uploaded_at DESC LIMIT 2000`, values);
     if (!batches.length) return [];
 
     const ids = batches.map((b) => b.id);
@@ -2056,6 +2086,34 @@ export class DB {
       [phone, brandId, String(days)]
     );
     return rows.length > 0;
+  }
+
+  // Same rules as wasRecentlyContacted / isPhoneQueued, but return the matching row so an
+  // upload can record WHY a number was skipped (last contact date, which campaign holds it).
+  static async getRecentContact(brandId: string | null, phone: string, days: number): Promise<{ last_contacted_at: string; brand_name: string | null } | undefined> {
+    const { rows } = await pool.query(
+      `SELECT cc.last_contacted_at, b.brand_name FROM customer_contacts cc LEFT JOIN brands b ON b.id = cc.brand_id
+        WHERE cc.phone_number = $1 AND ($2::text IS NULL OR cc.brand_id = $2)
+          AND cc.last_contacted_at > now() - ($3 || ' days')::interval
+        ORDER BY cc.last_contacted_at DESC LIMIT 1`,
+      [phone, brandId, String(days)]
+    );
+    return rows[0];
+  }
+
+  static async getQueuedAssignment(brandId: string | null, phone: string): Promise<{ status: string; scheduled_date: string; created_at: string; template_name: string | null; brand_name: string | null } | undefined> {
+    const { rows } = await pool.query(
+      `SELECT a.status, to_char(a.scheduled_date, 'YYYY-MM-DD') AS scheduled_date, a.created_at, t.name AS template_name, b.brand_name
+         FROM survey_assignments a
+         LEFT JOIN survey_campaigns c ON c.id = a.campaign_id
+         LEFT JOIN survey_templates t ON t.id = c.template_id
+         LEFT JOIN brands b ON b.id = a.brand_id
+        WHERE a.customer_phone = $1 AND ($2::text IS NULL OR a.brand_id = $2)
+          AND a.status IN ('pending','in_progress')
+        ORDER BY a.created_at ASC LIMIT 1`,
+      [phone, brandId]
+    );
+    return rows[0];
   }
 
   static async isPhoneQueued(brandId: string | null, phone: string): Promise<boolean> {

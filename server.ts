@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { DB } from "./server/db.js";
+import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms } from "./server/enrich.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
@@ -715,6 +715,11 @@ const kwDayToUtc = (dateStr: string | undefined, endOfDay: boolean): string | un
   return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0) - KW_OFFSET_MS).toISOString();
 };
 const qs = (v: any): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+// A stored instant (Date or ISO string) as Kuwait "YYYY-MM-DD HH:MM", for human-readable messages.
+const kwDateTime = (v: any): string => {
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? String(v ?? "") : new Date(t + KW_OFFSET_MS).toISOString().replace("T", " ").slice(0, 16);
+};
 // Days between the Excel serial epoch (1899-12-30) and the Unix epoch.
 const EXCEL_EPOCH_DAYS = 25569;
 function kuwaitToday(): { date: string; weekday: number } {
@@ -2168,9 +2173,14 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
     }
   }
 
+  // Every skipped/rejected row is kept for the Audit page (why it was skipped, downloadable).
+  const issues: UploadIssueRow[] = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const lineNum = i + 2;
+    const base = { row: lineNum, phone: pick(r, "Phone Number") || null, brand: pick(r, "Restaurant", "Brand") || null,
+      order_id: pick(r, "Order ID", "OrderID", "Order") || null, customer_name: pick(r, "Customer Name") || null };
+    const reject = (message: string) => { result.errors.push({ row: lineNum, message }); issues.push({ ...base, reason: "error", detail: message }); };
     try {
       const brandName = pick(r, "Restaurant", "Brand");
       const platformName = pick(r, "Platform");
@@ -2178,15 +2188,15 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const rateRaw = pick(r, "Rate", "Rating (1-5)", "Rating");
       const ratingVal = Math.round(Number(String(rateRaw).replace(/[^0-9.]/g, "")));
 
-      if (!brandName) { result.errors.push({ row: lineNum, message: "Missing Restaurant/Brand." }); continue; }
-      if (!platformName) { result.errors.push({ row: lineNum, message: "Missing Platform." }); continue; }
-      if (!orderId) { result.errors.push({ row: lineNum, message: "Missing Order ID." }); continue; }
-      if (!ratingVal || ratingVal < 1 || ratingVal > 5) { result.errors.push({ row: lineNum, message: `Invalid rate: ${rateRaw}` }); continue; }
+      if (!brandName) { reject("Missing Restaurant/Brand."); continue; }
+      if (!platformName) { reject("Missing Platform."); continue; }
+      if (!orderId) { reject("Missing Order ID."); continue; }
+      if (!ratingVal || ratingVal < 1 || ratingVal > 5) { reject(`Invalid rate: ${rateRaw}`); continue; }
 
       const brand_id = brandMap.get(brandName.toLowerCase());
-      if (!brand_id) { result.errors.push({ row: lineNum, message: `Unknown brand: ${brandName}` }); continue; }
+      if (!brand_id) { reject(`Unknown brand: ${brandName}`); continue; }
       const platform_id = platMap.get(platformName.toLowerCase());
-      if (!platform_id) { result.errors.push({ row: lineNum, message: `Unknown platform: ${platformName}` }); continue; }
+      if (!platform_id) { reject(`Unknown platform: ${platformName}`); continue; }
 
       const review_text = pick(r, "Customer Comment");
       let phone = normalisePhone(pick(r, "Phone Number"));
@@ -2231,11 +2241,14 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       }, mode as "skip" | "overwrite");
 
       if (outcome === "inserted") result.inserted++;
-      else if (outcome === "skipped") result.duplicates++;
+      else if (outcome === "skipped") {
+        result.duplicates++;
+        issues.push({ ...base, reason: "already_uploaded", detail: `This order (${brandName} · ${platformName}) was already uploaded — skip-duplicates mode keeps the existing review` });
+      }
       else result.overwritten++;
       if (outcome !== "skipped") { if (isTask) result.tasks++; else result.auto_closed++; }
     } catch (e: any) {
-      result.errors.push({ row: lineNum, message: e.message || "Unknown error." });
+      reject(e.message || "Unknown error.");
     }
   }
   // Overwritten rows now point at this batch too (upsert moves upload_batch_id), so they
@@ -2246,6 +2259,8 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
     total_rows: result.total, inserted: result.inserted + result.overwritten,
     skipped: result.duplicates, errors: result.errors.length, tasks: result.tasks,
+    skip_breakdown: { already_uploaded: result.duplicates, error: result.errors.length },
+    issue_rows: issues,
   });
   res.json(result);
 }));
@@ -2787,6 +2802,35 @@ app.post("/api/audit/uploads/delete", authenticateJWT, requireAdmin, asyncHandle
   res.json({ dry_run: dryRun, results });
 }));
 
+// Audit page "download list": an upload's skipped and rejected rows, with the reason for each.
+// A function, not a constant: SURVEY_DEDUP_DAYS is declared further down this file.
+const uploadIssueLabel = (reason: string): string => ({
+  dup_file: "Duplicate in the same file",
+  dup_10day: `Surveyed in the last ${SURVEY_DEDUP_DAYS} days`,
+  already_queued: "Already in the survey queue",
+  already_uploaded: "Review already uploaded",
+  empty_row: "Empty row",
+  error: "Rejected (error)",
+} as Record<string, string>)[reason] || reason;
+app.get("/api/audit/uploads/:id/issues", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
+  const found = await DB.getUploadBatchIssues(req.params.id);
+  if (!found) return res.status(404).json({ error: "Upload not found." });
+  const header = ["Row in file", "Reason", "Detail", "Phone", "Brand", "Order ID", "Customer Name"];
+  const aoa: any[][] = [header, ...found.rows.map((r) => [
+    r.row, uploadIssueLabel(r.reason), r.detail || "", r.phone || "", r.brand || "", r.order_id || "", r.customer_name || "",
+  ])];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 10 }, { wch: 30 }, { wch: 80 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 22 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Skipped rows");
+  const stamp = kwDateTime(found.batch.uploaded_at).replace(/[: ]/g, "-");
+  res.json({
+    filename: `upload_${found.batch.upload_type}_${stamp}_skipped.xlsx`,
+    file: XLSX.write(wb, { type: "base64", bookType: "xlsx" }),
+    rows: found.rows.length,
+  });
+}));
+
 // Audit page — every file upload (ratings, survey numbers, survey records) with its counts
 // and, per batch, how many of its rows have since been completed.
 app.get("/api/audit/uploads", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
@@ -3083,22 +3127,46 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const brandMap = new Map((await DB.getBrands()).map((b: any) => [b.brand_name.toLowerCase(), b.id]));
   const brandAlias: Record<string, string> = { shakir: "shawarma shakir", yelo: "yelo pizza" };
 
+  // Every skipped/rejected row is kept for the Audit page (why it was skipped, downloadable).
+  const issues: UploadIssueRow[] = [];
+  const firstRowOf = new Map<string, number>();
   for (let i = 0; i < rows.length; i++) {
-    const phone = kwPhone(pick(rows[i], "Phone Number", "Customer Phone", "Phone", "Mobile", "Number"));
-    if (!phone) { result.errors.push({ row: i + 2, message: "Missing phone." }); continue; }
+    const rawPhone = pick(rows[i], "Phone Number", "Customer Phone", "Phone", "Mobile", "Number");
+    const phone = kwPhone(rawPhone);
     const brandLabel = pick(rows[i], "Brand", "Restaurant");
+    const base = { row: i + 2, phone: phone || rawPhone || null, brand: brandLabel || campaign.brand_name || null,
+      order_id: pick(rows[i], "Order ID") || null, customer_name: pick(rows[i], "Name", "Customer Name") || null };
+    const reject = (message: string) => { result.errors.push({ row: i + 2, message }); issues.push({ ...base, reason: "error", detail: message }); };
+    if (!phone) { reject("Missing phone."); continue; }
     let brandId: string | null = campaign.brand_id || null;
     if (brandLabel) {
       brandId = resolveBrand(brandAlias[brandLabel.toLowerCase().trim()] || brandLabel, brandMap);
-      if (!brandId) { result.errors.push({ row: i + 2, message: `Unknown brand: ${brandLabel}` }); continue; }
+      if (!brandId) { reject(`Unknown brand: ${brandLabel}`); continue; }
       if (campaign.brand_id && brandId !== campaign.brand_id) {
-        result.errors.push({ row: i + 2, message: `Brand "${brandLabel}" doesn't match this campaign's brand (${campaign.brand_name}).` }); continue;
+        reject(`Brand "${brandLabel}" doesn't match this campaign's brand (${campaign.brand_name}).`); continue;
       }
     }
-    if (seen.has(`${brandId}|${phone}`)) { result.duplicates_file++; continue; }
-    seen.add(`${brandId}|${phone}`);
-    if (await DB.wasRecentlyContacted(brandId, phone, SURVEY_DEDUP_DAYS)) { result.duplicates_10day++; continue; }
-    if (await DB.isPhoneQueued(brandId, phone)) { result.already_queued++; continue; }
+    const key = `${brandId}|${phone}`;
+    if (seen.has(key)) {
+      result.duplicates_file++;
+      issues.push({ ...base, reason: "dup_file", detail: `Same number and brand as row ${firstRowOf.get(key)} of this file` });
+      continue;
+    }
+    seen.add(key); firstRowOf.set(key, i + 2);
+    const recent = await DB.getRecentContact(brandId, phone, SURVEY_DEDUP_DAYS);
+    if (recent) {
+      result.duplicates_10day++;
+      issues.push({ ...base, reason: "dup_10day",
+        detail: `Surveyed on ${kwDateTime(recent.last_contacted_at)}${recent.brand_name ? ` (${recent.brand_name})` : ""} — less than ${SURVEY_DEDUP_DAYS} days ago` });
+      continue;
+    }
+    const queued = await DB.getQueuedAssignment(brandId, phone);
+    if (queued) {
+      result.already_queued++;
+      issues.push({ ...base, reason: "already_queued",
+        detail: `Already waiting in the queue (${queued.status}${queued.template_name ? `, ${queued.template_name}` : ""}, uploaded ${kwDateTime(queued.created_at)}, scheduled ${queued.scheduled_date})` });
+      continue;
+    }
     const segment = pick(rows[i], "Segment", "Customer Segment") || null;
     const itemName = pick(rows[i], "Products", "Item Name", "Item", "NewItemName", "New Item Name", "Product") || null;
     candidates.push({
@@ -3141,6 +3209,8 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
     total_rows: result.total, inserted: result.inserted,
     skipped: result.duplicates_file + result.duplicates_10day + result.already_queued, errors: result.errors.length,
+    skip_breakdown: { dup_file: result.duplicates_file, dup_10day: result.duplicates_10day, already_queued: result.already_queued, error: result.errors.length },
+    issue_rows: issues,
   });
   res.json(result);
 }));
@@ -3319,16 +3389,22 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
 
   const result = { total: rows.length, inserted: 0, answered: 0, no_answer: 0, invalid: 0, errors: [] as { row: number; message: string }[] };
   const records: any[] = [];
+  const issues: UploadIssueRow[] = [];
   for (let i = 0; i < rows.length; i++) {
     try {
       const rec = t.map(rows[i], ctx);
       const hasData = rec.order_id || rec.phone || rec.item_name || rec.brand_label || rec.rate != null;
-      if (!hasData) { result.invalid++; continue; }
+      if (!hasData) {
+        result.invalid++;
+        issues.push({ row: i + 2, reason: "empty_row", detail: "No order ID, phone, item, brand or rate in this row" });
+        continue;
+      }
       rec.uploaded_by = req.user.id;
       records.push(rec);
       if (rec.answered) result.answered++; else result.no_answer++;
     } catch (e: any) {
       result.errors.push({ row: i + 2, message: e.message || "Unknown error." });
+      issues.push({ row: i + 2, reason: "error", detail: e.message || "Unknown error." });
     }
   }
   const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
@@ -3338,6 +3414,8 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
     total_rows: result.total, inserted: result.inserted,
     skipped: result.invalid, errors: result.errors.length,
+    skip_breakdown: { empty_row: result.invalid, error: result.errors.length },
+    issue_rows: issues,
   });
   res.json(result);
 }));

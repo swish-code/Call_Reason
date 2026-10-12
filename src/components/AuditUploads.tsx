@@ -20,7 +20,34 @@ interface Batch {
   completed: number;     // rows of this batch that reached a "done" state
   denominator: number;   // rows that could be completed (ratings: actionable rows only)
   successful: number | null; // survey numbers only: surveyed successfully
+  skip_breakdown: Record<string, number> | null; // why rows were skipped/rejected (null on older uploads)
+  issue_count: number;   // skipped + rejected rows saved for the download list
 }
+
+// Why a row was skipped — short labels for the table, full ones are in the downloaded file.
+const SKIP_LABEL: Record<string, string> = {
+  dup_file: "duplicate in file",
+  dup_10day: "surveyed in last 10 days",
+  already_queued: "already in queue",
+  already_uploaded: "already uploaded",
+  empty_row: "empty row",
+};
+const SKIP_HELP: Record<string, string> = {
+  dup_file: "The same number (for the same brand) appears more than once in this file — only the first one was added.",
+  dup_10day: "This customer was already surveyed for this brand in the last 10 days, so they are not called again yet.",
+  already_queued: "This number is already waiting in the survey queue for this brand from an earlier upload.",
+  already_uploaded: "This order's review was uploaded before; in \"skip duplicates\" mode the existing review is kept.",
+  empty_row: "The row had no order ID, phone, item, brand or rate.",
+};
+const skipParts = (b: Record<string, number> | null) =>
+  b ? Object.entries(b).filter(([k, n]) => k !== "error" && Number(n) > 0).map(([k, n]) => ({ key: k, n: Number(n) })) : [];
+
+const downloadBase64 = (b64: string, filename: string) => {
+  const a = document.createElement("a");
+  a.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
+  a.download = filename;
+  a.click();
+};
 
 const KW_MS = 3 * 60 * 60 * 1000;
 const fmt = (iso: string) => new Date(new Date(iso).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16);
@@ -110,6 +137,18 @@ export default function AuditUploads({ currentUser }: Props) {
     } catch (e: any) { setError(e.message); } finally { setDeleting(false); }
   };
 
+  // ---- Skipped / rejected rows of one upload, as an Excel file ----
+  const [downloadingId, setDownloadingId] = useState("");
+  const downloadIssues = async (r: Batch) => {
+    setError(""); setDownloadingId(r.id);
+    try {
+      const res = await apiFetch(`/api/audit/uploads/${encodeURIComponent(r.id)}/issues`);
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Download failed.");
+      downloadBase64(d.file, d.filename);
+    } catch (e: any) { setError(e.message); } finally { setDownloadingId(""); }
+  };
+
   // Uploader dropdown is built from whatever is loaded, so it only ever lists real uploaders.
   const uploaderMap = new Map<string, string>();
   rows.forEach((r) => { if (r.uploaded_by) uploaderMap.set(r.uploaded_by, r.uploaded_by_name || r.uploaded_by); });
@@ -126,8 +165,10 @@ export default function AuditUploads({ currentUser }: Props) {
 
   const exportCsv = () => {
     downloadCSV(
-      ["Date & Time (Kuwait)", "Uploaded By", "Type", "Detail", "Rows in file", "Inserted", "Skipped", "Errors", "Completed", "Of", "Reconstructed"],
-      rows.map((r) => [fmt(r.uploaded_at), r.uploaded_by_name || "", TYPE_LABEL[r.upload_type], describe(r), String(r.total_rows), String(r.inserted), String(r.skipped), String(r.errors), String(r.completed), String(r.denominator), r.reconstructed ? "yes" : "no"]),
+      ["Date & Time (Kuwait)", "Uploaded By", "Type", "Detail", "Rows in file", "Inserted", "Skipped", "Skip reasons", "Errors", "Completed", "Of", "Reconstructed"],
+      rows.map((r) => [fmt(r.uploaded_at), r.uploaded_by_name || "", TYPE_LABEL[r.upload_type], describe(r), String(r.total_rows), String(r.inserted), String(r.skipped),
+        r.skip_breakdown ? skipParts(r.skip_breakdown).map((p) => `${p.n} ${SKIP_LABEL[p.key] || p.key}`).join("; ") : "",
+        String(r.errors), String(r.completed), String(r.denominator), r.reconstructed ? "yes" : "no"]),
       `upload_audit_${new Date().toISOString().slice(0, 10)}`,
     );
   };
@@ -237,8 +278,30 @@ export default function AuditUploads({ currentUser }: Props) {
                       </td>
                       <td className="py-3 px-4 text-center font-mono">{r.total_rows}</td>
                       <td className="py-3 px-4 text-center font-mono text-emerald-400">{r.inserted}</td>
-                      <td className="py-3 px-4 text-center font-mono text-[var(--muted)]">{r.skipped}</td>
-                      <td className="py-3 px-4 text-center font-mono">{r.errors > 0 ? <span className="text-rose-400 font-bold">{r.errors}</span> : <span className="text-[var(--muted)]">0</span>}</td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="font-mono text-[var(--muted)]">{r.skipped}</div>
+                        {r.skipped > 0 && (r.skip_breakdown ? (
+                          <div className="mt-1 space-y-0.5">
+                            {skipParts(r.skip_breakdown).map((p) => (
+                              <div key={p.key} title={SKIP_HELP[p.key] || ""} className="text-[10px] text-amber-400/90 whitespace-nowrap cursor-help">
+                                <span className="font-mono font-bold">{p.n}</span> {SKIP_LABEL[p.key] || p.key}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-[9px] text-[var(--muted)] whitespace-nowrap" title="Uploaded before the system started recording skip reasons">no reasons recorded</div>
+                        ))}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="font-mono">{r.errors > 0 ? <span className="text-rose-400 font-bold">{r.errors}</span> : <span className="text-[var(--muted)]">0</span>}</div>
+                        {r.issue_count > 0 && (
+                          <button onClick={() => downloadIssues(r)} disabled={downloadingId === r.id}
+                            title="Download every skipped and rejected row of this upload, with the reason for each"
+                            className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-md transition disabled:opacity-50 whitespace-nowrap">
+                            <Download className="w-3 h-3" /> {downloadingId === r.id ? "…" : `List (${r.issue_count})`}
+                          </button>
+                        )}
+                      </td>
                       <td className="py-3 px-4">
                         {r.denominator === 0 ? (
                           <span className="text-[var(--muted)]">{r.upload_type === "ratings" && r.inserted > 0 ? "nothing to action" : "—"}</span>
@@ -268,6 +331,9 @@ export default function AuditUploads({ currentUser }: Props) {
       <div className="text-[11px] text-[var(--muted)] space-y-1">
         <p className="font-bold text-[var(--text)]">What "Completed" counts</p>
         {(Object.keys(COMPLETED_MEANING) as Batch["upload_type"][]).map((t) => <p key={t}>· <span className="font-bold">{TYPE_LABEL[t]}</span>: {COMPLETED_MEANING[t]}.</p>)}
+        <p className="font-bold text-[var(--text)] pt-2">Why rows are skipped</p>
+        {Object.keys(SKIP_HELP).map((k) => <p key={k}>· <span className="font-bold">{SKIP_LABEL[k]}</span>: {SKIP_HELP[k]}</p>)}
+        <p>· The <span className="font-bold">List</span> button downloads every skipped and rejected row of an upload with its reason. Uploads made before this was added show "no reasons recorded".</p>
       </div>
     </div>
   );
