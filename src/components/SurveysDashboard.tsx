@@ -1,10 +1,25 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import {
   AlertCircle, Filter, X, PhoneCall, Hourglass, CalendarClock, PauseCircle, CheckCircle2, PhoneOff, Ban,
-  MessageSquareWarning, Users, Megaphone, ClipboardList, Download, Search, ChevronRight, Upload,
+  MessageSquareWarning, Users, Megaphone, ClipboardList, Download, Search, ChevronRight, Upload, Timer,
 } from "lucide-react";
+
+// Handling time (GET /api/surveys/work-time): active time on the Work screen.
+interface TimeAgent {
+  agent_id: string; agent_name: string; work_seconds: number; surveys: number; finished: number; avg_seconds: number | null;
+  avg_surveyed: number | null; avg_not_reached: number | null; avg_refused: number | null;
+  shift_seconds: number; shift_pct: number | null; first_opened_at: string; last_active_at: string;
+}
+interface TimeSurvey {
+  agent_id: string; agent_name: string; assignment_id: string; seconds: number; total_seconds: number; sessions: number;
+  first_opened_at: string; last_active_at: string; status: string; finished: boolean; attempt_count: number; task_no?: number;
+  customer_phone: string; customer_name?: string | null; order_id?: string | null; item_name?: string | null;
+  brand_name?: string | null; template_name?: string | null;
+}
+interface TimeData { agents: TimeAgent[]; surveys: TimeSurvey[]; truncated: boolean; cap: number }
 
 interface Props { currentUser: User; }
 
@@ -61,15 +76,25 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  const [time, setTime] = useState<TimeData | null>(null);
+  const [timeSearch, setTimeSearch] = useState("");
+  const [timeSort, setTimeSort] = useState<"recent" | "longest" | "shortest">("recent");
+
   const load = async (f = from, t = to) => {
     try {
       setLoading(true); setError("");
       const qs = new URLSearchParams();
       if (f) qs.set("from", f);
       if (t) qs.set("to", t);
-      const res = await apiFetch(`/api/surveys/live-dashboard${qs.toString() ? `?${qs}` : ""}`);
+      // The work-time endpoint defaults to today, so "all time" is asked for explicitly.
+      const tq = new URLSearchParams({ from: f, to: t });
+      const [res, tres] = await Promise.all([
+        apiFetch(`/api/surveys/live-dashboard${qs.toString() ? `?${qs}` : ""}`),
+        apiFetch(`/api/surveys/work-time?${tq}`),
+      ]);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load dashboard.");
       setD(await res.json());
+      setTime(tres.ok ? await tres.json() : null);
       setExpanded(null);
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
@@ -95,16 +120,53 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
     });
   }, [d, outcome, agent, search]);
 
+  // A survey's handling time, all agents and all sessions (matched to the results table by id).
+  const timeById = useMemo(() => {
+    const m = new Map<string, number>();
+    (time?.surveys || []).forEach((s) => m.set(s.assignment_id, s.total_seconds));
+    return m;
+  }, [time]);
+
+  const timeRows = useMemo(() => {
+    if (!time) return [];
+    const s = timeSearch.trim().toLowerCase();
+    const list = time.surveys.filter((r) => {
+      if (agent && r.agent_name !== agent) return false;
+      if (s && ![r.customer_phone, r.customer_name, r.order_id, r.item_name, r.brand_name].some((x) => (x || "").toLowerCase().includes(s))) return false;
+      return true;
+    });
+    if (timeSort === "longest") list.sort((a, b) => b.seconds - a.seconds);
+    else if (timeSort === "shortest") list.sort((a, b) => a.seconds - b.seconds);
+    return list;
+  }, [time, agent, timeSearch, timeSort]);
+
+  const exportTimeCsv = () => {
+    if (!timeRows.length) return;
+    const header = ["First opened (Kuwait)", "Last active (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Item", "Campaign", "Status", "Attempts", "Times opened", "Time in period (sec)", "Time in period", "Total time (sec)", "Total time"];
+    const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [header.map(esc).join(",")];
+    for (const r of timeRows) {
+      lines.push([fmtTime(r.first_opened_at), fmtTime(r.last_active_at), r.agent_name, r.customer_phone, r.customer_name, r.order_id, r.brand_name, r.item_name, r.template_name,
+        outcomeView(r.status).label, r.attempt_count, r.sessions, r.seconds, fmtDur(r.seconds), r.total_seconds, fmtDur(r.total_seconds)].map(esc).join(","));
+    }
+    const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `survey-time-${from || "all"}${to && to !== from ? "_to_" + to : ""}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportCsv = () => {
     if (!results.length) return;
     const questions = Array.from(new Set(results.flatMap((r) => (r.answers || []).map((a) => a.q || "Answer"))));
-    const header = ["Finished at (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Branch", "Item", "Item type", "Outcome", "Complaint", "Attempts", "Campaign", ...questions];
+    const header = ["Finished at (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Branch", "Item", "Item type", "Outcome", "Complaint", "Attempts", "Campaign", "Handling time", ...questions];
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [header.map(esc).join(",")];
     for (const r of results) {
       const byQ = new Map((r.answers || []).map((a) => [a.q || "Answer", a.v]));
       lines.push([fmtTime(r.completed_at), r.agent_name, r.customer_phone, r.customer_name, r.order_id, r.brand_name, r.branch, r.item_name, r.item_kind,
-        outcomeView(r.status).label, r.action_type === "complaint" ? "Yes" : "", r.attempt_count, r.template_name, ...questions.map((q) => byQ.get(q) ?? "")].map(esc).join(","));
+        outcomeView(r.status).label, r.action_type === "complaint" ? "Yes" : "", r.attempt_count, r.template_name,
+        timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : "", ...questions.map((q) => byQ.get(q) ?? "")].map(esc).join(","));
     }
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -251,6 +313,104 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
         </div>
       </div>
 
+      {/* ================= HANDLING TIME ================= */}
+      <div className="space-y-4">
+        <SectionTitle icon={Timer} tone="text-sky-400" title={`Handling time — ${periodLabel}`}
+          sub="Active time agents spent on the Work screen (paused when the screen is in the background or untouched for 5 minutes). Recorded from 13 Oct 2026 onwards." />
+        {!time ? <div className="text-xs text-[var(--muted)]">Handling time is not available.</div> : (
+          <>
+            <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+              <h3 className="text-sm font-bold text-[var(--heading)] mb-4 flex items-center gap-2"><Users className="w-4 h-4 text-sky-400" /> By agent</h3>
+              {time.agents.length === 0 ? <div className="text-center py-6 text-[var(--muted)] text-xs">No survey time recorded {periodLabel}.</div> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                      <th className="text-left py-2 px-2">Agent</th>
+                      <th className="text-center py-2 px-2" title="Surveys the agent opened and worked on in the period">Worked</th>
+                      <th className="text-center py-2 px-2" title="Of those, finished in the period">Finished</th>
+                      <th className="text-center py-2 px-2">Total time</th>
+                      <th className="text-center py-2 px-2" title="Total time ÷ surveys worked">Avg / survey</th>
+                      <th className="text-center py-2 px-2" title="Average full handling time of a survey that ended Surveyed">Avg surveyed</th>
+                      <th className="text-center py-2 px-2" title="Average full handling time of a survey that ended Not reached">Avg not reached</th>
+                      <th className="text-center py-2 px-2" title="Average full handling time of a survey that ended Refused / Not interested">Avg refused</th>
+                      <th className="text-center py-2 px-2" title="Survey time as a share of the agent's On Shift time in the period">Of shift</th>
+                    </tr></thead>
+                    <tbody>
+                      {time.agents.map((a) => (
+                        <tr key={a.agent_id} onClick={() => setAgent(agent === a.agent_name ? "" : a.agent_name)} title="Filter the tables to this agent"
+                          className={`border-b border-[var(--border)]/40 last:border-0 cursor-pointer transition ${agent === a.agent_name ? "bg-sky-500/10" : "hover:bg-[var(--surface-2)]/30"}`}>
+                          <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.agent_name}</td>
+                          <td className="py-2 px-2 text-center font-mono">{a.surveys}</td>
+                          <td className="py-2 px-2 text-center font-mono">{a.finished}</td>
+                          <td className="py-2 px-2 text-center font-mono font-bold text-sky-400">{fmtDurLong(a.work_seconds)}</td>
+                          <td className="py-2 px-2 text-center font-mono">{fmtDur(a.avg_seconds)}</td>
+                          <td className="py-2 px-2 text-center font-mono text-emerald-400">{fmtDur(a.avg_surveyed)}</td>
+                          <td className="py-2 px-2 text-center font-mono text-rose-400">{fmtDur(a.avg_not_reached)}</td>
+                          <td className="py-2 px-2 text-center font-mono text-orange-400">{fmtDur(a.avg_refused)}</td>
+                          <td className="py-2 px-2 text-center font-mono" title={a.shift_seconds ? `On shift ${fmtDurLong(a.shift_seconds)}` : "No On Shift time recorded"}>{a.shift_pct != null ? `${a.shift_pct}%` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="text-sm font-bold text-[var(--heading)] flex items-center gap-2 mr-2"><Timer className="w-4 h-4 text-sky-400" /> Time per survey</h3>
+                <select value={agent} onChange={(e) => setAgent(e.target.value)} className={selCls}>
+                  <option value="">All agents</option>
+                  {Array.from(new Set(time.agents.map((a) => a.agent_name))).sort().map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+                <select value={timeSort} onChange={(e) => setTimeSort(e.target.value as any)} className={selCls}>
+                  <option value="recent">Most recent first</option>
+                  <option value="longest">Longest first</option>
+                  <option value="shortest">Shortest first</option>
+                </select>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input value={timeSearch} onChange={(e) => setTimeSearch(e.target.value)} placeholder="Phone, name, order, item…" className={inputCls + " pl-8 w-52"} />
+                </div>
+                <button onClick={exportTimeCsv} disabled={!timeRows.length} className="ml-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Export CSV</button>
+              </div>
+              {time.truncated && <p className="text-[11px] text-amber-400">Showing the latest {time.cap} — pick a shorter period to see everything.</p>}
+              <div className="overflow-x-auto max-h-[520px] overflow-y-auto border border-[var(--border)] rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold sticky top-0 z-10">
+                    <tr>
+                      <th className="p-3">Opened</th><th className="p-3">Agent</th><th className="p-3">Customer</th><th className="p-3">Brand</th>
+                      <th className="p-3">Result</th><th className="p-3 text-center">Attempts</th>
+                      <th className="p-3 text-right" title="Active time in the selected period (min:sec)">Time</th>
+                      <th className="p-3 text-right" title="The survey's full handling time, every session and agent">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {timeRows.map((r) => {
+                      const o = r.finished ? outcomeView(r.status) : { label: r.status === "in_progress" ? "In progress" : "Pending", cls: "bg-blue-500/10 text-blue-400 border-blue-500/20" };
+                      return (
+                        <tr key={r.agent_id + r.assignment_id} className="hover:bg-[var(--surface-2)]/40">
+                          <td className="p-3 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtTime(r.first_opened_at)}</td>
+                          <td className="p-3 text-[var(--text)]">{r.agent_name}</td>
+                          <td className="p-3"><div className="font-mono font-bold text-[var(--heading)]">{r.customer_phone}</div>{(r.customer_name || r.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[r.customer_name, r.order_id].filter(Boolean).join(" · ")}</div>}</td>
+                          <td className="p-3 text-[var(--text)]">{r.brand_name || "—"}{r.item_name && <div className="text-[10px] text-[var(--muted)] mt-0.5 line-clamp-1" title={r.item_name}>{r.item_name}</div>}</td>
+                          <td className="p-3"><span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border whitespace-nowrap ${o.cls}`}>{o.label}</span></td>
+                          <td className="p-3 text-center font-mono">{r.attempt_count ?? 0}</td>
+                          <td className="p-3 text-right font-mono font-bold text-sky-400" title={r.sessions > 1 ? `Opened ${r.sessions} times` : undefined}>{fmtDur(r.seconds)}</td>
+                          <td className="p-3 text-right font-mono text-[var(--muted)]">{r.total_seconds !== r.seconds ? fmtDur(r.total_seconds) : ""}</td>
+                        </tr>
+                      );
+                    })}
+                    {timeRows.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-[var(--muted)]">{time.surveys.length ? "No surveys match these filters." : `No survey time recorded ${periodLabel}.`}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-[var(--muted)]">Time = active minutes:seconds on the Work screen in this period. Total appears only when the survey also took time outside the period or from another agent.</p>
+            </div>
+          </>
+        )}
+      </div>
+
       {/* ================= LIVE: RESULTS ================= */}
       <div className="space-y-4">
         <SectionTitle icon={ClipboardList} tone="text-sky-400" title="Finished surveys — results" sub="The answers agents saved. Click a row to see every answer." />
@@ -289,6 +449,7 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
                   <th className="p-4">Item</th>
                   <th className="p-4">Result</th>
                   <th className="p-4">Ratings</th>
+                  <th className="p-4 text-right" title="Handling time (min:sec), recorded from 13 Oct 2026">Time</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -320,10 +481,11 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
                             </div>
                           ) : <span className="text-[var(--muted)]">—</span>}
                         </td>
+                        <td className="p-4 text-right font-mono font-bold text-sky-400 whitespace-nowrap">{timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : <span className="text-[var(--muted)] font-normal">—</span>}</td>
                       </tr>
                       {open && (
                         <tr className="bg-[var(--surface-2)]/30">
-                          <td colSpan={7} className="p-5">
+                          <td colSpan={8} className="p-5">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                               <div className="space-y-2">
                                 <p className="text-[10px] font-bold text-[var(--muted)] uppercase">Answers</p>
@@ -354,7 +516,7 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
                   );
                 })}
                 {results.length === 0 && (
-                  <tr><td colSpan={7} className="p-8 text-center text-[var(--muted)]">{d.results.length ? "No results match these filters." : `No calls finished ${periodLabel}.`}</td></tr>
+                  <tr><td colSpan={8} className="p-8 text-center text-[var(--muted)]">{d.results.length ? "No results match these filters." : `No calls finished ${periodLabel}.`}</td></tr>
                 )}
               </tbody>
             </table>

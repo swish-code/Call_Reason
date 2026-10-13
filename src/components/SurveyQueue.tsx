@@ -1,9 +1,19 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacity, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import {
-  ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox,
+  ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox, Timer, ChevronDown,
 } from "lucide-react";
+
+// Handling-time heartbeat: while the Work screen is open, visible and in use, ping the server
+// every BEAT_MS. With no mouse/keyboard/touch for IDLE_MS the timer pauses (the agent may be on
+// the phone for a while, so this is generous). The server decides what counts — see /work/*.
+const BEAT_MS = 20_000;
+const IDLE_MS = 5 * 60_000;
+
+interface MyTimeRow { assignment_id: string; seconds: number; total_seconds: number; status: string; finished: boolean; first_opened_at: string; customer_phone: string; customer_name?: string | null; brand_name?: string | null; sessions: number; }
+interface MyTime { agents: { work_seconds: number; surveys: number; finished: number; avg_seconds: number | null }[]; surveys: MyTimeRow[]; }
 
 interface SurveyQueueProps { currentUser: User; }
 
@@ -53,7 +63,7 @@ const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
 interface AnswerState { question_id: string; answer_value: string; answered: boolean; }
 
-export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueueProps) {
+export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
   const [queue, setQueue] = useState<SurveyAssignment[]>([]);
   const [todaySuccess, setTodaySuccess] = useState(0);
   const [dailyLimit, setDailyLimit] = useState(0);
@@ -108,9 +118,77 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
     }
   }, []);
 
-  useEffect(() => { fetchQueue(); fetchCapacity(); }, [fetchQueue, fetchCapacity]);
+  // ---- My handling time today ----
+  const [myTime, setMyTime] = useState<MyTime | null>(null);
+  const [showMyList, setShowMyList] = useState(false);
+  const fetchMyTime = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/surveys/work-time?agent_id=${encodeURIComponent(currentUser.id)}`);
+      if (res.ok) setMyTime(await res.json());
+    } catch { /* the card is informational */ }
+  }, [currentUser.id]);
+
+  useEffect(() => { fetchQueue(); fetchCapacity(); fetchMyTime(); }, [fetchQueue, fetchCapacity, fetchMyTime]);
+
+  // ---- Work-session timer (runs while the Work modal is open) ----
+  const sessionRef = useRef<string | null>(null);
+  const lastActivityRef = useRef(Date.now());
+  const [activeSecs, setActiveSecs] = useState(0);
+  const [timerPaused, setTimerPaused] = useState(false);
+
+  const beat = useCallback(async () => {
+    const sid = sessionRef.current;
+    if (!sid) return;
+    try {
+      const res = await apiFetch(`/api/surveys/work/${sid}/beat`, { method: "POST" });
+      if (res.ok) { const d = await res.json(); if (sessionRef.current === sid) setActiveSecs(d.active_seconds ?? 0); }
+    } catch { /* a lost beat only loses a few seconds */ }
+  }, []);
+
+  useEffect(() => {
+    if (!workId) return;
+    const isActive = () => document.visibilityState === "visible" && Date.now() - lastActivityRef.current < IDLE_MS;
+    let wasActive = true;
+    const onActivity = () => {
+      const resumed = !isActive();
+      lastActivityRef.current = Date.now();
+      if (resumed) { wasActive = true; setTimerPaused(false); beat(); }
+    };
+    const onVisibility = () => { beat(); setTimerPaused(!isActive()); };
+    const evs = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"] as const;
+    evs.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    document.addEventListener("visibilitychange", onVisibility);
+    const beatTimer = window.setInterval(() => { if (isActive()) beat(); }, BEAT_MS);
+    // Display only: tick locally between beats so the agent sees the clock move.
+    const tick = window.setInterval(() => {
+      const active = isActive();
+      if (active) setActiveSecs((s) => s + 1);
+      if (active !== wasActive) { wasActive = active; setTimerPaused(!active); }
+    }, 1000);
+    return () => {
+      evs.forEach((e) => window.removeEventListener(e, onActivity));
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(beatTimer); window.clearInterval(tick);
+    };
+  }, [workId, beat]);
+
+  const startSession = async (assignmentId: string) => {
+    sessionRef.current = null; setActiveSecs(0); setTimerPaused(false); lastActivityRef.current = Date.now();
+    try {
+      const res = await apiFetch(`/api/surveys/assignments/${assignmentId}/work/start`, { method: "POST" });
+      if (res.ok) { const d = await res.json(); sessionRef.current = d.id; setActiveSecs(d.active_seconds ?? 0); }
+    } catch { /* the survey still works without timing */ }
+  };
+  const endSession = () => {
+    const sid = sessionRef.current;
+    sessionRef.current = null;
+    if (sid) apiFetch(`/api/surveys/work/${sid}/end`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "closed" }) })
+      .catch(() => {}).finally(() => fetchMyTime());
+    else fetchMyTime();
+  };
 
   const openWork = async (a: SurveyAssignment) => {
+    startSession(a.id);
     setWorkId(a.id);
     setAssignment(a);
     setQuestions([]);
@@ -144,6 +222,7 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
   };
 
   const closeWork = () => {
+    endSession();
     setWorkId(null);
     setAssignment(null);
   };
@@ -294,6 +373,49 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
         <StatCard icon={<Inbox className="w-6 h-6" />} label="My Queue" value={queue.length} color="bg-violet-500/10 text-violet-400" />
       </div>
 
+      {/* My handling time today */}
+      {(() => {
+        const me = myTime?.agents?.[0];
+        const list = myTime?.surveys || [];
+        return (
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl shadow-lg overflow-hidden">
+            <button onClick={() => setShowMyList((v) => !v)} disabled={!list.length}
+              className="w-full p-5 flex flex-wrap items-center gap-4 text-left disabled:cursor-default">
+              <div className="p-3 rounded-2xl bg-sky-500/10 text-sky-400"><Timer className="w-6 h-6" /></div>
+              <div className="flex-1 min-w-[180px]">
+                <p className="text-2xl font-extrabold text-[var(--heading)]">{fmtDurLong(me?.work_seconds ?? 0)}</p>
+                <p className="text-xs text-[var(--muted)] font-light mt-0.5">My survey time today — active time on the Work screen</p>
+              </div>
+              <div className="flex gap-6 text-center">
+                <div><p className="text-lg font-extrabold text-[var(--heading)] font-mono">{me?.surveys ?? 0}</p><p className="text-[10px] text-[var(--muted)] uppercase font-bold">Surveys worked</p></div>
+                <div><p className="text-lg font-extrabold text-[var(--heading)] font-mono">{fmtDur(me?.avg_seconds ?? null)}</p><p className="text-[10px] text-[var(--muted)] uppercase font-bold">Avg per survey</p></div>
+              </div>
+              {list.length > 0 && <ChevronDown className={`w-4 h-4 text-[var(--muted)] transition-transform ${showMyList ? "rotate-180" : ""}`} />}
+            </button>
+            {showMyList && list.length > 0 && (
+              <div className="border-t border-[var(--border)] overflow-x-auto max-h-[360px] overflow-y-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold sticky top-0">
+                    <tr><th className="p-3">Opened</th><th className="p-3">Customer</th><th className="p-3">Brand</th><th className="p-3">Status</th><th className="p-3 text-right">Time</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {list.map((r) => (
+                      <tr key={r.assignment_id}>
+                        <td className="p-3 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.first_opened_at)}</td>
+                        <td className="p-3"><span className="font-mono font-bold text-[var(--heading)]">{r.customer_phone}</span>{r.customer_name && <span className="text-[10px] text-[var(--muted)] ml-2">{r.customer_name}</span>}</td>
+                        <td className="p-3 text-[var(--text)]">{r.brand_name || "—"}</td>
+                        <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${statusColor(r.status)}`}>{statusLabel(r.status)}</span></td>
+                        <td className="p-3 text-right font-mono font-bold text-[var(--heading)]" title={r.sessions > 1 ? `${r.sessions} times opened` : undefined}>{fmtDur(r.seconds)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Capacity strip */}
       {capacity.length > 0 && (
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-4 shadow-lg">
@@ -403,9 +525,15 @@ export default function SurveyQueue({ currentUser: _currentUser }: SurveyQueuePr
                     )}
                   </div>
                 </div>
-                <button onClick={closeWork} className="p-2 hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] rounded-xl transition">
-                  <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <span title={timerPaused ? "Paused — the screen is in the background or nothing was touched for 5 minutes" : "Active time on this survey"}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] font-mono font-bold ${timerPaused ? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" : "bg-sky-500/10 text-sky-400 border-sky-500/20"}`}>
+                    <Timer className="w-3.5 h-3.5" /> {fmtDur(activeSecs)}{timerPaused && <span className="font-sans font-normal">paused</span>}
+                  </span>
+                  <button onClick={closeWork} className="p-2 hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--heading)] rounded-xl transition">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
               {detailLoading ? (

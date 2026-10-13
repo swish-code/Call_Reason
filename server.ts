@@ -3239,6 +3239,100 @@ app.get("/api/surveys/queue", authenticateJWT, asyncHandler(async (req: any, res
   res.json({ queue, todaySuccess, dailyLimit: DAILY_SURVEY_LIMIT });
 }));
 
+// ---- Survey handling time ----
+// The Work screen opens a session, then sends a heartbeat every ~20s while it is visible and
+// in use; the server alone decides how much time to add (see DB.beatWorkSession), so the
+// client never reports a duration. Saving a result closes the session (response/attempt routes).
+const SURVEY_DONE_STATUSES = new Set(["successful", "unreachable", "declined", "refused", "not_interested"]);
+
+app.post("/api/surveys/assignments/:id/work/start", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  res.json(await DB.startWorkSession(req.params.id, req.user.id));
+}));
+
+app.post("/api/surveys/work/:sid/beat", authenticateJWT, asyncHandler(async (req: any, res) => {
+  const active = await DB.beatWorkSession(req.params.sid, req.user.id);
+  if (active == null) return res.status(404).json({ error: "Session not found or already closed." });
+  res.json({ active_seconds: active });
+}));
+
+app.post("/api/surveys/work/:sid/end", authenticateJWT, asyncHandler(async (req: any, res) => {
+  await DB.endWorkSession(req.params.sid, req.user.id, qs(req.body?.reason) || "closed");
+  res.json({ ok: true });
+}));
+
+// Time per survey and per agent. Agents only ever get their own; Marketing and the Operations
+// module are outside surveys. from/to are Kuwait days (default: today); empty = all time.
+app.get("/api/surveys/work-time", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const allTime = req.query.from === "" && req.query.to === "";
+  const today = kuwaitToday().date;
+  const fromISO = allTime ? null : kwDayToUtc(qs(req.query.from) || today, false) ?? null;
+  const toISO = allTime ? null : kwDayToUtc(qs(req.query.to) || qs(req.query.from) || today, true) ?? null;
+  const agentId = req.user.role === "agent" ? req.user.id : (qs(req.query.agent_id) || null);
+  const { rows, shifts, cap } = await DB.getSurveyWorkTime({ from: fromISO, to: toISO, agent_id: agentId });
+
+  const fromMs = fromISO ? new Date(fromISO).getTime() : -Infinity;
+  const toMs = toISO ? new Date(toISO).getTime() : Infinity;
+  const nowMs = Date.now();
+  const bucket = (s: string) => s === "successful" ? "surveyed" : s === "unreachable" || s === "declined" ? "not_reached" : "refused";
+
+  const surveys = rows.map((r: any) => {
+    const done = SURVEY_DONE_STATUSES.has(r.status);
+    const doneMs = r.completed_at ? new Date(r.completed_at).getTime() : NaN;
+    return {
+      ...r,
+      seconds: Number(r.seconds) || 0,
+      total_seconds: Number(r.total_seconds) || 0,
+      finished: done,
+      finished_in_period: done && doneMs >= fromMs && doneMs <= toMs,
+      result_bucket: done ? bucket(r.status) : null,
+    };
+  });
+
+  const shiftSecs = new Map<string, number>();
+  for (const s of shifts) {
+    const start = Math.max(new Date(s.started_at).getTime(), fromMs);
+    const end = Math.min(s.ended_at ? new Date(s.ended_at).getTime() : nowMs, toMs, nowMs);
+    if (Number.isFinite(start) && end > start) shiftSecs.set(s.user_id, (shiftSecs.get(s.user_id) || 0) + Math.round((end - start) / 1000));
+  }
+
+  const byAgent = new Map<string, any>();
+  for (const r of surveys) {
+    let g = byAgent.get(r.agent_id);
+    if (!g) {
+      g = { agent_id: r.agent_id, agent_name: r.agent_name, work_seconds: 0, surveys: 0, finished: 0,
+        buckets: { surveyed: { count: 0, seconds: 0 }, not_reached: { count: 0, seconds: 0 }, refused: { count: 0, seconds: 0 } },
+        first_opened_at: r.first_opened_at, last_active_at: r.last_active_at };
+      byAgent.set(r.agent_id, g);
+    }
+    g.work_seconds += r.seconds;
+    g.surveys++;
+    if (r.finished_in_period) {
+      g.finished++;
+      g.buckets[r.result_bucket].count++;
+      g.buckets[r.result_bucket].seconds += r.total_seconds;
+    }
+    if (new Date(r.first_opened_at) < new Date(g.first_opened_at)) g.first_opened_at = r.first_opened_at;
+    if (new Date(r.last_active_at) > new Date(g.last_active_at)) g.last_active_at = r.last_active_at;
+  }
+  const agents = [...byAgent.values()].map((g) => {
+    const shift = shiftSecs.get(g.agent_id) || 0;
+    const avg = (b: { count: number; seconds: number }) => (b.count ? Math.round(b.seconds / b.count) : null);
+    return {
+      agent_id: g.agent_id, agent_name: g.agent_name, work_seconds: g.work_seconds, surveys: g.surveys, finished: g.finished,
+      avg_seconds: g.surveys ? Math.round(g.work_seconds / g.surveys) : null,
+      avg_surveyed: avg(g.buckets.surveyed), avg_not_reached: avg(g.buckets.not_reached), avg_refused: avg(g.buckets.refused),
+      shift_seconds: shift, shift_pct: shift ? Math.round((g.work_seconds / shift) * 100) : null,
+      first_opened_at: g.first_opened_at, last_active_at: g.last_active_at,
+    };
+  }).sort((a, b) => b.work_seconds - a.work_seconds);
+
+  res.json({ agents, surveys, cap, truncated: rows.length >= cap });
+}));
+
 // Assignment detail (with template questions + attempts)
 app.get("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (req, res) => {
   const a = await DB.getSurveyAssignmentById(req.params.id);
@@ -3255,6 +3349,9 @@ app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(a
   const { outcome, note } = req.body;
   if (!outcome) return res.status(400).json({ error: "Outcome is required." });
   const out = await DB.addSurveyAttempt({ assignment_id: req.params.id, agent_id: req.user.id, outcome, note });
+  // An attempt that closes the survey (declined, or the last attempt) ends its handling time too.
+  const st = out?.assignment?.status;
+  if (st && SURVEY_DONE_STATUSES.has(st)) await DB.endOpenWorkSessions(req.params.id, req.user.id, "attempt", st).catch(() => {});
   res.json(out);
 }));
 
@@ -3283,6 +3380,8 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
     segment: segment || undefined,
     outcome: declined ? outcome : "completed",
   });
+  // Close this agent's open handling-time session on the survey, tagged with the result.
+  await DB.endOpenWorkSessions(req.params.id, req.user.id, "saved", updated?.status ?? null).catch(() => {});
   res.json(updated);
 }));
 

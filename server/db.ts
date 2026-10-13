@@ -143,6 +143,15 @@ export type UploadIssueRow = {
 // Keeps one upload's list bounded; the per-reason counts are always complete.
 const UPLOAD_ISSUE_ROWS_CAP = 20000;
 
+// Survey handling time: two heartbeats further apart than WORK_BEAT_GAP seconds mean the
+// screen was away or idle in between, so that gap is not counted. The client beats every
+// 20s, which tolerates one late or lost beat. WORK_DELTA_SQL adds the time since the
+// previous beat only when it is that short.
+const WORK_BEAT_GAP = 45;
+const WORK_DELTA_SQL =
+  `CASE WHEN now() - last_beat_at <= interval '${WORK_BEAT_GAP} seconds'
+        THEN GREATEST(0, ROUND(EXTRACT(EPOCH FROM (now() - last_beat_at))))::int ELSE 0 END`;
+
 // All Surveys (survey_assignments) filters. from/to are UTC instants on created_at.
 export type SurveyListFilter = {
   brand_id?: string; agent_id?: string; status?: string; action_type?: string; survey_type?: string;
@@ -626,6 +635,24 @@ export class DB {
       -- made before this existed.
       ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS skip_breakdown JSONB;
       ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS issue_rows JSONB;
+      -- Survey handling time. One row per time an agent opens a number from the Survey Queue.
+      -- active_seconds only grows while the open screen sends heartbeats (visible and in use),
+      -- and the server adds the time between two beats only when they are close together, so
+      -- time away from the screen is never counted. A survey's handling time is the sum of
+      -- its sessions (several attempts over the day add up).
+      CREATE TABLE IF NOT EXISTS survey_work_sessions (
+        id TEXT PRIMARY KEY,
+        assignment_id TEXT NOT NULL,
+        agent_id TEXT,
+        started_at TIMESTAMPTZ DEFAULT now(),
+        last_beat_at TIMESTAMPTZ DEFAULT now(),
+        active_seconds INTEGER DEFAULT 0,
+        ended_at TIMESTAMPTZ,
+        end_reason TEXT,
+        outcome TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_sws_agent_started ON survey_work_sessions(agent_id, started_at);
+      CREATE INDEX IF NOT EXISTS idx_sws_assignment ON survey_work_sessions(assignment_id);
       CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_records_upload_batch ON survey_records(upload_batch_id);
@@ -2086,6 +2113,78 @@ export class DB {
       [phone, brandId, String(days)]
     );
     return rows.length > 0;
+  }
+
+  // ---- Survey handling time (see survey_work_sessions) ----
+  // Reopening the same number within 2 minutes continues the same session (e.g. a refresh).
+  static async startWorkSession(assignmentId: string, agentId: string): Promise<{ id: string; active_seconds: number }> {
+    const { rows: open } = await pool.query(
+      `SELECT id, active_seconds FROM survey_work_sessions
+        WHERE assignment_id = $1 AND agent_id = $2 AND ended_at IS NULL AND last_beat_at > now() - interval '2 minutes'
+        ORDER BY started_at DESC LIMIT 1`, [assignmentId, agentId]);
+    if (open[0]) {
+      await pool.query(`UPDATE survey_work_sessions SET last_beat_at = now() WHERE id = $1`, [open[0].id]);
+      return { id: open[0].id, active_seconds: Number(open[0].active_seconds) || 0 };
+    }
+    const id = "sws-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
+    await pool.query(`INSERT INTO survey_work_sessions (id, assignment_id, agent_id, started_at, last_beat_at, active_seconds) VALUES ($1,$2,$3,now(),now(),0)`,
+      [id, assignmentId, agentId]);
+    return { id, active_seconds: 0 };
+  }
+
+  static async beatWorkSession(id: string, agentId: string): Promise<number | null> {
+    const { rows } = await pool.query(
+      `UPDATE survey_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now()
+        WHERE id = $1 AND agent_id = $2 AND ended_at IS NULL RETURNING active_seconds`, [id, agentId]);
+    return rows[0] ? Number(rows[0].active_seconds) : null;
+  }
+
+  static async endWorkSession(id: string, agentId: string, reason: string): Promise<void> {
+    await pool.query(
+      `UPDATE survey_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now(), ended_at = now(), end_reason = $3
+        WHERE id = $1 AND agent_id = $2 AND ended_at IS NULL`, [id, agentId, reason]);
+  }
+
+  // Called when a result is saved, so the time is closed and tagged even if the browser never
+  // sends its own "end".
+  static async endOpenWorkSessions(assignmentId: string, agentId: string, reason: string, outcome: string | null): Promise<void> {
+    await pool.query(
+      `UPDATE survey_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now(), ended_at = now(), end_reason = $3, outcome = $4
+        WHERE assignment_id = $1 AND agent_id = $2 AND ended_at IS NULL`, [assignmentId, agentId, reason, outcome]);
+  }
+
+  /**
+   * Handling time for the Surveys Dashboard and the agent's own card. One row per
+   * (agent, survey) with time worked inside [from, to] (by session start), plus the survey's
+   * all-time total (a survey can span days when attempts are spread out). Shift sessions
+   * overlapping the range come back too, for "share of shift".
+   */
+  static async getSurveyWorkTime(filter: { from?: string | null; to?: string | null; agent_id?: string | null }): Promise<{ rows: any[]; shifts: any[]; cap: number }> {
+    const CAP = 5000;
+    const { rows } = await pool.query(`
+      SELECT s.agent_id, COALESCE(u.full_name, '(unknown)') AS agent_name, s.assignment_id,
+             SUM(s.active_seconds)::int AS seconds, COUNT(*)::int AS sessions,
+             MIN(s.started_at) AS first_opened_at, MAX(s.last_beat_at) AS last_active_at,
+             (SELECT COALESCE(SUM(x.active_seconds), 0)::int FROM survey_work_sessions x WHERE x.assignment_id = s.assignment_id) AS total_seconds,
+             a.status, a.completed_at, a.attempt_count, a.task_no, a.customer_phone, a.customer_name, a.order_id, a.item_name,
+             b.brand_name, t.name AS template_name
+        FROM survey_work_sessions s
+        LEFT JOIN users u ON u.id = s.agent_id
+        LEFT JOIN survey_assignments a ON a.id = s.assignment_id
+        LEFT JOIN survey_campaigns c ON c.id = a.campaign_id
+        LEFT JOIN survey_templates t ON t.id = c.template_id
+        LEFT JOIN brands b ON b.id = a.brand_id
+       WHERE ($1::timestamptz IS NULL OR s.started_at >= $1) AND ($2::timestamptz IS NULL OR s.started_at <= $2)
+         AND ($3::text IS NULL OR s.agent_id = $3)
+       GROUP BY s.agent_id, u.full_name, s.assignment_id, a.id, b.brand_name, t.name
+       ORDER BY MAX(s.last_beat_at) DESC
+       LIMIT ${CAP}`, [filter.from ?? null, filter.to ?? null, filter.agent_id ?? null]);
+    // shift_sessions keeps ISO text timestamps, so text comparison is time order.
+    const { rows: shifts } = await pool.query(`
+      SELECT user_id, started_at, ended_at FROM shift_sessions
+       WHERE ($1::text IS NULL OR ended_at IS NULL OR ended_at >= $1) AND ($2::text IS NULL OR started_at <= $2)
+         AND ($3::text IS NULL OR user_id = $3)`, [filter.from ?? null, filter.to ?? null, filter.agent_id ?? null]);
+    return { rows, shifts, cap: CAP };
   }
 
   // Same rules as wasRecentlyContacted / isPhoneQueued, but return the matching row so an
