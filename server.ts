@@ -2850,7 +2850,7 @@ app.get("/api/audit/uploads", authenticateJWT, requireAdminOrSupervisor, asyncHa
 // ----------------------------------------------------
 // Surveys Module (Call Campaigns + Survey Records)
 // ----------------------------------------------------
-const DAILY_SURVEY_LIMIT = Number(process.env.DAILY_SURVEY_LIMIT || 150);
+const DAILY_SURVEY_LIMIT = Number(process.env.DAILY_SURVEY_LIMIT || 1000);
 const SURVEY_DEDUP_DAYS = Number(process.env.SURVEY_DEDUP_DAYS || 10);
 
 // Max numbers a role may request in one campaign
