@@ -539,7 +539,7 @@ export class DB {
     // Seed default platforms (idempotent). Fixed ids so re-seeding never
     // collides on the UNIQUE name after a platform is removed from this list.
     for (const [id, name] of [["plat-1", "Talabat"], ["plat-2", "Keeta"], ["plat-5", "TripAdvisor"],
-      ["plat-6", "Deliveroo"], ["plat-7", "Ordable"], ["plat-8", "Jahez"], ["plat-9", "Snoonu"]]) {
+      ["plat-6", "Deliveroo"], ["plat-7", "Ordable"], ["plat-8", "Jahez"], ["plat-9", "Snoonu"], ["plat-10", "FM App"]]) {
       await pool.query(
         "INSERT INTO platforms (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING",
         [id, name]
