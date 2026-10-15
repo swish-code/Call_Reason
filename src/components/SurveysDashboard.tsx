@@ -4,7 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import {
   AlertCircle, Filter, X, PhoneCall, Hourglass, CalendarClock, PauseCircle, CheckCircle2, PhoneOff, Ban,
-  MessageSquareWarning, Users, Megaphone, ClipboardList, Download, Search, ChevronRight, Upload, Timer,
+  MessageSquareWarning, Users, Megaphone, ClipboardList, Download, Search, ChevronRight, Upload, Timer, ShieldCheck, RefreshCw,
 } from "lucide-react";
 
 // Handling time (GET /api/surveys/work-time): active time on the Work screen.
@@ -19,6 +19,35 @@ interface TimeSurvey {
   customer_phone: string; customer_name?: string | null; order_id?: string | null; item_name?: string | null;
   brand_name?: string | null; template_name?: string | null;
 }
+// Call verification (GET /api/surveys/call-verification) — Team Leaders, Supervisors and Admins only.
+interface CallCheck { result: "answered" | "unanswered" | "no_call"; talk: number; calls: number; call_time: string | null; direction: string | null; xontel_agent: string | null; relation: string | null }
+interface CallAgent { agent: string; reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; noCallPct: number | null; suspectPct: number | null }
+interface CallVerification {
+  configured: boolean; minTalkSeconds: number;
+  status: { lastRunAt: string | null; lastError: string | null; running: boolean };
+  summary: { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; notReachedNoCall: number };
+  agents: CallAgent[]; checks: Record<string, CallCheck>;
+}
+const CALL_ROLES = ["admin", "supervisor", "leader"];
+const isReachedStatus = (s: string) => s === "successful" || s === "refused" || s === "not_interested";
+// What the verdict means for THIS survey's claim. kind drives colour; label is what the supervisor reads.
+const callView = (status: string, c: CallCheck | undefined, minTalk: number): { kind: "ok" | "warn" | "bad" | "pending"; label: string; filter: string } => {
+  if (!c) return { kind: "pending", label: "Checking…", filter: "pending" };
+  const mmss = fmtDur(c.talk);
+  if (isReachedStatus(status)) {
+    if (c.result === "no_call") return { kind: "bad", label: "No call found", filter: "no_call" };
+    if (c.result === "unanswered") return { kind: "warn", label: "Call not answered", filter: "unanswered" };
+    if (status === "successful" && c.talk < minTalk) return { kind: "warn", label: `Short call ${mmss}`, filter: "short" };
+    return { kind: "ok", label: `Call confirmed ${mmss}`, filter: "ok" };
+  }
+  // The agent said the customer was NOT reached: a call attempt should exist.
+  if (c.result === "no_call") return { kind: "bad", label: "No call attempt found", filter: "no_call" };
+  if (c.result === "answered") return { kind: "warn", label: `Customer answered ${mmss}`, filter: "unanswered" };
+  return { kind: "ok", label: "Attempt confirmed", filter: "ok" };
+};
+const CALL_CLS = { ok: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", warn: "bg-amber-500/10 text-amber-400 border-amber-500/20", bad: "bg-rose-500/10 text-rose-400 border-rose-500/20", pending: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" } as const;
+const CALL_ICON = { ok: "✓", warn: "⚠", bad: "✗", pending: "…" } as const;
+
 interface TimeData { agents: TimeAgent[]; surveys: TimeSurvey[]; truncated: boolean; cap: number }
 
 interface Props { currentUser: User; }
@@ -61,7 +90,8 @@ const isRating = (a: Answer) => !!a.type && a.type.startsWith("rating");
 const inputCls = "px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-violet-500 focus:outline-none";
 const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
-export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
+export default function SurveysDashboard({ currentUser }: Props) {
+  const canSeeCalls = CALL_ROLES.includes(currentUser.role);
   const [d, setD] = useState<LiveData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -76,6 +106,10 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  const [cv, setCv] = useState<CallVerification | null>(null);
+  const [callFilter, setCallFilter] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [time, setTime] = useState<TimeData | null>(null);
   const [timeSearch, setTimeSearch] = useState("");
   const [timeSort, setTimeSort] = useState<"recent" | "longest" | "shortest">("recent");
@@ -88,13 +122,15 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
       if (t) qs.set("to", t);
       // The work-time endpoint defaults to today, so "all time" is asked for explicitly.
       const tq = new URLSearchParams({ from: f, to: t });
-      const [res, tres] = await Promise.all([
+      const [res, tres, cres] = await Promise.all([
         apiFetch(`/api/surveys/live-dashboard${qs.toString() ? `?${qs}` : ""}`),
         apiFetch(`/api/surveys/work-time?${tq}`),
+        canSeeCalls ? apiFetch(`/api/surveys/call-verification${qs.toString() ? `?${qs}` : ""}`) : Promise.resolve(null),
       ]);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load dashboard.");
       setD(await res.json());
       setTime(tres.ok ? await tres.json() : null);
+      setCv(cres && cres.ok ? await cres.json() : null);
       setExpanded(null);
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
@@ -109,16 +145,32 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
   const periodLabel = activePeriod === "today" ? "today" : activePeriod === "week" ? "this week" : activePeriod === "month" ? "this month"
     : from || to ? `${from || "start"} → ${to || "today"}` : "all time";
 
+  // "Verify now": look the calls up for the period (the system also does this by itself every 10 minutes).
+  const verifyNow = async () => {
+    setVerifying(true); setVerifyMsg(null);
+    try {
+      const res = await apiFetch("/api/surveys/call-verification/run", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: from || kwWeekStart(), to: to || kwToday() }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Verification failed.");
+      setVerifyMsg({ ok: true, text: j.checked ? `Checked ${j.checked} survey(s), ${j.written} verdict(s) saved${j.skipped ? `, ${j.skipped} too recent to judge yet` : ""}.` : "Nothing left to check in this period." });
+      await load();
+    } catch (e: any) { setVerifyMsg({ ok: false, text: e.message }); } finally { setVerifying(false); }
+  };
+
   const results = useMemo(() => {
     if (!d) return [];
     const s = search.trim().toLowerCase();
     return d.results.filter((r) => {
+      if (callFilter && callView(r.status, cv?.checks[r.id], cv?.minTalkSeconds ?? 30).filter !== callFilter) return false;
       if (outcome === "complaint" ? r.action_type !== "complaint" : outcome && bucketOf(r.status) !== outcome) return false;
       if (agent && (r.agent_name || "(unassigned)") !== agent) return false;
       if (s && ![r.customer_phone, r.customer_name, r.order_id, r.item_name].some((x) => (x || "").toLowerCase().includes(s))) return false;
       return true;
     });
-  }, [d, outcome, agent, search]);
+  }, [d, outcome, agent, search, callFilter, cv]);
 
   // A survey's handling time, all agents and all sessions (matched to the results table by id).
   const timeById = useMemo(() => {
@@ -159,14 +211,16 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
   const exportCsv = () => {
     if (!results.length) return;
     const questions = Array.from(new Set(results.flatMap((r) => (r.answers || []).map((a) => a.q || "Answer"))));
-    const header = ["Finished at (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Branch", "Item", "Item type", "Outcome", "Complaint", "Attempts", "Campaign", "Handling time", ...questions];
+    const header = ["Finished at (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Branch", "Item", "Item type", "Outcome", "Complaint", "Attempts", "Campaign", "Handling time", ...(cv ? ["Call check", "Call talk time", "Called by (XonTel)"] : []), ...questions];
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [header.map(esc).join(",")];
     for (const r of results) {
       const byQ = new Map((r.answers || []).map((a) => [a.q || "Answer", a.v]));
       lines.push([fmtTime(r.completed_at), r.agent_name, r.customer_phone, r.customer_name, r.order_id, r.brand_name, r.branch, r.item_name, r.item_kind,
         outcomeView(r.status).label, r.action_type === "complaint" ? "Yes" : "", r.attempt_count, r.template_name,
-        timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : "", ...questions.map((q) => byQ.get(q) ?? "")].map(esc).join(","));
+        timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : "",
+        ...(cv ? (() => { const c = cv.checks[r.id]; return [callView(r.status, c, cv.minTalkSeconds).label, c && c.result === "answered" ? fmtDur(c.talk) : "", c?.xontel_agent ?? ""]; })() : []),
+        ...questions.map((q) => byQ.get(q) ?? "")].map(esc).join(","));
     }
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -313,6 +367,75 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
         </div>
       </div>
 
+      {/* ================= CALL VERIFICATION (Team Leader / Supervisor / Admin) ================= */}
+      {canSeeCalls && (
+        <div className="space-y-4">
+          <SectionTitle icon={ShieldCheck} tone="text-emerald-400" title={`Call verification — ${periodLabel}`}
+            sub="For every survey an agent saved as reached (Surveyed, Refused, Not interested), the PBX (XonTel) call records are searched for a call to that customer's number just before the save. Matched by customer number and time." />
+          {!cv ? <div className="text-xs text-[var(--muted)]">Call verification is not available.</div> : !cv.configured ? (
+            <div className="p-4 bg-amber-950/20 border border-amber-500/20 rounded-2xl text-xs text-amber-300 space-y-1">
+              <p className="font-bold">XonTel is not connected to this system yet.</p>
+              <p className="text-amber-300/80">An admin has to set <span className="font-mono">XONTEL_TOKEN</span> and <span className="font-mono">XONTEL_DISCOVER_URL</span> on the server (the same values the QA / Swipr systems use). Until then no calls are checked and nothing is flagged.</p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <Card label="Reached claims" value={cv.summary.reached} icon={PhoneCall} tone="text-[var(--heading)]" hint="Surveyed + refused + not interested" />
+                <Card label="Call confirmed" value={cv.summary.confirmed} icon={CheckCircle2} tone="text-emerald-400" />
+                <Card label="Short call" value={cv.summary.short} icon={Timer} tone="text-amber-400" hint={`answered, under ${cv.minTalkSeconds}s`} />
+                <Card label="Not answered" value={cv.summary.unanswered} icon={PhoneOff} tone="text-amber-400" hint="dialled, nobody picked up" />
+                <Card label="No call found" value={cv.summary.noCall} icon={Ban} tone="text-rose-400" hint="no call to that number" />
+                <Card label="Still checking" value={cv.summary.pending} icon={Hourglass} tone="text-zinc-400" hint="checked every 10 min" />
+              </div>
+
+              <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <h3 className="text-sm font-bold text-[var(--heading)] flex items-center gap-2"><Users className="w-4 h-4 text-emerald-400" /> By agent</h3>
+                  <button onClick={verifyNow} disabled={verifying || cv.status.running}
+                    className="ml-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"
+                    title="Look the calls up now for the period above (re-checks everything not yet confirmed)">
+                    <RefreshCw className={`w-3.5 h-3.5 ${verifying || cv.status.running ? "animate-spin" : ""}`} /> {verifying || cv.status.running ? "Verifying…" : "Verify now"}
+                  </button>
+                </div>
+                {verifyMsg && <div className={`mb-3 p-3 rounded-xl text-xs border ${verifyMsg.ok ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400" : "bg-rose-950/20 border-rose-500/20 text-rose-400"}`}>{verifyMsg.text}</div>}
+                {cv.status.lastError && <div className="mb-3 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">Last automatic check could not finish: {cv.status.lastError}</div>}
+                {cv.agents.length === 0 ? <div className="text-center py-6 text-[var(--muted)] text-xs">No reached surveys {periodLabel}.</div> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                        <th className="text-left py-2 px-2">Agent</th><th className="text-center py-2 px-2">Reached claims</th>
+                        <th className="text-center py-2 px-2">Confirmed</th><th className="text-center py-2 px-2">Short call</th>
+                        <th className="text-center py-2 px-2">Not answered</th><th className="text-center py-2 px-2">No call found</th>
+                        <th className="text-center py-2 px-2">Checking</th>
+                        <th className="text-center py-2 px-2" title="(No call found + Not answered + Short call) ÷ checked claims">Suspect</th>
+                      </tr></thead>
+                      <tbody>
+                        {cv.agents.map((a) => (
+                          <tr key={a.agent} onClick={() => setAgent(agent === a.agent ? "" : a.agent)} title="Filter the results below to this agent"
+                            className={`border-b border-[var(--border)]/40 last:border-0 cursor-pointer transition ${agent === a.agent ? "bg-emerald-500/10" : "hover:bg-[var(--surface-2)]/30"}`}>
+                            <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.agent}</td>
+                            <td className="py-2 px-2 text-center font-mono">{a.reached}</td>
+                            <td className="py-2 px-2 text-center font-mono text-emerald-400">{a.confirmed}</td>
+                            <td className="py-2 px-2 text-center font-mono text-amber-400">{a.short || "—"}</td>
+                            <td className="py-2 px-2 text-center font-mono text-amber-400">{a.unanswered || "—"}</td>
+                            <td className="py-2 px-2 text-center font-mono font-bold text-rose-400">{a.noCall || "—"}</td>
+                            <td className="py-2 px-2 text-center font-mono text-zinc-400">{a.pending || "—"}</td>
+                            <td className="py-2 px-2 text-center font-mono font-bold">
+                              {a.suspectPct == null ? "—" : <span className={a.suspectPct >= 30 ? "text-rose-400" : a.suspectPct >= 10 ? "text-amber-400" : "text-emerald-400"}>{a.suspectPct}%</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="text-[10px] text-[var(--muted)] mt-3">A flag is a reason to look, not a verdict: the call may have been made from another phone, or the PBX record may be late (still-checking rows are re-tried for 36 hours). The results table below shows each survey's call, who made it, and its talk time.</p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ================= HANDLING TIME ================= */}
       <div className="space-y-4">
         <SectionTitle icon={Timer} tone="text-sky-400" title={`Handling time — ${periodLabel}`}
@@ -422,6 +545,16 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
             <option value="refused">Refused / not interested</option>
             <option value="complaint">Complaints</option>
           </select>
+          {canSeeCalls && cv?.configured && (
+            <select value={callFilter} onChange={(e) => setCallFilter(e.target.value)} className={selCls} title="Filter by the call verification result">
+              <option value="">All call checks</option>
+              <option value="no_call">✗ No call found</option>
+              <option value="unanswered">⚠ Not answered</option>
+              <option value="short">⚠ Short call</option>
+              <option value="ok">✓ Call confirmed</option>
+              <option value="pending">… Still checking</option>
+            </select>
+          )}
           <select value={agent} onChange={(e) => setAgent(e.target.value)} className={selCls}>
             <option value="">All agents</option>
             {agents.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -430,8 +563,8 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
             <Search className="w-3.5 h-3.5 text-[var(--muted)] absolute left-3 top-1/2 -translate-y-1/2" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Phone, name, order or item…" className={inputCls + " pl-8 w-56"} />
           </div>
-          {(outcome || agent || search) && (
-            <button onClick={() => { setOutcome(""); setAgent(""); setSearch(""); }} className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs flex items-center gap-1.5 transition"><X className="w-3.5 h-3.5" /> Clear</button>
+          {(outcome || agent || search || callFilter) && (
+            <button onClick={() => { setOutcome(""); setAgent(""); setSearch(""); setCallFilter(""); }} className="px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-rose-400 font-bold rounded-xl text-xs flex items-center gap-1.5 transition"><X className="w-3.5 h-3.5" /> Clear</button>
           )}
           <button onClick={exportCsv} disabled={!results.length} className="ml-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Export CSV</button>
         </div>
@@ -450,6 +583,7 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
                   <th className="p-4">Result</th>
                   <th className="p-4">Ratings</th>
                   <th className="p-4 text-right" title="Handling time (min:sec), recorded from 13 Oct 2026">Time</th>
+                  {canSeeCalls && cv?.configured && <th className="p-4" title="Was the customer really called? (XonTel call records)">Call</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -482,10 +616,24 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
                           ) : <span className="text-[var(--muted)]">—</span>}
                         </td>
                         <td className="p-4 text-right font-mono font-bold text-sky-400 whitespace-nowrap">{timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : <span className="text-[var(--muted)] font-normal">—</span>}</td>
+                        {canSeeCalls && cv?.configured && (() => {
+                          const c = cv.checks[r.id];
+                          const v = callView(r.status, c, cv.minTalkSeconds);
+                          const by = c && c.xontel_agent && (c.relation === "partial" || c.relation === "different") ? c.xontel_agent : null;
+                          return (
+                            <td className="p-4">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold border whitespace-nowrap ${CALL_CLS[v.kind]}`}
+                                title={c ? `${c.calls} matching call(s)${c.call_time ? " · " + fmtTime(c.call_time) : ""}${c.direction ? " · " + c.direction : ""}${c.xontel_agent ? " · by " + c.xontel_agent : ""}` : "Not checked yet — the system checks every 10 minutes"}>
+                                {CALL_ICON[v.kind]} {v.label}
+                              </span>
+                              {by && <div className="text-[10px] text-amber-400 mt-1" title="The XonTel agent who made the call does not clearly match the employee who saved the survey">called by {by}</div>}
+                            </td>
+                          );
+                        })()}
                       </tr>
                       {open && (
                         <tr className="bg-[var(--surface-2)]/30">
-                          <td colSpan={8} className="p-5">
+                          <td colSpan={9} className="p-5">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                               <div className="space-y-2">
                                 <p className="text-[10px] font-bold text-[var(--muted)] uppercase">Answers</p>
@@ -516,7 +664,7 @@ export default function SurveysDashboard({ currentUser: _currentUser }: Props) {
                   );
                 })}
                 {results.length === 0 && (
-                  <tr><td colSpan={8} className="p-8 text-center text-[var(--muted)]">{d.results.length ? "No results match these filters." : `No calls finished ${periodLabel}.`}</td></tr>
+                  <tr><td colSpan={9} className="p-8 text-center text-[var(--muted)]">{d.results.length ? "No results match these filters." : `No calls finished ${periodLabel}.`}</td></tr>
                 )}
               </tbody>
             </table>

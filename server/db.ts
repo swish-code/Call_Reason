@@ -653,6 +653,21 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_sws_agent_started ON survey_work_sessions(agent_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_sws_assignment ON survey_work_sessions(assignment_id);
+      -- Call verification: for each finished survey, was the customer really called (XonTel call
+      -- records, matched by customer number + time)? One verdict per survey, rewritten when it is
+      -- re-checked. result: answered | unanswered | no_call. See server/xontel.ts.
+      CREATE TABLE IF NOT EXISTS survey_call_checks (
+        assignment_id TEXT PRIMARY KEY,
+        checked_at TIMESTAMPTZ DEFAULT now(),
+        result TEXT NOT NULL,
+        talk_seconds INTEGER DEFAULT 0,
+        calls_found INTEGER DEFAULT 0,
+        call_id TEXT,
+        call_time TIMESTAMPTZ,
+        call_direction TEXT,
+        xontel_agent TEXT,
+        agent_relation TEXT
+      );
       CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_records_upload_batch ON survey_records(upload_batch_id);
@@ -2151,6 +2166,67 @@ export class DB {
     await pool.query(
       `UPDATE survey_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now(), ended_at = now(), end_reason = $3, outcome = $4
         WHERE assignment_id = $1 AND agent_id = $2 AND ended_at IS NULL`, [assignmentId, agentId, reason, outcome]);
+  }
+
+  // ---- Call verification (see server/xontel.ts) ----
+  // Finished surveys whose phone call still needs looking up. `force` (a supervisor's "Verify
+  // now") re-checks everything not yet confirmed; the timer only retries recent ones, because a
+  // call record can arrive late. The agent is whoever finished the survey (last response, else
+  // last logged attempt, else the assigned agent).
+  static async getSurveysForCallCheck(f: { fromISO: string; toISO: string; force: boolean; recheckWindowHours: number; limit: number }): Promise<any[]> {
+    const { rows } = await pool.query(`
+      SELECT a.id, a.status, a.completed_at, a.customer_phone, a.task_no,
+             ag.id AS agent_id, ag.full_name AS agent_name
+        FROM survey_assignments a
+        LEFT JOIN LATERAL (SELECT agent_id FROM survey_responses WHERE assignment_id = a.id ORDER BY answered_at DESC LIMIT 1) r ON true
+        LEFT JOIN LATERAL (SELECT agent_id FROM survey_call_attempts WHERE assignment_id = a.id ORDER BY created_at DESC LIMIT 1) at ON true
+        LEFT JOIN users ag ON ag.id = COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id)
+        LEFT JOIN survey_call_checks c ON c.assignment_id = a.id
+       WHERE a.status IN ('successful','unreachable','declined','refused','not_interested')
+         AND a.completed_at >= $1 AND a.completed_at <= $2
+         AND COALESCE(a.customer_phone, '') <> ''
+         AND ( c.assignment_id IS NULL
+               OR (c.result <> 'answered' AND ($3::boolean
+                    OR (a.completed_at > now() - ($4 || ' hours')::interval AND c.checked_at < now() - interval '9 minutes'))) )
+       ORDER BY a.completed_at DESC
+       LIMIT $5`, [f.fromISO, f.toISO, f.force, String(f.recheckWindowHours), f.limit]);
+    return rows;
+  }
+
+  static async upsertSurveyCallChecks(rows: { assignment_id: string; result: string; talk: number; calls: number; call_id: string | null; call_time: number | null; direction: string | null; xontel_agent: string | null; relation: string | null }[]): Promise<void> {
+    if (!rows.length) return;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const r of rows) {
+        await client.query(
+          `INSERT INTO survey_call_checks (assignment_id, checked_at, result, talk_seconds, calls_found, call_id, call_time, call_direction, xontel_agent, agent_relation)
+           VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (assignment_id) DO UPDATE SET checked_at = now(), result = EXCLUDED.result, talk_seconds = EXCLUDED.talk_seconds,
+             calls_found = EXCLUDED.calls_found, call_id = EXCLUDED.call_id, call_time = EXCLUDED.call_time,
+             call_direction = EXCLUDED.call_direction, xontel_agent = EXCLUDED.xontel_agent, agent_relation = EXCLUDED.agent_relation`,
+          [r.assignment_id, r.result, r.talk, r.calls, r.call_id, r.call_time ? new Date(r.call_time).toISOString() : null, r.direction, r.xontel_agent, r.relation]);
+      }
+      await client.query("COMMIT");
+    } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+  }
+
+  // Finished surveys of a period with their call verdict (if any), for the Surveys Dashboard.
+  static async getSurveyCallVerification(fromISO: string | null, toISO: string | null): Promise<any[]> {
+    const { rows } = await pool.query(`
+      SELECT a.id, a.task_no, a.status, a.completed_at, a.customer_phone,
+             COALESCE(ag.full_name, '(unknown)') AS agent_name,
+             c.result, c.talk_seconds, c.calls_found, c.call_time, c.call_direction, c.xontel_agent, c.agent_relation, c.checked_at
+        FROM survey_assignments a
+        LEFT JOIN LATERAL (SELECT agent_id FROM survey_responses WHERE assignment_id = a.id ORDER BY answered_at DESC LIMIT 1) r ON true
+        LEFT JOIN LATERAL (SELECT agent_id FROM survey_call_attempts WHERE assignment_id = a.id ORDER BY created_at DESC LIMIT 1) at ON true
+        LEFT JOIN users ag ON ag.id = COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id)
+        LEFT JOIN survey_call_checks c ON c.assignment_id = a.id
+       WHERE a.status IN ('successful','unreachable','declined','refused','not_interested')
+         AND ($1::timestamptz IS NULL OR a.completed_at >= $1) AND ($2::timestamptz IS NULL OR a.completed_at <= $2)
+       ORDER BY a.completed_at DESC
+       LIMIT 5000`, [fromISO, toISO]);
+    return rows;
   }
 
   /**

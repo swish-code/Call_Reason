@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
+import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS } from "./server/xontel.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3464,6 +3465,74 @@ app.get("/api/surveys/live-dashboard", authenticateJWT, asyncHandler(async (req:
   }
   res.json(await DB.getLiveSurveyDashboard(kwDayToUtc(qs(req.query.from), false) ?? null, kwDayToUtc(qs(req.query.to), true) ?? null));
 }));
+
+// ---- Call verification (XonTel) — admin, supervisor and team leader ONLY ----
+// For each finished survey: was the customer really called? (server/xontel.ts). Agents, managers,
+// marketing and the Operations roles never see any of it.
+const requireCallVerification = (req: any, res: any, next: any) => {
+  if (req.user && ["admin", "supervisor", "leader"].includes(req.user.role)) return next();
+  res.status(403).json({ error: "Call verification is available to Team Leaders, Supervisors and Admins only." });
+};
+
+app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
+  const fromISO = kwDayToUtc(qs(req.query.from), false) ?? null;
+  const toISO = kwDayToUtc(qs(req.query.to), true) ?? null;
+  const rows = await DB.getSurveyCallVerification(fromISO, toISO);
+
+  // "Reached" claims are the ones that can be faked: Surveyed, Refused, Not interested.
+  const checks: Record<string, any> = {};
+  const byAgent = new Map<string, any>();
+  const sum = { reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0, notReachedNoCall: 0 };
+  for (const r of rows) {
+    if (r.result) {
+      checks[r.id] = {
+        result: r.result, talk: Number(r.talk_seconds) || 0, calls: Number(r.calls_found) || 0, call_time: r.call_time,
+        direction: r.call_direction, xontel_agent: r.xontel_agent, relation: r.agent_relation,
+      };
+    }
+    if (!isReachedClaim(r.status)) { if (r.result === "no_call") sum.notReachedNoCall++; continue; }
+    sum.reached++;
+    let g = byAgent.get(r.agent_name);
+    if (!g) { g = { agent: r.agent_name, reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0 }; byAgent.set(r.agent_name, g); }
+    g.reached++;
+    if (!r.result) { sum.pending++; g.pending++; }
+    else if (r.result === "no_call") { sum.noCall++; g.noCall++; }
+    else if (r.result === "unanswered") { sum.unanswered++; g.unanswered++; }
+    else if (r.status === "successful" && (Number(r.talk_seconds) || 0) < MIN_TALK_SECONDS) { sum.short++; g.short++; }
+    else { sum.confirmed++; g.confirmed++; }
+  }
+  const agents = [...byAgent.values()].map((g) => {
+    const judged = g.reached - g.pending;
+    return { ...g, noCallPct: judged ? Math.round((g.noCall / judged) * 100) : null, suspectPct: judged ? Math.round(((g.noCall + g.unanswered + g.short) / judged) * 100) : null };
+  }).sort((a, b) => (b.suspectPct ?? -1) - (a.suspectPct ?? -1) || b.reached - a.reached);
+
+  res.json({
+    configured: xontelConfigured(), minTalkSeconds: MIN_TALK_SECONDS,
+    status: { lastRunAt: checkStatus.lastRunAt, lastError: checkStatus.lastError, running: checkStatus.running },
+    summary: sum, agents, checks,
+  });
+}));
+
+// "Verify now": look the calls up for a period right away (re-checks everything not yet confirmed).
+app.post("/api/surveys/call-verification/run", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
+  if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet (XONTEL_TOKEN and XONTEL_DISCOVER_URL are not set)." });
+  const from = qs(req.body?.from), to = qs(req.body?.to);
+  const fromISO = kwDayToUtc(from, false), toISO = kwDayToUtc(to || from, true);
+  if (!fromISO || !toISO) return res.status(400).json({ error: "Pick a period first." });
+  if ((new Date(toISO).getTime() - new Date(fromISO).getTime()) > 8 * 86400_000) return res.status(400).json({ error: "Pick at most 7 days at a time." });
+  const out = await runSurveyCallChecks({ mode: "manual", fromISO, toISO });
+  if (out.error) return res.status(502).json({ error: out.error });
+  res.json(out);
+}));
+
+// Automatic checking: every few minutes, finished surveys that were never checked (or whose call
+// record may have arrived late). Silent when XonTel isn't configured.
+const CALL_CHECK_EVERY_MIN = Number(process.env.SURVEY_CALL_CHECK_MINUTES ?? 10);
+if (CALL_CHECK_EVERY_MIN > 0) {
+  const tick = () => { if (xontelConfigured()) runSurveyCallChecks({ mode: "auto" }).then((r) => { if (r.error && r.error !== "a check is already running") console.warn("[call-check]", r.error); }).catch(() => {}); };
+  setTimeout(tick, 60_000).unref?.();
+  setInterval(tick, CALL_CHECK_EVERY_MIN * 60_000).unref?.();
+}
 
 // Manually assign / reassign / unassign a single survey to any active agent (supervisors+)
 app.post("/api/surveys/assignments/:id/assign", authenticateJWT, asyncHandler(async (req: any, res) => {
