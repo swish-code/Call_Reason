@@ -2154,6 +2154,34 @@ export class DB {
   }
 
   /**
+   * A finished survey becomes a "Survey" entry in the agent's Task Log, so it shows in My Logs /
+   * History and counts in the agent's numbers (Performance, Dashboard) like any other logged
+   * task. The entry carries the survey's handling time, and a "[auto:<assignment id>]" marker in
+   * its notes: that marker is what makes this idempotent (a survey is logged once), and what
+   * tells these entries apart from ones an agent typed by hand.
+   * `target` = the log's type and department, decided by the caller from the agent's role.
+   */
+  static async addSurveyCompletionLog(a: {
+    assignment: any; agent: { id: string; name: string }; result: string; target: { log_type: string; department: string };
+  }): Promise<OpsLog | null> {
+    const marker = `[auto:${a.assignment.id}]`;
+    const { rows: dup } = await pool.query(`SELECT 1 FROM logs WHERE agent_id = $1 AND notes LIKE $2 LIMIT 1`, [a.agent.id, `%${marker}%`]);
+    if (dup.length) return null;
+    // Handling time: every session this agent spent on this survey (several attempts add up).
+    const { rows: [t] } = await pool.query(
+      `SELECT COALESCE(SUM(active_seconds), 0)::int AS secs FROM survey_work_sessions WHERE assignment_id = $1 AND agent_id = $2`,
+      [a.assignment.id, a.agent.id]);
+    const now = new Date().toISOString();
+    const notes = [`Survey${a.assignment.task_no ? ` #${a.assignment.task_no}` : ""}`, a.result, a.assignment.customer_phone, marker].filter(Boolean).join(" · ");
+    return DB.addLog({
+      log_type: a.target.log_type as any, department: a.target.department, activity_type: "Survey", status: "Completed",
+      agent_id: a.agent.id, agent_name: a.agent.name,
+      brand: a.assignment.brand_name || undefined, order_number: a.assignment.order_id || undefined, customer_name: a.assignment.customer_name || undefined,
+      notes, duration_seconds: Number(t?.secs) || 0, created_at: now, updated_at: now, created_by: a.agent.id,
+    } as any);
+  }
+
+  /**
    * Handling time for the Surveys Dashboard and the agent's own card. One row per
    * (agent, survey) with time worked inside [from, to] (by session start), plus the survey's
    * all-time total (a survey can span days when attempts are spread out). Shift sessions

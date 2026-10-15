@@ -3265,6 +3265,29 @@ app.get("/api/surveys/queue", authenticateJWT, asyncHandler(async (req: any, res
 // client never reports a duration. Saving a result closes the session (response/attempt routes).
 const SURVEY_DONE_STATUSES = new Set(["successful", "unreachable", "declined", "refused", "not_interested"]);
 
+// A survey the agent finishes is also written to their Task Log (a "Survey" entry with its handling
+// time), so it appears in My Logs / History and counts in their numbers. The log's type and
+// department follow the same routing as POST /api/logs for an agent/supervisor: FM staff log as
+// call_center, everyone else under their own department; roles without a department (admin,
+// manager) fall back to Call Center. Never lets a logging problem fail the survey itself.
+const SURVEY_RESULT_LABEL: Record<string, string> = {
+  successful: "Surveyed", unreachable: "Not reached", declined: "Not reached (declined)", refused: "Refused to complete", not_interested: "Not interested",
+};
+async function logFinishedSurvey(user: any, assignment: any): Promise<void> {
+  try {
+    if (!assignment || !SURVEY_DONE_STATUSES.has(assignment.status)) return;
+    const isFM = user.job_title === "FM" || user.job_title === "FM Team Leader";
+    const log_type = isFM ? "call_center" : (DEPT_TO_LOGTYPE[user.department] || "call_center");
+    await DB.addSurveyCompletionLog({
+      assignment, agent: { id: user.id, name: user.full_name },
+      result: SURVEY_RESULT_LABEL[assignment.status] || assignment.status,
+      target: { log_type, department: user.department || "Call Center" },
+    });
+  } catch (e: any) {
+    console.warn("[survey-log] could not write the Task Log entry:", e?.message || e);
+  }
+}
+
 app.post("/api/surveys/assignments/:id/work/start", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
   const a = await DB.getSurveyAssignmentById(req.params.id);
@@ -3371,7 +3394,10 @@ app.post("/api/surveys/assignments/:id/attempt", authenticateJWT, asyncHandler(a
   const out = await DB.addSurveyAttempt({ assignment_id: req.params.id, agent_id: req.user.id, outcome, note });
   // An attempt that closes the survey (declined, or the last attempt) ends its handling time too.
   const st = out?.assignment?.status;
-  if (st && SURVEY_DONE_STATUSES.has(st)) await DB.endOpenWorkSessions(req.params.id, req.user.id, "attempt", st).catch(() => {});
+  if (st && SURVEY_DONE_STATUSES.has(st)) {
+    await DB.endOpenWorkSessions(req.params.id, req.user.id, "attempt", st).catch(() => {});
+    await logFinishedSurvey(req.user, out.assignment);
+  }
   res.json(out);
 }));
 
@@ -3402,6 +3428,7 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
   });
   // Close this agent's open handling-time session on the survey, tagged with the result.
   await DB.endOpenWorkSessions(req.params.id, req.user.id, "saved", updated?.status ?? null).catch(() => {});
+  await logFinishedSurvey(req.user, updated);
   res.json(updated);
 }));
 
