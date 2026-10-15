@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
-import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS } from "./server/xontel.js";
+import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks } from "./server/xontel.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3482,7 +3482,7 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
   // "Reached" claims are the ones that can be faked: Surveyed, Refused, Not interested.
   const checks: Record<string, any> = {};
   const byAgent = new Map<string, any>();
-  const sum = { reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0, notReachedNoCall: 0 };
+  const sum = { reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0, unlinked: 0, notReachedNoCall: 0 };
   for (const r of rows) {
     if (r.result) {
       checks[r.id] = {
@@ -3493,16 +3493,18 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
     if (!isReachedClaim(r.status)) { if (r.result === "no_call") sum.notReachedNoCall++; continue; }
     sum.reached++;
     let g = byAgent.get(r.agent_name);
-    if (!g) { g = { agent: r.agent_name, reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0 }; byAgent.set(r.agent_name, g); }
+    if (!g) { g = { agent: r.agent_name, linked: !!r.linked, reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0, unlinked: 0 }; byAgent.set(r.agent_name, g); }
     g.reached++;
-    if (!r.result) { sum.pending++; g.pending++; }
+    // An employee with no XonTel link cannot be judged — never counted as "no call".
+    if (!r.linked) { sum.unlinked++; g.unlinked++; }
+    else if (!r.result) { sum.pending++; g.pending++; }
     else if (r.result === "no_call") { sum.noCall++; g.noCall++; }
     else if (r.result === "unanswered") { sum.unanswered++; g.unanswered++; }
     else if (r.status === "successful" && (Number(r.talk_seconds) || 0) < MIN_TALK_SECONDS) { sum.short++; g.short++; }
     else { sum.confirmed++; g.confirmed++; }
   }
   const agents = [...byAgent.values()].map((g) => {
-    const judged = g.reached - g.pending;
+    const judged = g.reached - g.pending - g.unlinked;
     return { ...g, noCallPct: judged ? Math.round((g.noCall / judged) * 100) : null, suspectPct: judged ? Math.round(((g.noCall + g.unanswered + g.short) / judged) * 100) : null };
   }).sort((a, b) => (b.suspectPct ?? -1) - (a.suspectPct ?? -1) || b.reached - a.reached);
 
@@ -3510,7 +3512,60 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
     configured: xontelConfigured(), minTalkSeconds: MIN_TALK_SECONDS,
     status: { lastRunAt: checkStatus.lastRunAt, lastError: checkStatus.lastError, running: checkStatus.running },
     summary: sum, agents, checks,
+    canLink: ["admin", "supervisor"].includes(req.user.role),
   });
+}));
+
+// ---- Linking employees to their XonTel users (the check only counts the employee's OWN calls) ----
+// Everyone who can open call verification can see the links; changing them is for Admins and Supervisors.
+const requireCallLinking = (req: any, res: any, next: any) => {
+  if (req.user && ["admin", "supervisor"].includes(req.user.role)) return next();
+  res.status(403).json({ error: "Linking XonTel users is for Supervisors and Admins." });
+};
+
+app.get("/api/surveys/call-verification/links", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
+  if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet." });
+  let agents: { id: string; name: string }[];
+  try { agents = await fetchXontelAgents(); } catch (e: any) { return res.status(502).json({ error: `XonTel: ${e?.message || e}` }); }
+  const [users, links] = await Promise.all([DB.getLinkableUsers(), DB.getXontelLinks()]);
+  const linkOf = new Map(links.map((l) => [l.user_id, l]));
+  const taken = new Set(links.map((l) => l.xontel_agent_id));
+  const suggestions = suggestLinks(users.filter((u) => !linkOf.has(u.id)).map((u) => ({ id: u.id, name: u.full_name })), agents, taken);
+  res.json({
+    agents,
+    users: users.map((u) => ({
+      id: u.id, name: u.full_name, role: u.role, department: u.department, surveys30d: u.surveys30d,
+      link: linkOf.get(u.id) ? { id: linkOf.get(u.id)!.xontel_agent_id, name: linkOf.get(u.id)!.xontel_agent_name } : null,
+      suggestion: suggestions.get(u.id) || null,
+    })),
+  });
+}));
+
+app.put("/api/surveys/call-verification/links/:userId", authenticateJWT, requireCallLinking, asyncHandler(async (req: any, res) => {
+  const userId = req.params.userId;
+  const user = await DB.getUserById(userId);
+  if (!user) return res.status(404).json({ error: "Employee not found." });
+  const agentId = qs(req.body?.xontel_agent_id);
+  if (!agentId) {                      // unlink
+    await DB.removeXontelLink(userId);
+    await DB.addAuditLog({ operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role, category: "Surveys", action: "Unlink XonTel user", related_ref: userId, details: user.full_name });
+    return res.json({ ok: true, linked: false });
+  }
+  // The name is taken from XonTel itself, never from the browser.
+  let agents: { id: string; name: string }[];
+  try { agents = await fetchXontelAgents(); } catch (e: any) { return res.status(502).json({ error: `XonTel: ${e?.message || e}` }); }
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) return res.status(400).json({ error: "That XonTel user was not found." });
+  try { await DB.setXontelLink(userId, agent.id, agent.name, req.user.id); }
+  catch (e: any) {
+    if (String(e?.message).startsWith("CLASH:")) {
+      const other = await DB.getUserById(String(e.message).slice(6));
+      return res.status(409).json({ error: `${agent.name} is already linked to ${other?.full_name || "another employee"}. Unlink them first.` });
+    }
+    throw e;
+  }
+  await DB.addAuditLog({ operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role, category: "Surveys", action: "Link XonTel user", related_ref: userId, details: `${user.full_name} = ${agent.name} (${agent.id})` });
+  res.json({ ok: true, linked: true, link: { id: agent.id, name: agent.name } });
 }));
 
 // "Verify now": look the calls up for a period right away (re-checks everything not yet confirmed).

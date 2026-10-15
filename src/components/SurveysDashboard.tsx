@@ -21,27 +21,29 @@ interface TimeSurvey {
 }
 // Call verification (GET /api/surveys/call-verification) — Team Leaders, Supervisors and Admins only.
 interface CallCheck { result: "answered" | "unanswered" | "no_call"; talk: number; calls: number; call_time: string | null; direction: string | null; xontel_agent: string | null; relation: string | null }
-interface CallAgent { agent: string; reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; noCallPct: number | null; suspectPct: number | null }
+interface CallAgent { agent: string; linked: boolean; unlinked: number; reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; noCallPct: number | null; suspectPct: number | null }
 interface CallVerification {
   configured: boolean; minTalkSeconds: number;
   status: { lastRunAt: string | null; lastError: string | null; running: boolean };
-  summary: { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; notReachedNoCall: number };
-  agents: CallAgent[]; checks: Record<string, CallCheck>;
+  summary: { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; unlinked: number; notReachedNoCall: number };
+  agents: CallAgent[]; checks: Record<string, CallCheck>; canLink: boolean;
 }
+interface LinkUser { id: string; name: string; role: string; department: string | null; surveys30d: number; link: { id: string; name: string | null } | null; suggestion: { id: string; name: string } | null }
+interface LinksData { agents: { id: string; name: string }[]; users: LinkUser[] }
 const CALL_ROLES = ["admin", "supervisor", "leader"];
 const isReachedStatus = (s: string) => s === "successful" || s === "refused" || s === "not_interested";
 // What the verdict means for THIS survey's claim. kind drives colour; label is what the supervisor reads.
-const callView = (status: string, c: CallCheck | undefined, minTalk: number): { kind: "ok" | "warn" | "bad" | "pending"; label: string; filter: string } => {
-  if (!c) return { kind: "pending", label: "Checking…", filter: "pending" };
+const callView = (status: string, c: CallCheck | undefined, minTalk: number, unlinked = false): { kind: "ok" | "warn" | "bad" | "pending"; label: string; filter: string } => {
+  if (!c) return unlinked ? { kind: "pending", label: "Agent not linked", filter: "unlinked" } : { kind: "pending", label: "Checking…", filter: "pending" };
   const mmss = fmtDur(c.talk);
   if (isReachedStatus(status)) {
-    if (c.result === "no_call") return { kind: "bad", label: "No call found", filter: "no_call" };
+    if (c.result === "no_call") return { kind: "bad", label: c.relation === "other" ? "No call from this agent" : "No call found", filter: "no_call" };
     if (c.result === "unanswered") return { kind: "warn", label: "Call not answered", filter: "unanswered" };
     if (status === "successful" && c.talk < minTalk) return { kind: "warn", label: `Short call ${mmss}`, filter: "short" };
     return { kind: "ok", label: `Call confirmed ${mmss}`, filter: "ok" };
   }
   // The agent said the customer was NOT reached: a call attempt should exist.
-  if (c.result === "no_call") return { kind: "bad", label: "No call attempt found", filter: "no_call" };
+  if (c.result === "no_call") return { kind: "bad", label: c.relation === "other" ? "No attempt from this agent" : "No call attempt found", filter: "no_call" };
   if (c.result === "answered") return { kind: "warn", label: `Customer answered ${mmss}`, filter: "unanswered" };
   return { kind: "ok", label: "Attempt confirmed", filter: "ok" };
 };
@@ -108,6 +110,12 @@ export default function SurveysDashboard({ currentUser }: Props) {
 
   const [cv, setCv] = useState<CallVerification | null>(null);
   const [callFilter, setCallFilter] = useState("");
+  const [linksOpen, setLinksOpen] = useState(false);
+  const [links, setLinks] = useState<LinksData | null>(null);
+  const [linksErr, setLinksErr] = useState("");
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [picks, setPicks] = useState<Record<string, string>>({});   // employee id -> chosen XonTel agent id ("" = none)
+  const [savingLink, setSavingLink] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [verifyMsg, setVerifyMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [time, setTime] = useState<TimeData | null>(null);
@@ -145,6 +153,36 @@ export default function SurveysDashboard({ currentUser }: Props) {
   const periodLabel = activePeriod === "today" ? "today" : activePeriod === "week" ? "this week" : activePeriod === "month" ? "this month"
     : from || to ? `${from || "start"} → ${to || "today"}` : "all time";
 
+  const unlinkedNames = useMemo(() => new Set((cv?.agents || []).filter((a) => !a.linked).map((a) => a.agent)), [cv]);
+
+  const loadLinks = async () => {
+    setLinksLoading(true); setLinksErr("");
+    try {
+      const res = await apiFetch("/api/surveys/call-verification/links");
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Could not load the XonTel users.");
+      setLinks(j);
+      setPicks({});
+    } catch (e: any) { setLinksErr(e.message); } finally { setLinksLoading(false); }
+  };
+  const toggleLinks = () => { const next = !linksOpen; setLinksOpen(next); if (next && !links) loadLinks(); };
+  const saveLink = async (userId: string, agentId: string) => {
+    setSavingLink(userId); setLinksErr("");
+    try {
+      const res = await apiFetch(`/api/surveys/call-verification/links/${encodeURIComponent(userId)}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xontel_agent_id: agentId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Could not save the link.");
+      setPicks((pk) => { const n = { ...pk }; delete n[userId]; return n; });
+      await loadLinks();
+      await load();          // their surveys are judged from now on
+    } catch (e: any) { setLinksErr(e.message); } finally { setSavingLink(""); }
+  };
+  const acceptAllSuggestions = async () => {
+    for (const u of links?.users || []) if (!u.link && u.suggestion) { await saveLink(u.id, u.suggestion.id); }
+  };
+
   // "Verify now": look the calls up for the period (the system also does this by itself every 10 minutes).
   const verifyNow = async () => {
     setVerifying(true); setVerifyMsg(null);
@@ -164,13 +202,13 @@ export default function SurveysDashboard({ currentUser }: Props) {
     if (!d) return [];
     const s = search.trim().toLowerCase();
     return d.results.filter((r) => {
-      if (callFilter && callView(r.status, cv?.checks[r.id], cv?.minTalkSeconds ?? 30).filter !== callFilter) return false;
+      if (callFilter && callView(r.status, cv?.checks[r.id], cv?.minTalkSeconds ?? 30, unlinkedNames.has(r.agent_name || "")).filter !== callFilter) return false;
       if (outcome === "complaint" ? r.action_type !== "complaint" : outcome && bucketOf(r.status) !== outcome) return false;
       if (agent && (r.agent_name || "(unassigned)") !== agent) return false;
       if (s && ![r.customer_phone, r.customer_name, r.order_id, r.item_name].some((x) => (x || "").toLowerCase().includes(s))) return false;
       return true;
     });
-  }, [d, outcome, agent, search, callFilter, cv]);
+  }, [d, outcome, agent, search, callFilter, cv, unlinkedNames]);
 
   // A survey's handling time, all agents and all sessions (matched to the results table by id).
   const timeById = useMemo(() => {
@@ -211,7 +249,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
   const exportCsv = () => {
     if (!results.length) return;
     const questions = Array.from(new Set(results.flatMap((r) => (r.answers || []).map((a) => a.q || "Answer"))));
-    const header = ["Finished at (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Branch", "Item", "Item type", "Outcome", "Complaint", "Attempts", "Campaign", "Handling time", ...(cv ? ["Call check", "Call talk time", "Called by (XonTel)"] : []), ...questions];
+    const header = ["Finished at (Kuwait)", "Agent", "Phone", "Customer", "Order ID", "Brand", "Branch", "Item", "Item type", "Outcome", "Complaint", "Attempts", "Campaign", "Handling time", ...(cv ? ["Call check", "Call talk time", "XonTel agent on the call"] : []), ...questions];
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [header.map(esc).join(",")];
     for (const r of results) {
@@ -219,7 +257,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
       lines.push([fmtTime(r.completed_at), r.agent_name, r.customer_phone, r.customer_name, r.order_id, r.brand_name, r.branch, r.item_name, r.item_kind,
         outcomeView(r.status).label, r.action_type === "complaint" ? "Yes" : "", r.attempt_count, r.template_name,
         timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : "",
-        ...(cv ? (() => { const c = cv.checks[r.id]; return [callView(r.status, c, cv.minTalkSeconds).label, c && c.result === "answered" ? fmtDur(c.talk) : "", c?.xontel_agent ?? ""]; })() : []),
+        ...(cv ? (() => { const c = cv.checks[r.id]; return [callView(r.status, c, cv.minTalkSeconds, unlinkedNames.has(r.agent_name || "")).label, c && c.result === "answered" ? fmtDur(c.talk) : "", c?.xontel_agent ?? ""]; })() : []),
         ...questions.map((q) => byQ.get(q) ?? "")].map(esc).join(","));
     }
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
@@ -371,7 +409,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
       {canSeeCalls && (
         <div className="space-y-4">
           <SectionTitle icon={ShieldCheck} tone="text-emerald-400" title={`Call verification — ${periodLabel}`}
-            sub="For every survey an agent saved as reached (Surveyed, Refused, Not interested), the PBX (XonTel) call records are searched for a call to that customer's number just before the save. Matched by customer number and time." />
+            sub="For every survey an agent saved as reached (Surveyed, Refused, Not interested), the PBX (XonTel) call records are searched for a call made BY THAT EMPLOYEE'S OWN XonTel user to the customer's number just before the save. A call by another agent does not count." />
           {!cv ? <div className="text-xs text-[var(--muted)]">Call verification is not available.</div> : !cv.configured ? (
             <div className="p-4 bg-amber-950/20 border border-amber-500/20 rounded-2xl text-xs text-amber-300 space-y-1">
               <p className="font-bold">XonTel is not connected to this system yet.</p>
@@ -379,13 +417,14 @@ export default function SurveysDashboard({ currentUser }: Props) {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
                 <Card label="Reached claims" value={cv.summary.reached} icon={PhoneCall} tone="text-[var(--heading)]" hint="Surveyed + refused + not interested" />
                 <Card label="Call confirmed" value={cv.summary.confirmed} icon={CheckCircle2} tone="text-emerald-400" />
                 <Card label="Short call" value={cv.summary.short} icon={Timer} tone="text-amber-400" hint={`answered, under ${cv.minTalkSeconds}s`} />
                 <Card label="Not answered" value={cv.summary.unanswered} icon={PhoneOff} tone="text-amber-400" hint="dialled, nobody picked up" />
                 <Card label="No call found" value={cv.summary.noCall} icon={Ban} tone="text-rose-400" hint="no call to that number" />
                 <Card label="Still checking" value={cv.summary.pending} icon={Hourglass} tone="text-zinc-400" hint="checked every 10 min" />
+                <Card label="Agent not linked" value={cv.summary.unlinked} icon={Users} tone="text-zinc-400" hint="link them to a XonTel user below" />
               </div>
 
               <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
@@ -413,7 +452,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
                         {cv.agents.map((a) => (
                           <tr key={a.agent} onClick={() => setAgent(agent === a.agent ? "" : a.agent)} title="Filter the results below to this agent"
                             className={`border-b border-[var(--border)]/40 last:border-0 cursor-pointer transition ${agent === a.agent ? "bg-emerald-500/10" : "hover:bg-[var(--surface-2)]/30"}`}>
-                            <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.agent}</td>
+                            <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.agent}{!a.linked && <span className="ml-2 px-1.5 py-0.5 bg-zinc-500/10 text-zinc-400 border border-zinc-500/20 rounded-md text-[9px] font-bold" title="Not linked to a XonTel user yet — not judged">not linked</span>}</td>
                             <td className="py-2 px-2 text-center font-mono">{a.reached}</td>
                             <td className="py-2 px-2 text-center font-mono text-emerald-400">{a.confirmed}</td>
                             <td className="py-2 px-2 text-center font-mono text-amber-400">{a.short || "—"}</td>
@@ -429,7 +468,73 @@ export default function SurveysDashboard({ currentUser }: Props) {
                     </table>
                   </div>
                 )}
-                <p className="text-[10px] text-[var(--muted)] mt-3">A flag is a reason to look, not a verdict: the call may have been made from another phone, or the PBX record may be late (still-checking rows are re-tried for 36 hours). The results table below shows each survey's call, who made it, and its talk time.</p>
+                <p className="text-[10px] text-[var(--muted)] mt-3">A flag is a reason to look, not a verdict: the call may have been made from another phone, or the PBX record may be late (still-checking rows are re-tried for 36 hours). Employees who are not linked to a XonTel user are not judged at all.</p>
+              </div>
+
+              {/* Employee <-> XonTel user links */}
+              <div className="bg-[var(--surface)] border border-[var(--border)] shadow-lg rounded-2xl overflow-hidden">
+                <button onClick={toggleLinks} className="w-full p-5 flex items-center gap-3 text-left">
+                  <Users className="w-4 h-4 text-emerald-400" />
+                  <span className="text-sm font-bold text-[var(--heading)]">XonTel users — who is who</span>
+                  <span className="text-[11px] text-[var(--muted)]">{cv.summary.unlinked ? `${cv.summary.unlinked} survey(s) are waiting for a link` : "every employee with surveys is linked"}</span>
+                  <ChevronRight className={`w-4 h-4 ml-auto text-[var(--muted)] transition-transform ${linksOpen ? "rotate-90" : ""}`} />
+                </button>
+                {linksOpen && (
+                  <div className="border-t border-[var(--border)] p-5 space-y-3">
+                    <p className="text-[11px] text-[var(--muted)]">A survey is only checked against calls made by the employee's own XonTel user, so each employee must be linked to theirs. One XonTel user belongs to one employee. {cv.canLink ? "Suggestions are shown, never applied on their own." : "Only Supervisors and Admins can change links."}</p>
+                    {linksErr && <div className="p-3 rounded-xl text-xs border bg-rose-950/20 border-rose-500/20 text-rose-400">{linksErr}</div>}
+                    {linksLoading && !links ? <div className="text-xs text-[var(--muted)]">Loading XonTel users…</div> : links && (
+                      <>
+                        {cv.canLink && links.users.some((u) => !u.link && u.suggestion) && (
+                          <button onClick={acceptAllSuggestions} disabled={!!savingLink} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95">
+                            Accept all {links.users.filter((u) => !u.link && u.suggestion).length} suggestion(s)
+                          </button>
+                        )}
+                        <div className="overflow-x-auto max-h-[460px] overflow-y-auto border border-[var(--border)] rounded-xl">
+                          <table className="w-full text-xs text-left">
+                            <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold sticky top-0 z-10">
+                              <tr><th className="p-3">Employee</th><th className="p-3 text-center">Surveys (30d)</th><th className="p-3">XonTel user</th>{cv.canLink && <th className="p-3"></th>}</tr>
+                            </thead>
+                            <tbody className="divide-y divide-[var(--border)]">
+                              {links.users.map((u) => {
+                                const taken = new Map(links.users.filter((x) => x.link).map((x) => [x.link!.id, x.id]));
+                                const current = picks[u.id] ?? u.link?.id ?? "";
+                                const changed = current !== (u.link?.id ?? "");
+                                return (
+                                  <tr key={u.id} className={u.link ? "" : "bg-amber-500/5"}>
+                                    <td className="p-3"><div className="font-bold text-[var(--heading)]">{u.name}</div><div className="text-[10px] text-[var(--muted)]">{u.role}{u.department ? ` · ${u.department}` : ""}</div></td>
+                                    <td className="p-3 text-center font-mono">{u.surveys30d || "—"}</td>
+                                    <td className="p-3">
+                                      <select value={current} disabled={!cv.canLink || savingLink === u.id} onChange={(e) => setPicks((pk) => ({ ...pk, [u.id]: e.target.value }))} className={selCls + " w-56"}>
+                                        <option value="">— not linked —</option>
+                                        {links.agents.map((a) => {
+                                          const owner = taken.get(a.id);
+                                          return <option key={a.id} value={a.id} disabled={!!owner && owner !== u.id}>{a.name}{owner && owner !== u.id ? " (taken)" : ""}{u.suggestion?.id === a.id && !u.link ? " ★ suggested" : ""}</option>;
+                                        })}
+                                      </select>
+                                      {!u.link && u.suggestion && picks[u.id] === undefined && <span className="ml-2 text-[10px] text-amber-400">★ {u.suggestion.name}?</span>}
+                                    </td>
+                                    {cv.canLink && (
+                                      <td className="p-3 text-right whitespace-nowrap">
+                                        {!u.link && u.suggestion && picks[u.id] === undefined && (
+                                          <button onClick={() => saveLink(u.id, u.suggestion!.id)} disabled={!!savingLink} className="mr-2 px-2.5 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-lg text-[11px] font-bold hover:bg-amber-500/20 disabled:opacity-50">Use suggestion</button>
+                                        )}
+                                        <button onClick={() => saveLink(u.id, current)} disabled={!changed || savingLink === u.id}
+                                          className="px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg text-[11px] font-bold hover:bg-blue-500/20 disabled:opacity-30">
+                                          {savingLink === u.id ? "Saving…" : current ? "Save" : "Unlink"}
+                                        </button>
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -553,6 +658,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
               <option value="short">⚠ Short call</option>
               <option value="ok">✓ Call confirmed</option>
               <option value="pending">… Still checking</option>
+              <option value="unlinked">Agent not linked</option>
             </select>
           )}
           <select value={agent} onChange={(e) => setAgent(e.target.value)} className={selCls}>
@@ -618,15 +724,15 @@ export default function SurveysDashboard({ currentUser }: Props) {
                         <td className="p-4 text-right font-mono font-bold text-sky-400 whitespace-nowrap">{timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : <span className="text-[var(--muted)] font-normal">—</span>}</td>
                         {canSeeCalls && cv?.configured && (() => {
                           const c = cv.checks[r.id];
-                          const v = callView(r.status, c, cv.minTalkSeconds);
-                          const by = c && c.xontel_agent && (c.relation === "partial" || c.relation === "different") ? c.xontel_agent : null;
+                          const v = callView(r.status, c, cv.minTalkSeconds, unlinkedNames.has(r.agent_name || ""));
+                          const by = c && c.relation === "other" && c.xontel_agent ? c.xontel_agent : null;
                           return (
                             <td className="p-4">
                               <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold border whitespace-nowrap ${CALL_CLS[v.kind]}`}
                                 title={c ? `${c.calls} matching call(s)${c.call_time ? " · " + fmtTime(c.call_time) : ""}${c.direction ? " · " + c.direction : ""}${c.xontel_agent ? " · by " + c.xontel_agent : ""}` : "Not checked yet — the system checks every 10 minutes"}>
                                 {CALL_ICON[v.kind]} {v.label}
                               </span>
-                              {by && <div className="text-[10px] text-amber-400 mt-1" title="The XonTel agent who made the call does not clearly match the employee who saved the survey">called by {by}</div>}
+                              {by && <div className="text-[10px] text-amber-400 mt-1" title="Another XonTel agent spoke to this customer around that time — not the employee who saved the survey">{by} called this customer</div>}
                             </td>
                           );
                         })()}

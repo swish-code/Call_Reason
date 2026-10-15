@@ -668,6 +668,17 @@ export class DB {
         xontel_agent TEXT,
         agent_relation TEXT
       );
+      -- basis = 'agent' once a verdict was judged on the employee's own XonTel user. Verdicts without
+      -- it came from the first version (customer number only, any agent) and are ignored and redone.
+      ALTER TABLE survey_call_checks ADD COLUMN IF NOT EXISTS basis TEXT;
+      -- Which XonTel agent (user) is each employee? One XonTel agent belongs to one employee.
+      CREATE TABLE IF NOT EXISTS xontel_agent_links (
+        user_id TEXT PRIMARY KEY,
+        xontel_agent_id TEXT NOT NULL UNIQUE,
+        xontel_agent_name TEXT,
+        linked_by TEXT,
+        linked_at TIMESTAMPTZ DEFAULT now()
+      );
       CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_records_upload_batch ON survey_records(upload_batch_id);
@@ -2176,16 +2187,17 @@ export class DB {
   static async getSurveysForCallCheck(f: { fromISO: string; toISO: string; force: boolean; recheckWindowHours: number; limit: number }): Promise<any[]> {
     const { rows } = await pool.query(`
       SELECT a.id, a.status, a.completed_at, a.customer_phone, a.task_no,
-             ag.id AS agent_id, ag.full_name AS agent_name
+             ag.id AS agent_id, ag.full_name AS agent_name, l.xontel_agent_id
         FROM survey_assignments a
         LEFT JOIN LATERAL (SELECT agent_id FROM survey_responses WHERE assignment_id = a.id ORDER BY answered_at DESC LIMIT 1) r ON true
         LEFT JOIN LATERAL (SELECT agent_id FROM survey_call_attempts WHERE assignment_id = a.id ORDER BY created_at DESC LIMIT 1) at ON true
         LEFT JOIN users ag ON ag.id = COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id)
+        JOIN xontel_agent_links l ON l.user_id = ag.id
         LEFT JOIN survey_call_checks c ON c.assignment_id = a.id
        WHERE a.status IN ('successful','unreachable','declined','refused','not_interested')
          AND a.completed_at >= $1 AND a.completed_at <= $2
          AND COALESCE(a.customer_phone, '') <> ''
-         AND ( c.assignment_id IS NULL
+         AND ( c.assignment_id IS NULL OR c.basis IS DISTINCT FROM 'agent'
                OR (c.result <> 'answered' AND ($3::boolean
                     OR (a.completed_at > now() - ($4 || ' hours')::interval AND c.checked_at < now() - interval '9 minutes'))) )
        ORDER BY a.completed_at DESC
@@ -2200,11 +2212,11 @@ export class DB {
       await client.query("BEGIN");
       for (const r of rows) {
         await client.query(
-          `INSERT INTO survey_call_checks (assignment_id, checked_at, result, talk_seconds, calls_found, call_id, call_time, call_direction, xontel_agent, agent_relation)
-           VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8, $9)
+          `INSERT INTO survey_call_checks (assignment_id, checked_at, result, talk_seconds, calls_found, call_id, call_time, call_direction, xontel_agent, agent_relation, basis)
+           VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8, $9, 'agent')
            ON CONFLICT (assignment_id) DO UPDATE SET checked_at = now(), result = EXCLUDED.result, talk_seconds = EXCLUDED.talk_seconds,
              calls_found = EXCLUDED.calls_found, call_id = EXCLUDED.call_id, call_time = EXCLUDED.call_time,
-             call_direction = EXCLUDED.call_direction, xontel_agent = EXCLUDED.xontel_agent, agent_relation = EXCLUDED.agent_relation`,
+             call_direction = EXCLUDED.call_direction, xontel_agent = EXCLUDED.xontel_agent, agent_relation = EXCLUDED.agent_relation, basis = 'agent'`,
           [r.assignment_id, r.result, r.talk, r.calls, r.call_id, r.call_time ? new Date(r.call_time).toISOString() : null, r.direction, r.xontel_agent, r.relation]);
       }
       await client.query("COMMIT");
@@ -2216,17 +2228,63 @@ export class DB {
     const { rows } = await pool.query(`
       SELECT a.id, a.task_no, a.status, a.completed_at, a.customer_phone,
              COALESCE(ag.full_name, '(unknown)') AS agent_name,
+             (l.user_id IS NOT NULL) AS linked,
              c.result, c.talk_seconds, c.calls_found, c.call_time, c.call_direction, c.xontel_agent, c.agent_relation, c.checked_at
         FROM survey_assignments a
         LEFT JOIN LATERAL (SELECT agent_id FROM survey_responses WHERE assignment_id = a.id ORDER BY answered_at DESC LIMIT 1) r ON true
         LEFT JOIN LATERAL (SELECT agent_id FROM survey_call_attempts WHERE assignment_id = a.id ORDER BY created_at DESC LIMIT 1) at ON true
         LEFT JOIN users ag ON ag.id = COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id)
-        LEFT JOIN survey_call_checks c ON c.assignment_id = a.id
+        LEFT JOIN xontel_agent_links l ON l.user_id = ag.id
+        LEFT JOIN survey_call_checks c ON c.assignment_id = a.id AND c.basis = 'agent'
        WHERE a.status IN ('successful','unreachable','declined','refused','not_interested')
          AND ($1::timestamptz IS NULL OR a.completed_at >= $1) AND ($2::timestamptz IS NULL OR a.completed_at <= $2)
        ORDER BY a.completed_at DESC
        LIMIT 5000`, [fromISO, toISO]);
     return rows;
+  }
+
+  // ---- Employee <-> XonTel agent links ----
+  static async getXontelLinks(): Promise<{ user_id: string; xontel_agent_id: string; xontel_agent_name: string | null }[]> {
+    const { rows } = await pool.query(`SELECT user_id, xontel_agent_id, xontel_agent_name FROM xontel_agent_links`);
+    return rows;
+  }
+
+  // Staff who can finish surveys, with how many they finished in the last 30 days (busiest first).
+  static async getLinkableUsers(): Promise<{ id: string; full_name: string; role: string; department: string | null; surveys30d: number }[]> {
+    const { rows } = await pool.query(`
+      SELECT u.id, u.full_name, u.role, u.department,
+             (SELECT COUNT(DISTINCT t.assignment_id)::int FROM (
+                SELECT assignment_id FROM survey_responses WHERE agent_id = u.id AND answered_at > now() - interval '30 days'
+                UNION SELECT assignment_id FROM survey_call_attempts WHERE agent_id = u.id AND created_at > now() - interval '30 days') t) AS surveys30d
+        FROM users u
+       WHERE u.status = 'Active' AND u.role IN ('agent','leader','supervisor','admin')
+       ORDER BY surveys30d DESC, u.full_name ASC`);
+    return rows;
+  }
+
+  /** Link (or re-link) an employee to a XonTel agent. Throws if that agent already belongs to someone else. */
+  static async setXontelLink(userId: string, agentId: string, agentName: string, by: string): Promise<void> {
+    const { rows: clash } = await pool.query(`SELECT user_id FROM xontel_agent_links WHERE xontel_agent_id = $1 AND user_id <> $2`, [agentId, userId]);
+    if (clash.length) throw new Error("CLASH:" + clash[0].user_id);
+    await pool.query(
+      `INSERT INTO xontel_agent_links (user_id, xontel_agent_id, xontel_agent_name, linked_by, linked_at) VALUES ($1,$2,$3,$4, now())
+       ON CONFLICT (user_id) DO UPDATE SET xontel_agent_id = EXCLUDED.xontel_agent_id, xontel_agent_name = EXCLUDED.xontel_agent_name, linked_by = EXCLUDED.linked_by, linked_at = now()`,
+      [userId, agentId, agentName, by]);
+    // Verdicts judged under an older link (or none) are stale.
+    await pool.query(`DELETE FROM survey_call_checks WHERE assignment_id IN (
+        SELECT a.id FROM survey_assignments a
+         LEFT JOIN LATERAL (SELECT agent_id FROM survey_responses WHERE assignment_id = a.id ORDER BY answered_at DESC LIMIT 1) r ON true
+         LEFT JOIN LATERAL (SELECT agent_id FROM survey_call_attempts WHERE assignment_id = a.id ORDER BY created_at DESC LIMIT 1) at ON true
+        WHERE COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id) = $1)`, [userId]);
+  }
+
+  static async removeXontelLink(userId: string): Promise<void> {
+    await pool.query(`DELETE FROM xontel_agent_links WHERE user_id = $1`, [userId]);
+    await pool.query(`DELETE FROM survey_call_checks WHERE assignment_id IN (
+        SELECT a.id FROM survey_assignments a
+         LEFT JOIN LATERAL (SELECT agent_id FROM survey_responses WHERE assignment_id = a.id ORDER BY answered_at DESC LIMIT 1) r ON true
+         LEFT JOIN LATERAL (SELECT agent_id FROM survey_call_attempts WHERE assignment_id = a.id ORDER BY created_at DESC LIMIT 1) at ON true
+        WHERE COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id) = $1)`, [userId]);
   }
 
   /**

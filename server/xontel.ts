@@ -14,9 +14,11 @@
 //                           changes whenever cloudflared restarts.
 //   - XONTEL_BASE_URL       fixed address, used when no discovery is configured.
 //
-//  Matching is by the customer's number (last 8 digits, found in any number-like field of the
-//  call record) and time — NOT by agent, so no agent-account mapping is needed and a wrong link
-//  can never accuse anyone. The XonTel agent's name is kept so a supervisor can see WHO called.
+//  A call counts only if it was made by THE EMPLOYEE'S OWN XonTel user (a supervisor links each
+//  employee to their XonTel agent) to the customer's number (last 8 digits, found in any
+//  number-like field of the record) around the time the survey was saved. A call to the same
+//  customer by a different agent is not this employee's call: it is reported as "no call from
+//  this agent", with the other agent's name beside it. Employees with no link are not judged.
 // ---------------------------------------------------------------------------
 import { DB } from "./db.js";
 
@@ -76,7 +78,7 @@ async function xontelGet(path: string): Promise<any> {
 
 export type CdrCall = {
   id: string; ts: number; talk: number; answered: boolean; direction: string;
-  agentName: string | null; keys: string[];
+  agentId: string | null; agentName: string | null; keys: string[];
 };
 
 // "2026-09-19 02:49:59pm" (12-hour) or "2026-09-19 14:49:59" — Kuwait time, no zone.
@@ -117,6 +119,7 @@ export function toCall(r: any): CdrCall | null {
     id: String(id), ts, talk,
     answered: /^answered$/i.test(status) || talk > 0,
     direction: String(r.call_type ?? ""),
+    agentId: r.agent_id === null || r.agent_id === undefined || r.agent_id === "" ? null : String(r.agent_id),
     agentName: r.agent ? String(r.agent) : null,
     keys: [...keys],
   };
@@ -167,29 +170,66 @@ export const isReachedClaim = (status: string) => status === "successful" || sta
 export type CallJudgement = {
   result: "answered" | "unanswered" | "no_call";
   talk: number; calls: number;
-  call_id: string | null; call_time: number | null; direction: string | null; xontel_agent: string | null; relation: string | null;
+  call_id: string | null; call_time: number | null; direction: string | null;
+  xontel_agent: string | null;
+  relation: "same" | "other" | null;   // same = the employee's own call; other = only a DIFFERENT agent called this customer
 };
 
 export function surveyWindow(status: string, completedMs: number): { from: number; to: number } {
   return { from: completedMs - (isReachedClaim(status) ? REACHED_LOOKBACK_MS : NOT_REACHED_LOOKBACK_MS), to: completedMs + LOOKAHEAD_MS };
 }
 
-export function judgeSurvey(index: Map<string, CdrCall[]>, s: { phone: string; status: string; completedMs: number; agentName: string | null }): CallJudgement {
+/** The verdict for one survey: only calls by the employee's own XonTel agent (agentId) count. */
+export function judgeSurvey(index: Map<string, CdrCall[]>, s: { phone: string; status: string; completedMs: number; agentId: string }): CallJudgement {
   const key = last8(s.phone);
   const w = surveyWindow(s.status, s.completedMs);
   const found = key ? (index.get(key) || []).filter((c) => c.ts >= w.from && c.ts <= w.to && !/internal/i.test(c.direction)) : [];
-  const answered = found.filter((c) => c.answered);
-  const pool = answered.length ? answered : found;
-  const rank = (c: CdrCall) => (agentRelation(c.agentName, s.agentName) === "same" ? 1_000_000 : 0) + c.talk;
-  const best = pool.slice().sort((a, b) => rank(b) - rank(a))[0];
-  return {
-    result: answered.length ? "answered" : found.length ? "unanswered" : "no_call",
-    talk: best && answered.length ? best.talk : 0,
-    calls: found.length,
-    call_id: best?.id ?? null, call_time: best?.ts ?? null, direction: best?.direction || null,
-    xontel_agent: best?.agentName ?? null,
-    relation: best ? agentRelation(best.agentName, s.agentName) : null,
-  };
+  const mine = found.filter((c) => c.agentId === String(s.agentId));
+  const others = found.filter((c) => c.agentId !== String(s.agentId));
+  const answered = mine.filter((c) => c.answered);
+  const bestMine = (answered.length ? answered : mine).slice().sort((a, b) => b.talk - a.talk)[0];
+  if (bestMine) {
+    return { result: answered.length ? "answered" : "unanswered", talk: answered.length ? bestMine.talk : 0, calls: mine.length,
+      call_id: bestMine.id, call_time: bestMine.ts, direction: bestMine.direction || null, xontel_agent: bestMine.agentName, relation: "same" };
+  }
+  // Nobody from this employee — but someone else may have spoken to the customer (worth showing).
+  const other = others.filter((c) => c.answered).sort((a, b) => b.talk - a.talk)[0] || others[0];
+  return { result: "no_call", talk: 0, calls: 0, call_id: other?.id ?? null, call_time: other?.ts ?? null, direction: other?.direction || null,
+    xontel_agent: other?.agentName ?? null, relation: other ? "other" : null };
+}
+
+// ---- Linking employees to their XonTel agents --------------------------------------
+
+export type XontelAgent = { id: string; name: string };
+
+/** XonTel's agent list (id + name), from the CDR filters. */
+export async function fetchXontelAgents(): Promise<XontelAgent[]> {
+  const f = await xontelGet("/api/v1/cdr/filters");
+  const list: any[] = f?.agent || f?.agents || [];
+  return list.map((a) => ({ id: String(a?.value ?? a?.id ?? ""), name: String(a?.label ?? a?.name ?? "") })).filter((a) => a.id);
+}
+
+/**
+ * Suggestions only — never applied on their own. For each employee the MOST SPECIFIC XonTel name
+ * whose every part appears in theirs ("A-Alaa" beats "Ahmed" for "Ahmed Alaa"), and only if that is a
+ * single clear winner AND that XonTel name fits no other employee — so a bare "Ahmed" is never offered
+ * to anyone.
+ */
+export function suggestLinks(users: { id: string; name: string }[], agents: XontelAgent[], takenAgentIds: Set<string>): Map<string, XontelAgent> {
+  const free = agents.filter((a) => !takenAgentIds.has(a.id));
+  const fits = (a: XontelAgent, u: { name: string }) => agentRelation(a.name, u.name) === "same";
+  const out = new Map<string, XontelAgent>();
+  for (const u of users) {
+    const cands = free.filter((a) => fits(a, u));
+    if (!cands.length) continue;
+    const score = (a: XontelAgent) => tokens(a.name).length;
+    const top = Math.max(...cands.map(score));
+    const best = cands.filter((a) => score(a) === top);
+    if (best.length !== 1) continue;
+    if (users.filter((o) => fits(best[0], o)).length !== 1) continue;      // fits another employee too -> ambiguous
+    out.set(u.id, best[0]);
+  }
+  return out;
 }
 
 // ---- The checking job -------------------------------------------------------------
@@ -201,6 +241,7 @@ const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0,
 
 /**
  * Looks up the calls for finished surveys and stores the verdicts.
+ *  Only surveys whose employee is linked to a XonTel agent are judged.
  *  - auto:   surveys finished in the last 36h that were never checked, or checked without finding
  *            an answered call (the call record may have arrived late) — run on a timer
  *  - manual: a supervisor's "Verify now" for a period; re-checks everything not yet confirmed
@@ -231,7 +272,7 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
     let skipped = 0;
     for (const s of surveys) {
       const completedMs = new Date(s.completed_at).getTime();
-      const j = judgeSurvey(index, { phone: s.customer_phone, status: s.status, completedMs, agentName: s.agent_name });
+      const j = judgeSurvey(index, { phone: s.customer_phone, status: s.status, completedMs, agentId: s.xontel_agent_id });
       // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
       if (j.result === "no_call" && now - completedMs < PENDING_GRACE_MS) { skipped++; continue; }
       rows.push({ assignment_id: s.id, ...j });
