@@ -28,6 +28,7 @@ interface CallVerification {
   summary: { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; unlinked: number; notReachedNoCall: number };
   agents: CallAgent[]; checks: Record<string, CallCheck>; canLink: boolean;
 }
+interface ProbeState { running: boolean; startedAt: string | null; steps: { name: string; ms: number | null; info: string; error?: string }[]; layout: { call_type: string; fields: Record<string, string | null> } | null }
 interface LinkUser { id: string; name: string; role: string; department: string | null; surveys30d: number; link: { id: string; name: string | null } | null; suggestion: { id: string; name: string } | null }
 interface LinksData { agents: { id: string; name: string }[]; users: LinkUser[] }
 const CALL_ROLES = ["admin", "supervisor", "leader"];
@@ -115,6 +116,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
 
   const [cv, setCv] = useState<CallVerification | null>(null);
   const [callFilter, setCallFilter] = useState("");
+  const [probe, setProbe] = useState<ProbeState | null>(null);
   const [linksOpen, setLinksOpen] = useState(false);
   const [links, setLinks] = useState<LinksData | null>(null);
   const [linksErr, setLinksErr] = useState("");
@@ -157,6 +159,23 @@ export default function SurveysDashboard({ currentUser }: Props) {
   const allTime = () => { setFrom(""); setTo(""); setActivePeriod(""); load("", ""); };
   const periodLabel = activePeriod === "today" ? "today" : activePeriod === "week" ? "this week" : activePeriod === "month" ? "this month"
     : from || to ? `${from || "start"} → ${to || "today"}` : "all time";
+
+  // "Test XonTel": start it, then follow it until it finishes (it can take minutes when XonTel is slow).
+  const runProbeTest = async () => {
+    setProbe({ running: true, startedAt: null, steps: [], layout: null });
+    try {
+      const res = await apiFetch("/api/surveys/call-verification/probe", { method: "POST" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not start the test.");
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const g = await apiFetch("/api/surveys/call-verification/probe");
+        if (!g.ok) break;
+        const st: ProbeState = await g.json();
+        setProbe(st);
+        if (!st.running) break;
+      }
+    } catch (e: any) { setProbe({ running: false, startedAt: null, steps: [{ name: "Test", ms: null, info: "", error: e.message }], layout: null }); }
+  };
 
   const unlinkedNames = useMemo(() => new Set((cv?.agents || []).filter((a) => !a.linked).map((a) => a.agent)), [cv]);
 
@@ -435,12 +454,33 @@ export default function SurveysDashboard({ currentUser }: Props) {
               <div className="bg-[var(--surface)] p-6 border border-[var(--border)] shadow-lg rounded-2xl">
                 <div className="flex flex-wrap items-center gap-3 mb-4">
                   <h3 className="text-sm font-bold text-[var(--heading)] flex items-center gap-2"><Users className="w-4 h-4 text-emerald-400" /> By agent</h3>
+                  <button onClick={runProbeTest} disabled={!!probe?.running}
+                    className="ml-auto px-3 py-2 bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--heading)] font-bold rounded-xl text-xs transition active:scale-95 disabled:opacity-50"
+                    title="Times a few small requests to XonTel and shows what an outgoing call record looks like (numbers are masked)">
+                    {probe?.running ? "Testing XonTel…" : "Test XonTel"}
+                  </button>
                   <button onClick={verifyNow} disabled={verifying || cv.status.running}
-                    className="ml-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition active:scale-95 flex items-center gap-1.5"
                     title="Look the calls up now for the period above (re-checks everything not yet confirmed)">
                     <RefreshCw className={`w-3.5 h-3.5 ${verifying || cv.status.running ? "animate-spin" : ""}`} /> {verifying || cv.status.running ? "Verifying…" : "Verify now"}
                   </button>
                 </div>
+                {probe && (
+                  <div className="mb-3 p-3 rounded-xl text-[11px] border bg-[var(--bg)] border-[var(--border)] space-y-1 font-mono">
+                    <p className="font-sans font-bold text-[var(--heading)] text-xs">XonTel test {probe.running ? "(running…)" : "(done)"} — copy this and send it to the developer</p>
+                    {probe.steps.map((st, i) => (
+                      <p key={i} className={st.error ? "text-rose-400" : "text-[var(--text)]"}>
+                        {st.error ? "✗" : "✓"} {st.name}: {st.ms != null ? `${(st.ms / 1000).toFixed(1)}s` : ""} {st.error ? `— ${st.error}` : st.info}
+                      </p>
+                    ))}
+                    {probe.layout && (
+                      <div className="pt-1">
+                        <p className="font-sans font-bold text-[var(--heading)]">An outgoing call record ({probe.layout.call_type}):</p>
+                        <p className="break-all text-[var(--muted)]">{Object.entries(probe.layout.fields).map(([k, v]) => `${k}=${v}`).join(" · ")}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {verifyMsg && <div className={`mb-3 p-3 rounded-xl text-xs border ${verifyMsg.ok ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400" : "bg-rose-950/20 border-rose-500/20 text-rose-400"}`}>{verifyMsg.text}</div>}
                 {cv.status.lastError && <div className="mb-3 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">Last check could not finish{cv.status.lastWritten ? ` (${cv.status.lastWritten} saved before it stopped)` : ""}: {cv.status.lastError}</div>}
                 <p className="mb-3 text-[11px] text-[var(--muted)]">

@@ -32,8 +32,15 @@ const NOT_REACHED_LOOKBACK_MS = 24 * 3600_000;     // unanswered attempts can be
 const LOOKAHEAD_MS = 15 * 60_000;                  // a call may be logged just after the save
 const PENDING_GRACE_MS = 30 * 60_000;              // before this, "no call" may just be CDR lag
 const RECHECK_WINDOW_HOURS = 36;
-const PAGE_SIZE = 500;
-const MAX_PAGES = 80;
+// XonTel builds every row of a page one by one, so a 500-row page can outlast a timeout while the QA
+// system's 20-row pages come back at once. Small pages, a generous per-request wait.
+const PAGE_SIZE = Number(process.env.XONTEL_CDR_PAGE_SIZE || 200);
+const MAX_PAGES = 200;
+const CDR_TIMEOUT_MS = Number(process.env.XONTEL_CDR_TIMEOUT_SECONDS || 120) * 1000;
+// If fewer than this share of a batch of reached claims finds ANY call, the records most likely do not
+// hold the customer's number where we look — recording "no call" for all of them would accuse everyone.
+const MIN_MATCH_SHARE = 0.1;
+const MIN_BATCH_FOR_SANITY = 20;
 const KW_OFFSET_MS = 3 * 3600_000;
 
 export const xontelBaseUrl = () => discoveredBase || ENV_BASE;
@@ -53,17 +60,21 @@ async function discover(): Promise<string | null> {
   } catch { return null; }
 }
 
-async function xontelGet(path: string): Promise<any> {
+const isTimeout = (e: any) => e?.name === "TimeoutError" || e?.name === "AbortError" || /aborted due to timeout/i.test(String(e?.message));
+
+async function xontelGet(path: string, timeoutMs = 45000): Promise<any> {
   if (!process.env.XONTEL_TOKEN) throw new Error("XONTEL_TOKEN is not set");
   if (!xontelBaseUrl()) await discover();
   if (!xontelBaseUrl()) throw new Error("no XonTel address — set XONTEL_DISCOVER_URL or XONTEL_BASE_URL");
   const call = () => fetch(`${xontelBaseUrl()}${path}`, {
     headers: { Authorization: `Token ${process.env.XONTEL_TOKEN}` },
-    signal: AbortSignal.timeout(45000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   let res: Response;
   try { res = await call(); }
   catch (e: any) {
+    // A slow answer is not a dead tunnel — waiting again would only double the delay.
+    if (isTimeout(e)) throw new Error(`XonTel did not answer within ${Math.round(timeoutMs / 1000)}s`);
     // The tunnel may have restarted under a new hostname.
     if (await discover()) res = await call(); else throw new Error(`cannot reach XonTel (${e?.message || e})`);
   }
@@ -128,7 +139,7 @@ export function toCall(r: any): CdrCall | null {
 async function cdrPage(from: string, to: string, page: number): Promise<any[]> {
   // The API silently ignores the wrong date parameter names and falls back to "today", and the two
   // known systems disagree on which pair is right — so send both.
-  const data = await xontelGet(`/api/v1/cdr/?start_date=${from}&end_date=${to}&from_date=${from}&to_date=${to}&page=${page}&size=${PAGE_SIZE}`);
+  const data = await xontelGet(`/api/v1/cdr/?start_date=${from}&end_date=${to}&from_date=${from}&to_date=${to}&page=${page}&size=${PAGE_SIZE}`, CDR_TIMEOUT_MS);
   return Array.isArray(data) ? data : (data?.results || []);
 }
 
@@ -232,6 +243,46 @@ export function suggestLinks(users: { id: string; name: string }[], agents: Xont
   return out;
 }
 
+// ---- Connection test ("Test XonTel") ------------------------------------------------
+// Times a few small requests and shows what an OUTGOING call record looks like (numbers masked), so the
+// job can be tuned against the real PBX instead of guessed.
+
+export const probeStatus: { running: boolean; startedAt: string | null; steps: { name: string; ms: number | null; info: string; error?: string }[]; layout: any } =
+  { running: false, startedAt: null, steps: [], layout: null };
+
+const maskDigits = (v: any) => String(v).replace(/\d/g, "N");
+
+export async function runProbe(): Promise<void> {
+  if (probeStatus.running) return;
+  probeStatus.running = true; probeStatus.startedAt = new Date().toISOString(); probeStatus.steps = []; probeStatus.layout = null;
+  const today = kwDay(Date.now());
+  const step = async (name: string, path: string, info: (d: any) => string, timeoutMs = 100_000): Promise<any> => {
+    const t0 = Date.now();
+    try { const d = await xontelGet(path, timeoutMs); probeStatus.steps.push({ name, ms: Date.now() - t0, info: info(d) }); return d; }
+    catch (e: any) { probeStatus.steps.push({ name, ms: Date.now() - t0, info: "", error: e?.message || String(e) }); return null; }
+  };
+  try {
+    const f = await step("agent list (cdr/filters)", "/api/v1/cdr/filters", (d) => `${(d?.agent || d?.agents || []).length} agents`);
+    const agentId = String((f?.agent || f?.agents || [])[0]?.value ?? (f?.agent || f?.agents || [])[0]?.id ?? "");
+    const rows = (d: any): any[] => (Array.isArray(d) ? d : d?.results || []);
+    const p20 = await step("one day, 20 rows", `/api/v1/cdr/?start_date=${today}&end_date=${today}&size=20&page=1`, (d) => `${rows(d).length} rows`);
+    const p200 = await step("one day, 200 rows", `/api/v1/cdr/?start_date=${today}&end_date=${today}&size=200&page=1`, (d) => `${rows(d).length} rows`);
+    await step("one day, 500 rows (how the first version asked)", `/api/v1/cdr/?start_date=${today}&end_date=${today}&size=500&page=1`, (d) => `${rows(d).length} rows`);
+    if (agentId) await step("one agent, one day, 20 rows", `/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${today}&end_date=${today}&size=20&page=1`, (d) => `${rows(d).length} rows`);
+    // How does an outgoing call look, and does search find it by the customer's number?
+    const all = [...rows(p200), ...rows(p20)];
+    const out = all.find((r) => /outgoing/i.test(String(r?.call_type ?? "")));
+    if (out) {
+      probeStatus.layout = { call_type: String(out.call_type), fields: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v === null ? null : typeof v === "object" ? "{" + Object.keys(v as any).join(",") + "}" : /\d{4,}/.test(String(v)) && !/^\d{4}-\d\d-\d\d/.test(String(v)) && !/url|file/i.test(k) ? maskDigits(v) : String(v).slice(0, 40)])) };
+      const keys = [...toCall(out)?.keys || []];
+      if (keys[0]) await step("search by the customer's number (outgoing call)", `/api/v1/cdr/?search=${keys[0]}&start_date=${today}&end_date=${today}&size=20&page=1`,
+        (d) => `${rows(d).length} rows; found the outgoing call: ${rows(d).some((r) => String(r?.id) === String(out.id))}`);
+    } else {
+      probeStatus.steps.push({ name: "outgoing call layout", ms: null, info: "no outgoing call in the first rows — try again during working hours" });
+    }
+  } finally { probeStatus.running = false; }
+}
+
 // ---- The checking job -------------------------------------------------------------
 
 export const checkStatus: { lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; lastSeconds: number; running: boolean } =
@@ -302,6 +353,12 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
         // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
         if (j.result === "no_call" && now - t.completedMs < PENDING_GRACE_MS) { skipped++; continue; }
         rows.push({ assignment_id: t.s.id, ...j });
+      }
+      // Systemic-mismatch guard: if hardly any reached claim finds a call, our reading of the records is
+      // wrong somewhere — saving would flag everybody. Refuse rather than accuse.
+      const reachedJudged = rows.filter((r) => isReachedClaim(ready.find((t) => t.s.id === r.assignment_id)!.s.status));
+      if (reachedJudged.length >= MIN_BATCH_FOR_SANITY && reachedJudged.filter((r) => r.result !== "no_call").length / reachedJudged.length < MIN_MATCH_SHARE) {
+        throw new Error(`Only ${reachedJudged.filter((r) => r.result !== "no_call").length} of ${reachedJudged.length} reached surveys had any call from their agent in the XonTel records — the records probably do not hold the dialled number or agent where expected, so nothing was recorded. Run "Test XonTel" and send the result.`);
       }
       await DB.upsertSurveyCallChecks(rows);
       written += rows.length;

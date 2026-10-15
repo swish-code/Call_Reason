@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
-import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks } from "./server/xontel.js";
+import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3515,6 +3515,14 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
     canLink: ["admin", "supervisor"].includes(req.user.role),
   });
 }));
+
+// "Test XonTel": times a few requests and shows what an outgoing call record looks like (numbers masked).
+app.post("/api/surveys/call-verification/probe", authenticateJWT, requireCallVerification, asyncHandler(async (_req: any, res) => {
+  if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet." });
+  runProbe().catch(() => {});          // runs in the background — can take a few minutes if XonTel is slow
+  res.json({ started: true });
+}));
+app.get("/api/surveys/call-verification/probe", authenticateJWT, requireCallVerification, (_req: any, res) => { res.json(probeStatus); });
 
 // ---- Linking employees to their XonTel users (the check only counts the employee's OWN calls) ----
 // Everyone who can open call verification can see the links; changing them is for Admins and Supervisors.
