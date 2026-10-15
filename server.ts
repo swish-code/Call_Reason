@@ -3510,7 +3510,7 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
 
   res.json({
     configured: xontelConfigured(), minTalkSeconds: MIN_TALK_SECONDS,
-    status: { lastRunAt: checkStatus.lastRunAt, lastError: checkStatus.lastError, running: checkStatus.running },
+    status: { lastRunAt: checkStatus.lastRunAt, lastError: checkStatus.lastError, running: checkStatus.running, lastChecked: checkStatus.lastChecked, lastWritten: checkStatus.lastWritten, lastSeconds: checkStatus.lastSeconds },
     summary: sum, agents, checks,
     canLink: ["admin", "supervisor"].includes(req.user.role),
   });
@@ -3565,6 +3565,7 @@ app.put("/api/surveys/call-verification/links/:userId", authenticateJWT, require
     throw e;
   }
   await DB.addAuditLog({ operator_id: req.user.id, operator_name: req.user.full_name, operator_role: req.user.role, category: "Surveys", action: "Link XonTel user", related_ref: userId, details: `${user.full_name} = ${agent.name} (${agent.id})` });
+  scheduleCallCheck();
   res.json({ ok: true, linked: true, link: { id: agent.id, name: agent.name } });
 }));
 
@@ -3579,6 +3580,14 @@ app.post("/api/surveys/call-verification/run", authenticateJWT, requireCallVerif
   if (out.error) return res.status(502).json({ error: out.error });
   res.json(out);
 }));
+
+// Right after links change (a supervisor linking several employees in a row), check their surveys
+// once things settle instead of waiting for the next timer tick.
+let callCheckSoon: NodeJS.Timeout | null = null;
+const scheduleCallCheck = () => {
+  if (callCheckSoon) clearTimeout(callCheckSoon);
+  callCheckSoon = setTimeout(() => { callCheckSoon = null; runSurveyCallChecks({ mode: "auto" }).catch(() => {}); }, 15_000);
+};
 
 // Automatic checking: every few minutes, finished surveys that were never checked (or whose call
 // record may have arrived late). Silent when XonTel isn't configured.

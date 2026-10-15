@@ -24,7 +24,7 @@ interface CallCheck { result: "answered" | "unanswered" | "no_call"; talk: numbe
 interface CallAgent { agent: string; linked: boolean; unlinked: number; reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; noCallPct: number | null; suspectPct: number | null }
 interface CallVerification {
   configured: boolean; minTalkSeconds: number;
-  status: { lastRunAt: string | null; lastError: string | null; running: boolean };
+  status: { lastRunAt: string | null; lastError: string | null; running: boolean; lastChecked: number; lastWritten: number; lastSeconds: number };
   summary: { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; unlinked: number; notReachedNoCall: number };
   agents: CallAgent[]; checks: Record<string, CallCheck>; canLink: boolean;
 }
@@ -33,8 +33,13 @@ interface LinksData { agents: { id: string; name: string }[]; users: LinkUser[] 
 const CALL_ROLES = ["admin", "supervisor", "leader"];
 const isReachedStatus = (s: string) => s === "successful" || s === "refused" || s === "not_interested";
 // What the verdict means for THIS survey's claim. kind drives colour; label is what the supervisor reads.
-const callView = (status: string, c: CallCheck | undefined, minTalk: number, unlinked = false): { kind: "ok" | "warn" | "bad" | "pending"; label: string; filter: string } => {
-  if (!c) return unlinked ? { kind: "pending", label: "Agent not linked", filter: "unlinked" } : { kind: "pending", label: "Checking…", filter: "pending" };
+const callView = (status: string, c: CallCheck | undefined, minTalk: number, unlinked = false, completedAt?: string): { kind: "ok" | "warn" | "bad" | "pending"; label: string; filter: string } => {
+  if (!c) {
+    if (unlinked) return { kind: "pending", label: "Agent not linked", filter: "unlinked" };
+    // The system checks surveys of the last 36 hours by itself; older ones need "Verify now".
+    if (completedAt && Date.now() - new Date(completedAt).getTime() > 36 * 3600_000) return { kind: "pending", label: "Not checked — Verify now", filter: "pending" };
+    return { kind: "pending", label: "Checking…", filter: "pending" };
+  }
   const mmss = fmtDur(c.talk);
   if (isReachedStatus(status)) {
     if (c.result === "no_call") return { kind: "bad", label: c.relation === "other" ? "No call from this agent" : "No call found", filter: "no_call" };
@@ -202,7 +207,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
     if (!d) return [];
     const s = search.trim().toLowerCase();
     return d.results.filter((r) => {
-      if (callFilter && callView(r.status, cv?.checks[r.id], cv?.minTalkSeconds ?? 30, unlinkedNames.has(r.agent_name || "")).filter !== callFilter) return false;
+      if (callFilter && callView(r.status, cv?.checks[r.id], cv?.minTalkSeconds ?? 30, unlinkedNames.has(r.agent_name || ""), r.completed_at).filter !== callFilter) return false;
       if (outcome === "complaint" ? r.action_type !== "complaint" : outcome && bucketOf(r.status) !== outcome) return false;
       if (agent && (r.agent_name || "(unassigned)") !== agent) return false;
       if (s && ![r.customer_phone, r.customer_name, r.order_id, r.item_name].some((x) => (x || "").toLowerCase().includes(s))) return false;
@@ -257,7 +262,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
       lines.push([fmtTime(r.completed_at), r.agent_name, r.customer_phone, r.customer_name, r.order_id, r.brand_name, r.branch, r.item_name, r.item_kind,
         outcomeView(r.status).label, r.action_type === "complaint" ? "Yes" : "", r.attempt_count, r.template_name,
         timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : "",
-        ...(cv ? (() => { const c = cv.checks[r.id]; return [callView(r.status, c, cv.minTalkSeconds, unlinkedNames.has(r.agent_name || "")).label, c && c.result === "answered" ? fmtDur(c.talk) : "", c?.xontel_agent ?? ""]; })() : []),
+        ...(cv ? (() => { const c = cv.checks[r.id]; return [callView(r.status, c, cv.minTalkSeconds, unlinkedNames.has(r.agent_name || ""), r.completed_at).label, c && c.result === "answered" ? fmtDur(c.talk) : "", c?.xontel_agent ?? ""]; })() : []),
         ...questions.map((q) => byQ.get(q) ?? "")].map(esc).join(","));
     }
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
@@ -437,7 +442,12 @@ export default function SurveysDashboard({ currentUser }: Props) {
                   </button>
                 </div>
                 {verifyMsg && <div className={`mb-3 p-3 rounded-xl text-xs border ${verifyMsg.ok ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400" : "bg-rose-950/20 border-rose-500/20 text-rose-400"}`}>{verifyMsg.text}</div>}
-                {cv.status.lastError && <div className="mb-3 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">Last automatic check could not finish: {cv.status.lastError}</div>}
+                {cv.status.lastError && <div className="mb-3 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">Last check could not finish{cv.status.lastWritten ? ` (${cv.status.lastWritten} saved before it stopped)` : ""}: {cv.status.lastError}</div>}
+                <p className="mb-3 text-[11px] text-[var(--muted)]">
+                  {cv.status.running ? "Checking calls right now…"
+                    : cv.status.lastRunAt ? `Last check ${fmtTime(cv.status.lastRunAt)} · ${cv.status.lastChecked} survey(s) looked at, ${cv.status.lastWritten} verdict(s) saved · ${cv.status.lastSeconds}s`
+                    : "The first check has not run since the server started — it runs every 10 minutes, and right after you link an employee."}
+                </p>
                 {cv.agents.length === 0 ? <div className="text-center py-6 text-[var(--muted)] text-xs">No reached surveys {periodLabel}.</div> : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
@@ -724,7 +734,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
                         <td className="p-4 text-right font-mono font-bold text-sky-400 whitespace-nowrap">{timeById.has(r.id) ? fmtDur(timeById.get(r.id)) : <span className="text-[var(--muted)] font-normal">—</span>}</td>
                         {canSeeCalls && cv?.configured && (() => {
                           const c = cv.checks[r.id];
-                          const v = callView(r.status, c, cv.minTalkSeconds, unlinkedNames.has(r.agent_name || ""));
+                          const v = callView(r.status, c, cv.minTalkSeconds, unlinkedNames.has(r.agent_name || ""), r.completed_at);
                           const by = c && c.relation === "other" && c.xontel_agent ? c.xontel_agent : null;
                           return (
                             <td className="p-4">

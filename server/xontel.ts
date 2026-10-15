@@ -234,10 +234,16 @@ export function suggestLinks(users: { id: string; name: string }[], agents: Xont
 
 // ---- The checking job -------------------------------------------------------------
 
-export const checkStatus: { lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; running: boolean } =
-  { lastRunAt: null, lastError: null, lastChecked: 0, lastWritten: 0, running: false };
+export const checkStatus: { lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; lastSeconds: number; running: boolean } =
+  { lastRunAt: null, lastError: null, lastChecked: 0, lastWritten: 0, lastSeconds: 0, running: false };
 
 const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 10);
+const dayStartMs = (day: string) => Date.parse(`${day}T00:00:00+03:00`);
+const daysBetween = (fromMs: number, toMs: number): string[] => {
+  const out: string[] = [];
+  for (let d = kwDay(fromMs); d <= kwDay(toMs); d = kwDay(dayStartMs(d) + 86400_000)) out.push(d);
+  return out;
+};
 
 /**
  * Looks up the calls for finished surveys and stores the verdicts.
@@ -245,44 +251,72 @@ const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0,
  *  - auto:   surveys finished in the last 36h that were never checked, or checked without finding
  *            an answered call (the call record may have arrived late) — run on a timer
  *  - manual: a supervisor's "Verify now" for a period; re-checks everything not yet confirmed
+ *
+ * Call records are read one Kuwait day at a time, newest day first, and each survey is judged and
+ * SAVED as soon as the days it needs are loaded — so a failure on an old day never loses the work
+ * already done on newer ones.
  */
 export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromISO?: string | null; toISO?: string | null } = { mode: "auto" }): Promise<{ checked: number; written: number; skipped: number; error?: string }> {
   if (!xontelConfigured()) return { checked: 0, written: 0, skipped: 0, error: "XonTel is not configured" };
   if (checkStatus.running) return { checked: 0, written: 0, skipped: 0, error: "a check is already running" };
   checkStatus.running = true;
+  const started = Date.now();
+  let checked = 0, written = 0, skipped = 0, failure: string | null = null;
   try {
     const now = Date.now();
-    const manual = opts.mode === "manual";
-    const surveys = await DB.getSurveysForCallCheck({
+    const surveys: any[] = await DB.getSurveysForCallCheck({
       fromISO: opts.fromISO ?? new Date(now - RECHECK_WINDOW_HOURS * 3600_000).toISOString(),
       toISO: opts.toISO ?? new Date(now).toISOString(),
-      force: manual, recheckWindowHours: RECHECK_WINDOW_HOURS, limit: 2500,
+      force: opts.mode === "manual", recheckWindowHours: RECHECK_WINDOW_HOURS, limit: 2500,
     });
-    if (!surveys.length) { checkStatus.lastError = null; checkStatus.lastRunAt = new Date().toISOString(); checkStatus.lastChecked = 0; checkStatus.lastWritten = 0; return { checked: 0, written: 0, skipped: 0 }; }
+    checked = surveys.length;
 
-    const wins = surveys.map((s: any) => surveyWindow(s.status, new Date(s.completed_at).getTime()));
-    const minTs = Math.min(...wins.map((x) => x.from)), maxTs = Math.max(...wins.map((x) => x.to));
-    const { calls, complete } = await fetchCdr(kwDay(minTs), kwDay(Math.min(maxTs, now)));
-    // Without records covering the period, "no call" would be a false accusation, not a finding.
-    if (!complete) throw new Error("XonTel returned too many call records to read in one pass — pick a shorter period");
-    if (!calls.some((c) => c.ts >= minTs && c.ts <= maxTs)) throw new Error("XonTel returned no call records for this period (date filter or token problem?) — nothing was recorded");
-    const index = indexCalls(calls);
-
-    const rows: any[] = [];
-    let skipped = 0;
-    for (const s of surveys) {
+    // Which Kuwait days of call records each survey needs (its window can reach into the day before).
+    const todo = surveys.map((s) => {
       const completedMs = new Date(s.completed_at).getTime();
-      const j = judgeSurvey(index, { phone: s.customer_phone, status: s.status, completedMs, agentId: s.xontel_agent_id });
-      // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
-      if (j.result === "no_call" && now - completedMs < PENDING_GRACE_MS) { skipped++; continue; }
-      rows.push({ assignment_id: s.id, ...j });
+      const w = surveyWindow(s.status, completedMs);
+      const days = daysBetween(w.from, Math.min(w.to, now));
+      return { s, completedMs, days, earliest: days[0] };
+    });
+    const allDays = [...new Set(todo.flatMap((t) => t.days))].sort().reverse();       // newest first
+    const loaded = new Map<string, CdrCall[]>();
+    let pending = todo;
+
+    for (const day of allDays) {
+      if (!pending.length) break;
+      const { calls, complete } = await fetchCdr(day, day);
+      if (!complete) throw new Error(`XonTel returned too many call records for ${day} to read in one pass`);
+      // Only records that really belong to that day. If the PBX ignored the date filter it hands back
+      // other days (today's) — then "no call" would be a false accusation, so nothing is recorded.
+      const own = calls.filter((c) => kwDay(c.ts) === day);
+      if (!own.length) throw new Error(`XonTel returned no call records for ${day} (date filter ignored, or an empty day) — nothing was recorded for the surveys that need it`);
+      loaded.set(day, own);
+
+      // Judge every survey whose days are now all loaded (its earliest day is this one or newer).
+      const ready = pending.filter((t) => t.earliest >= day);
+      if (!ready.length) continue;
+      const index = indexCalls([...loaded.values()].flat());
+      const rows: any[] = [];
+      for (const t of ready) {
+        const j = judgeSurvey(index, { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: t.s.xontel_agent_id });
+        // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
+        if (j.result === "no_call" && now - t.completedMs < PENDING_GRACE_MS) { skipped++; continue; }
+        rows.push({ assignment_id: t.s.id, ...j });
+      }
+      await DB.upsertSurveyCallChecks(rows);
+      written += rows.length;
+      const doneIds = new Set(ready.map((t) => t.s.id));
+      pending = pending.filter((t) => !doneIds.has(t.s.id));
     }
-    await DB.upsertSurveyCallChecks(rows);
-    checkStatus.lastError = null; checkStatus.lastRunAt = new Date().toISOString();
-    checkStatus.lastChecked = surveys.length; checkStatus.lastWritten = rows.length;
-    return { checked: surveys.length, written: rows.length, skipped };
   } catch (e: any) {
-    checkStatus.lastError = e?.message || String(e); checkStatus.lastRunAt = new Date().toISOString();
-    return { checked: 0, written: 0, skipped: 0, error: checkStatus.lastError || "failed" };
-  } finally { checkStatus.running = false; }
+    failure = e?.message || String(e);
+  } finally {
+    checkStatus.lastRunAt = new Date().toISOString();
+    checkStatus.lastError = failure;
+    checkStatus.lastChecked = checked; checkStatus.lastWritten = written;
+    checkStatus.lastSeconds = Math.round((Date.now() - started) / 1000);
+    checkStatus.running = false;
+    if (checked) console.log(`[call-check] ${opts.mode}: ${checked} survey(s), ${written} verdict(s) saved, ${skipped} too recent, ${checkStatus.lastSeconds}s${failure ? " — " + failure : ""}`);
+  }
+  return failure ? { checked, written, skipped, error: failure } : { checked, written, skipped };
 }
