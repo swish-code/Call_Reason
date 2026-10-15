@@ -10,7 +10,7 @@ interface SurveyCampaignsProps { currentUser: User; }
 interface Agent { id: string; full_name: string; role: string; }
 interface NumbersResult {
   total: number; inserted: number; duplicates_file: number;
-  duplicates_10day: number; already_queued: number;
+  duplicates_10day: number; already_queued: number; enriched?: number;
   scheduled?: { date: string; count: number }[]; first_date?: string; today_full?: boolean; daily_limit?: number;
   errors: { row: number; message: string }[];
 }
@@ -581,6 +581,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                   <span className="text-[var(--muted)]">Dup (file):</span><span className="font-bold">{numbersResult.duplicates_file}</span>
                   <span className="text-[var(--muted)]">Dup (10-day):</span><span className="font-bold">{numbersResult.duplicates_10day}</span>
                   <span className="text-[var(--muted)]">Already queued:</span><span className="font-bold">{numbersResult.already_queued}</span>
+                  <span className="text-[var(--muted)]" title="Rows with an order ID but no phone, filled from the Keeta/Snoonu order lookup">Phones filled:</span><span className="font-bold text-violet-400">{numbersResult.enriched ?? 0}</span>
                 </div>
                 {numbersResult.today_full && (
                   <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg text-[11px] text-amber-400 font-bold">

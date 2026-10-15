@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
-import { lookupOrders, enrichablePlatforms } from "./server/enrich.js";
+import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -2318,6 +2318,7 @@ app.get("/api/feedback/dashboard", authenticateJWT, asyncHandler(async (req: any
 // ---------------------------------------------------------------------------
 const CLOSED_NO_ACTION = "no_action_needed";
 
+
 async function runPhoneBackfill(opts: { limit: number; retriage: boolean; uploadedBy?: string }) {
   const platforms = await DB.getPlatforms();
   const enrichable = new Set(enrichablePlatforms());
@@ -3100,7 +3101,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
 
   const result = {
-    total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0,
+    total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0, enriched: 0,
     scheduled: [] as { date: string; count: number }[], first_date: "", today_full: false, daily_limit: DAILY_SURVEY_LIMIT,
     errors: [] as { row: number; message: string }[],
   };
@@ -3127,17 +3128,36 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const brandMap = new Map((await DB.getBrands()).map((b: any) => [b.brand_name.toLowerCase(), b.id]));
   const brandAlias: Record<string, string> = { shakir: "shawarma shakir", yelo: "yelo pizza" };
 
+  // Rows with an order ID but no phone: ask our Keeta/Snoonu scrapers for the customer's phone
+  // first (same lookup as the reviews upload), so those numbers can still be called.
+  const phoneCol = (r: Record<string, any>) => pick(r, "Phone Number", "Customer Phone", "Phone", "Mobile", "Number");
+  const lookup = await lookupPhonesForOrders(rows
+    .filter((r) => !kwPhone(phoneCol(r)) && pick(r, "Order ID"))
+    .map((r) => ({ platform: pick(r, "Platform"), orderId: pick(r, "Order ID") })));
+
   // Every skipped/rejected row is kept for the Audit page (why it was skipped, downloadable).
   const issues: UploadIssueRow[] = [];
   const firstRowOf = new Map<string, number>();
   for (let i = 0; i < rows.length; i++) {
-    const rawPhone = pick(rows[i], "Phone Number", "Customer Phone", "Phone", "Mobile", "Number");
-    const phone = kwPhone(rawPhone);
+    const rawPhone = phoneCol(rows[i]);
+    let phone = kwPhone(rawPhone);
+    let enrichedName = "";
+    const orderId = pick(rows[i], "Order ID");
+    if (!phone && orderId) {
+      const hit = lookup.get(pick(rows[i], "Platform"), orderId);
+      if (hit) { phone = kwPhone(hit.phone); enrichedName = hit.name || ""; if (phone) result.enriched++; }
+    }
     const brandLabel = pick(rows[i], "Brand", "Restaurant");
     const base = { row: i + 2, phone: phone || rawPhone || null, brand: brandLabel || campaign.brand_name || null,
-      order_id: pick(rows[i], "Order ID") || null, customer_name: pick(rows[i], "Name", "Customer Name") || null };
+      order_id: orderId || null, customer_name: pick(rows[i], "Name", "Customer Name") || enrichedName || null };
     const reject = (message: string) => { result.errors.push({ row: i + 2, message }); issues.push({ ...base, reason: "error", detail: message }); };
-    if (!phone) { reject("Missing phone."); continue; }
+    if (!phone) {
+      const tried = orderId ? lookup.platformsFor(pick(rows[i], "Platform")) : [];
+      reject(tried.length
+        ? `Missing phone — order ${orderId} was not found in the ${tried.map((p) => p[0].toUpperCase() + p.slice(1)).join("/")} lookup.`
+        : "Missing phone.");
+      continue;
+    }
     let brandId: string | null = campaign.brand_id || null;
     if (brandLabel) {
       brandId = resolveBrand(brandAlias[brandLabel.toLowerCase().trim()] || brandLabel, brandMap);
@@ -3172,7 +3192,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     candidates.push({
       phone, segment, brand_id: brandId, item_name: itemName,
       order_id: pick(rows[i], "Order ID") || null,
-      customer_name: pick(rows[i], "Name", "Customer Name") || null,
+      customer_name: pick(rows[i], "Name", "Customer Name") || enrichedName || null,
       branch: pick(rows[i], "Branch") || null,
       order_date: orderDateOf(pick(rows[i], "Order date", "Order Date")),
       platform_label: pick(rows[i], "Platform") || null,
@@ -3486,7 +3506,7 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
     platMap: new Map(platforms.map((p) => [p.name.toLowerCase(), p.id])),
   };
 
-  const result = { total: rows.length, inserted: 0, answered: 0, no_answer: 0, invalid: 0, errors: [] as { row: number; message: string }[] };
+  const result = { total: rows.length, inserted: 0, answered: 0, no_answer: 0, invalid: 0, enriched: 0, errors: [] as { row: number; message: string }[] };
   const records: any[] = [];
   const issues: UploadIssueRow[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -3504,6 +3524,23 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
     } catch (e: any) {
       result.errors.push({ row: i + 2, message: e.message || "Unknown error." });
       issues.push({ row: i + 2, reason: "error", detail: e.message || "Unknown error." });
+    }
+  }
+  // Records with an order ID but no phone get the customer's phone (and a blank name) from our
+  // Keeta/Snoonu scrapers, same as the reviews upload.
+  {
+    const missing = records.filter((r) => !r.phone && r.order_id);
+    if (missing.length) {
+      const lookup = await lookupPhonesForOrders(missing.map((r) => ({ platform: r.platform_label || "", orderId: String(r.order_id) })));
+      for (const r of missing) {
+        const hit = lookup.get(r.platform_label || "", String(r.order_id));
+        if (!hit) continue;
+        const phone = normalisePhone(hit.phone);
+        if (!phone) continue;
+        r.phone = phone;
+        if (!r.customer_name && hit.name) r.customer_name = hit.name;
+        result.enriched++;
+      }
     }
   }
   const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);

@@ -82,3 +82,40 @@ export async function lookupOrders(
   }
   return out;
 }
+
+/**
+ * Phones for orders, from our own Keeta/Snoonu scrapers — the same lookup the reviews upload
+ * uses, for the survey uploads. A row's platform text is matched loosely ("Keeta", "keeta app");
+ * a row with no platform is asked of every configured scraper (each answers only for order ids
+ * it actually holds). One request per platform per 300 ids, and it never throws.
+ */
+export async function lookupPhonesForOrders(items: { platform: string; orderId: string }[]) {
+  const enrichable = enrichablePlatforms();                    // e.g. ["keeta", "snoonu"]
+  const platOf = (label: string): string | null => {
+    const l = (label || "").trim().toLowerCase();
+    return l ? enrichable.find((p) => l.includes(p)) || null : null;
+  };
+  const wanted = new Map<string, Set<string>>();
+  for (const it of items) {
+    const oid = String(it.orderId || "").trim();
+    if (!oid) continue;
+    const label = (it.platform || "").trim();
+    const targets = label ? [platOf(label)].filter(Boolean) as string[] : enrichable;
+    for (const p of targets) { if (!wanted.has(p)) wanted.set(p, new Set()); wanted.get(p)!.add(oid); }
+  }
+  const hits = new Map<string, { phone: string; name?: string; platform: string }>();
+  for (const [p, ids] of wanted) {
+    for (const [oid, hit] of await lookupOrders(p, [...ids])) hits.set(`${p}|${oid}`, { phone: hit.phone, name: hit.name, platform: p });
+  }
+  return {
+    attempted: wanted.size > 0,
+    // Platforms this row would be looked up on (empty = not a Keeta/Snoonu order, or not configured).
+    platformsFor: (platform: string) => ((platform || "").trim() ? [platOf(platform)].filter(Boolean) as string[] : enrichable),
+    get(platform: string, orderId: string) {
+      const oid = String(orderId || "").trim();
+      if (!oid) return undefined;
+      for (const p of this.platformsFor(platform)) { const h = hits.get(`${p}|${oid}`); if (h) return h; }
+      return undefined;
+    },
+  };
+}
