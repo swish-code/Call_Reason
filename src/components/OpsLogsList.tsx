@@ -9,6 +9,23 @@ interface OpsLogsListProps {
   currentUser: User;
 }
 
+// A Survey entry the system wrote when the agent finished a survey has notes like
+// "Survey #3385 · Not reached · 94940904 · [auto:sasg-…]". Pull the outcome out so it can be shown
+// as a clear Reached / Not reached badge, and hide the internal marker from the notes.
+const SURVEY_OUTCOMES: Record<string, { reached: boolean; label: string; cls: string }> = {
+  "surveyed": { reached: true, label: "Reached · Surveyed", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
+  "refused to complete": { reached: true, label: "Reached · Refused", cls: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
+  "not interested": { reached: true, label: "Reached · Not interested", cls: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
+  "not reached": { reached: false, label: "Not reached", cls: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
+  "not reached (declined)": { reached: false, label: "Not reached (declined)", cls: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
+};
+const surveyOutcome = (notes?: string | null) => {
+  if (!notes || !notes.includes("[auto:")) return null;
+  const parts = notes.split(" · ").map((x) => x.trim());
+  const o = SURVEY_OUTCOMES[(parts[1] || "").toLowerCase()];
+  return o ? { ...o, plain: parts.filter((x) => !x.startsWith("[auto:")).join(" · ") } : null;
+};
+
 export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [logs, setLogs] = useState<OpsLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,11 +147,11 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   };
 
   const exportCsv = () => {
-    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Calls Reviewed", "Avg min/call", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Notes"];
+    const headers = ["Date & Time", "Type", "Department", "Activity", "Status", "Time Spent", "Calls Reviewed", "Avg min/call", "Agent", "Branch", "Brand", "Order #", "Customer", "Complaint ID", "Target Agent", "Survey result", "Notes"];
     const rows = filtered.map((l) => [
       fmt(l.created_at), l.log_type, l.department || "", l.activity_type || "", l.status || "", fmtDur(elapsedSeconds(l)),
       l.calls_reviewed ?? "", avgPerCall(l) !== null ? avgPerCall(l)!.toFixed(1) : "",
-      l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", l.notes || l.action_taken || "",
+      l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", (l.activity_type === "Survey" ? surveyOutcome(l.notes)?.label : "") || "", (surveyOutcome(l.notes)?.plain ?? (l.notes || l.action_taken)) || "",
     ]);
     downloadCSV(headers, rows, `Logs_${new Date().toISOString().split("T")[0]}`);
   };
@@ -229,7 +246,16 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
                         {l.log_type === "quality" && avgPerCall(l) !== null && (
                           <div className="text-[10px] font-bold text-emerald-500">📞 {l.calls_reviewed} calls · avg {avgPerCall(l)!.toFixed(1)} min/call</div>
                         )}
-                        {(l.notes || l.action_taken) && <div className="text-[10px] text-[var(--muted)] line-clamp-2 max-w-xs">{l.notes || l.action_taken}</div>}
+                        {(() => {
+                          const so = l.activity_type === "Survey" ? surveyOutcome(l.notes) : null;
+                          if (so) return (
+                            <div className="space-y-1">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${so.cls}`}>{so.reached ? "✓ " : "✗ "}{so.label}</span>
+                              <div className="text-[10px] text-[var(--muted)] max-w-xs">{so.plain}</div>
+                            </div>
+                          );
+                          return (l.notes || l.action_taken) ? <div className="text-[10px] text-[var(--muted)] line-clamp-2 max-w-xs">{l.notes || l.action_taken}</div> : null;
+                        })()}
                       </div>
                     </td>
                     <td className="p-4 text-[var(--muted)]">{l.agent_name}</td>
