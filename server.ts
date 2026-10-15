@@ -3510,7 +3510,7 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
 
   res.json({
     configured: xontelConfigured(), minTalkSeconds: MIN_TALK_SECONDS,
-    status: { lastRunAt: checkStatus.lastRunAt, lastError: checkStatus.lastError, running: checkStatus.running, lastChecked: checkStatus.lastChecked, lastWritten: checkStatus.lastWritten, lastSeconds: checkStatus.lastSeconds },
+    status: { ...checkStatus },
     summary: sum, agents, checks,
     canLink: ["admin", "supervisor"].includes(req.user.role),
   });
@@ -3584,10 +3584,16 @@ app.post("/api/surveys/call-verification/run", authenticateJWT, requireCallVerif
   const fromISO = kwDayToUtc(from, false), toISO = kwDayToUtc(to || from, true);
   if (!fromISO || !toISO) return res.status(400).json({ error: "Pick a period first." });
   if ((new Date(toISO).getTime() - new Date(fromISO).getTime()) > 8 * 86400_000) return res.status(400).json({ error: "Pick at most 7 days at a time." });
-  const out = await runSurveyCallChecks({ mode: "manual", fromISO, toISO });
-  if (out.error) return res.status(502).json({ error: out.error });
-  res.json(out);
+  if (checkStatus.running) return res.status(409).json({ error: "A check is already running — wait for it to finish." });
+  // Can take several minutes (XonTel answers slowly): run in the background, the page follows
+  // GET /api/surveys/call-verification/status.
+  runSurveyCallChecks({ mode: "manual", fromISO, toISO }).catch(() => {});
+  res.json({ started: true });
 }));
+
+app.get("/api/surveys/call-verification/status", authenticateJWT, requireCallVerification, (_req: any, res) => {
+  res.json({ ...checkStatus });
+});
 
 // Right after links change (a supervisor linking several employees in a row), check their surveys
 // once things settle instead of waiting for the next timer tick.

@@ -112,7 +112,8 @@ export const last8 = (v: any): string | null => {
 // Which fields can hold the number that was dialled / that called, whichever the PBX uses for
 // outgoing vs incoming calls. Times, durations, ids and URLs are skipped (they carry long digit runs).
 const NUMBER_KEY = /(num|src|dst|caller|callee|called|dial|phone|dest|from|^to$)/i;
-const SKIP_KEY = /(time|date|dur|bill|url|file|uniqueid|linked|agent|status|queue_name|^id$)/i;
+// "dstchannel" (e.g. PJSIP/Zain_main-000123ab) carries channel ids, not phone numbers.
+const SKIP_KEY = /(time|date|dur|bill|url|file|uniqueid|linked|agent|status|queue_name|channel|^id$)/i;
 
 export function toCall(r: any): CdrCall | null {
   const ts = parseCdrTime(r?.cdr_time);
@@ -158,6 +159,10 @@ export async function fetchCdr(fromDay: string, toDay: string): Promise<{ calls:
 export function indexCalls(calls: CdrCall[]): Map<string, CdrCall[]> {
   const m = new Map<string, CdrCall[]>();
   for (const c of calls) for (const k of c.keys) { if (!m.has(k)) m.set(k, []); m.get(k)!.push(c); }
+  // A number on a large share of the calls is the company's own caller-ID (outgoing records carry it in
+  // src / outbound_cnum) or a trunk, never a customer — drop it so it can't match anything.
+  const limit = Math.max(10, calls.length * 0.3);
+  for (const [k, list] of m) if (list.length > limit) m.delete(k);
   return m;
 }
 
@@ -284,17 +289,49 @@ export async function runProbe(): Promise<void> {
 }
 
 // ---- The checking job -------------------------------------------------------------
+//
+// Measured on the real PBX (Test XonTel, 2026-10-15): every CDR request costs a large fixed time
+// whatever its size — a whole day: 20 rows 28.5s, 500 rows 47.9s — while ONE AGENT's calls come
+// back in ~13s. So the job asks XonTel once per linked employee (their own calls only, over the
+// days their surveys need, in 500-row pages), two employees at a time, and saves each employee's
+// verdicts as soon as their calls are in.
 
-export const checkStatus: { lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; lastSeconds: number; running: boolean } =
-  { lastRunAt: null, lastError: null, lastChecked: 0, lastWritten: 0, lastSeconds: 0, running: false };
+const AGENT_PAGE_SIZE = 500;
+const AGENT_MAX_PAGES = 12;
+const CONCURRENCY = Math.max(1, Number(process.env.XONTEL_CONCURRENCY || 2));
+// Before the first verdicts are saved in a run, this many reached claims must have been judged with at
+// least MIN_GLOBAL_MATCH of them finding a call — otherwise our reading of the records is wrong
+// somewhere (field layout, filter) and saving would accuse everybody.
+const GLOBAL_SANITY_MIN = 30;
+const MIN_GLOBAL_MATCH = 0.05;
+
+export const checkStatus: {
+  lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; lastSeconds: number; running: boolean;
+  agentsTotal: number; agentsDone: number; warnings: string[];
+} = { lastRunAt: null, lastError: null, lastChecked: 0, lastWritten: 0, lastSeconds: 0, running: false, agentsTotal: 0, agentsDone: 0, warnings: [] };
 
 const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 10);
-const dayStartMs = (day: string) => Date.parse(`${day}T00:00:00+03:00`);
-const daysBetween = (fromMs: number, toMs: number): string[] => {
-  const out: string[] = [];
-  for (let d = kwDay(fromMs); d <= kwDay(toMs); d = kwDay(dayStartMs(d) + 86400_000)) out.push(d);
-  return out;
-};
+
+/** One employee's own XonTel calls between two Kuwait days (rows of other agents are dropped). */
+export async function fetchAgentCalls(agentId: string, fromDay: string, toDay: string): Promise<{ calls: CdrCall[]; complete: boolean; outOfRange: boolean }> {
+  const out = new Map<string, CdrCall>();
+  let anyRows = false;
+  for (let page = 1; page <= AGENT_MAX_PAGES; page++) {
+    // start_date/end_date are the parameters XonTel honours (from_date/to_date are ignored, per QA).
+    const data = await xontelGet(`/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${fromDay}&end_date=${toDay}&size=${AGENT_PAGE_SIZE}&page=${page}`, CDR_TIMEOUT_MS);
+    const rows: any[] = Array.isArray(data) ? data : (data?.results || []);
+    if (rows.length) anyRows = true;
+    // With a date range XonTel leaks rows that belong to no agent (internal legs) — keep only theirs.
+    for (const r of rows) { const c = toCall(r); if (c && c.agentId === String(agentId)) out.set(c.id, c); }
+    if (rows.length < AGENT_PAGE_SIZE) {
+      const calls = [...out.values()];
+      const inRange = calls.filter((c) => { const d = kwDay(c.ts); return d >= fromDay && d <= toDay; });
+      // Rows came back but none on the asked days: the date filter was not applied — do not judge on them.
+      return { calls: inRange, complete: true, outOfRange: anyRows && calls.length > 0 && inRange.length === 0 };
+    }
+  }
+  return { calls: [...out.values()], complete: false, outOfRange: false };
+}
 
 /**
  * Looks up the calls for finished surveys and stores the verdicts.
@@ -302,17 +339,16 @@ const daysBetween = (fromMs: number, toMs: number): string[] => {
  *  - auto:   surveys finished in the last 36h that were never checked, or checked without finding
  *            an answered call (the call record may have arrived late) — run on a timer
  *  - manual: a supervisor's "Verify now" for a period; re-checks everything not yet confirmed
- *
- * Call records are read one Kuwait day at a time, newest day first, and each survey is judged and
- * SAVED as soon as the days it needs are loaded — so a failure on an old day never loses the work
- * already done on newer ones.
  */
 export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromISO?: string | null; toISO?: string | null } = { mode: "auto" }): Promise<{ checked: number; written: number; skipped: number; error?: string }> {
   if (!xontelConfigured()) return { checked: 0, written: 0, skipped: 0, error: "XonTel is not configured" };
   if (checkStatus.running) return { checked: 0, written: 0, skipped: 0, error: "a check is already running" };
   checkStatus.running = true;
+  checkStatus.agentsTotal = 0; checkStatus.agentsDone = 0;
   const started = Date.now();
-  let checked = 0, written = 0, skipped = 0, failure: string | null = null;
+  let checked = 0, written = 0, skipped = 0;
+  const errors: string[] = [], warnings: string[] = [];
+  let fatal: string | null = null;
   try {
     const now = Date.now();
     const surveys: any[] = await DB.getSurveysForCallCheck({
@@ -322,58 +358,91 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
     });
     checked = surveys.length;
 
-    // Which Kuwait days of call records each survey needs (its window can reach into the day before).
-    const todo = surveys.map((s) => {
-      const completedMs = new Date(s.completed_at).getTime();
-      const w = surveyWindow(s.status, completedMs);
-      const days = daysBetween(w.from, Math.min(w.to, now));
-      return { s, completedMs, days, earliest: days[0] };
-    });
-    const allDays = [...new Set(todo.flatMap((t) => t.days))].sort().reverse();       // newest first
-    const loaded = new Map<string, CdrCall[]>();
-    let pending = todo;
+    // One group per linked employee, with the days their surveys' windows cover.
+    const groups = new Map<string, { agentId: string; name: string; items: { s: any; completedMs: number }[]; from: number; to: number }>();
+    for (const sv of surveys) {
+      const completedMs = new Date(sv.completed_at).getTime();
+      const w = surveyWindow(sv.status, completedMs);
+      const key = String(sv.xontel_agent_id);
+      let g = groups.get(key);
+      if (!g) { g = { agentId: key, name: sv.agent_name || key, items: [], from: w.from, to: w.to }; groups.set(key, g); }
+      g.items.push({ s: sv, completedMs });
+      g.from = Math.min(g.from, w.from); g.to = Math.max(g.to, w.to);
+    }
+    const queue = [...groups.values()];
+    checkStatus.agentsTotal = queue.length;
 
-    for (const day of allDays) {
-      if (!pending.length) break;
-      const { calls, complete } = await fetchCdr(day, day);
-      if (!complete) throw new Error(`XonTel returned too many call records for ${day} to read in one pass`);
-      // Only records that really belong to that day. If the PBX ignored the date filter it hands back
-      // other days (today's) — then "no call" would be a false accusation, so nothing is recorded.
-      const own = calls.filter((c) => kwDay(c.ts) === day);
-      if (!own.length) throw new Error(`XonTel returned no call records for ${day} (date filter ignored, or an empty day) — nothing was recorded for the surveys that need it`);
-      loaded.set(day, own);
+    // Verdicts wait here until the run has shown it reads the records correctly (see GLOBAL_SANITY_MIN).
+    let held: any[] = [];
+    let trusted = false, reachedJudged = 0, reachedMatched = 0, consecutiveFailures = 0, anySuccess = false;
+    const flush = async (rows: any[]) => { if (rows.length) { await DB.upsertSurveyCallChecks(rows); written += rows.length; } };
 
-      // Judge every survey whose days are now all loaded (its earliest day is this one or newer).
-      const ready = pending.filter((t) => t.earliest >= day);
-      if (!ready.length) continue;
-      const index = indexCalls([...loaded.values()].flat());
+    const handle = async (g: typeof queue[number]) => {
+      let res;
+      try { res = await fetchAgentCalls(g.agentId, kwDay(g.from), kwDay(Math.min(g.to, now))); }
+      catch (e: any) {
+        errors.push(`${g.name}: ${e?.message || e}`);
+        consecutiveFailures++;
+        if (!anySuccess && consecutiveFailures >= 3) fatal = `XonTel could not be read for the first ${consecutiveFailures} employees (${e?.message || e})`;
+        return;
+      }
+      anySuccess = true; consecutiveFailures = 0;
+      if (!res.complete) { errors.push(`${g.name}: more than ${AGENT_PAGE_SIZE * AGENT_MAX_PAGES} calls in the period — pick a shorter one`); return; }
+      if (res.outOfRange) { errors.push(`${g.name}: XonTel returned calls from other days (date filter not applied) — not judged`); return; }
+      const reachedClaims = g.items.filter((t) => isReachedClaim(t.s.status)).length;
+      // Not a single call of any kind for this employee on these days, yet many surveys saved as reached:
+      // far more likely a wrong XonTel link than a person who never touched the phone. Don't judge — say so.
+      if (res.calls.length === 0 && reachedClaims >= 10) {
+        warnings.push(`${g.name}: no calls at all in XonTel for ${reachedClaims} reached surveys — check that this employee is linked to the right XonTel user`);
+        return;
+      }
+      const index = indexCalls(res.calls);
       const rows: any[] = [];
-      for (const t of ready) {
-        const j = judgeSurvey(index, { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: t.s.xontel_agent_id });
+      for (const t of g.items) {
+        const j = judgeSurvey(index, { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: g.agentId });
         // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
         if (j.result === "no_call" && now - t.completedMs < PENDING_GRACE_MS) { skipped++; continue; }
         rows.push({ assignment_id: t.s.id, ...j });
+        if (isReachedClaim(t.s.status)) { reachedJudged++; if (j.result !== "no_call") reachedMatched++; }
       }
-      // Systemic-mismatch guard: if hardly any reached claim finds a call, our reading of the records is
-      // wrong somewhere — saving would flag everybody. Refuse rather than accuse.
-      const reachedJudged = rows.filter((r) => isReachedClaim(ready.find((t) => t.s.id === r.assignment_id)!.s.status));
-      if (reachedJudged.length >= MIN_BATCH_FOR_SANITY && reachedJudged.filter((r) => r.result !== "no_call").length / reachedJudged.length < MIN_MATCH_SHARE) {
-        throw new Error(`Only ${reachedJudged.filter((r) => r.result !== "no_call").length} of ${reachedJudged.length} reached surveys had any call from their agent in the XonTel records — the records probably do not hold the dialled number or agent where expected, so nothing was recorded. Run "Test XonTel" and send the result.`);
+      if (trusted) { await flush(rows); return; }
+      held.push(...rows);
+      if (reachedJudged >= GLOBAL_SANITY_MIN) {
+        if (reachedMatched / reachedJudged < MIN_GLOBAL_MATCH) {
+          fatal = `Only ${reachedMatched} of ${reachedJudged} reached surveys found any call from their own agent — the records are probably not read correctly, so nothing was recorded. Run "Test XonTel" and send the result.`;
+          held = [];
+          return;
+        }
+        trusted = true;
+        const toWrite = held; held = [];
+        await flush(toWrite);
       }
-      await DB.upsertSurveyCallChecks(rows);
-      written += rows.length;
-      const doneIds = new Set(ready.map((t) => t.s.id));
-      pending = pending.filter((t) => !doneIds.has(t.s.id));
-    }
+    };
+
+    // A small pool: CONCURRENCY employees at a time, stopping early on a fatal problem.
+    let next = 0;
+    const worker = async () => {
+      while (!fatal && next < queue.length) {
+        const g = queue[next++];
+        await handle(g);
+        checkStatus.agentsDone++;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+    // A small run that never reached the sanity threshold: nothing suggests a systemic problem.
+    if (!fatal && held.length) { const toWrite = held; held = []; await flush(toWrite); }
   } catch (e: any) {
-    failure = e?.message || String(e);
+    fatal = e?.message || String(e);
   } finally {
+    const failure = fatal || (errors.length ? `${errors.length} employee(s) could not be checked — ${errors.slice(0, 2).join("; ")}${errors.length > 2 ? "; …" : ""}` : null);
     checkStatus.lastRunAt = new Date().toISOString();
     checkStatus.lastError = failure;
+    checkStatus.warnings = warnings;
     checkStatus.lastChecked = checked; checkStatus.lastWritten = written;
     checkStatus.lastSeconds = Math.round((Date.now() - started) / 1000);
     checkStatus.running = false;
-    if (checked) console.log(`[call-check] ${opts.mode}: ${checked} survey(s), ${written} verdict(s) saved, ${skipped} too recent, ${checkStatus.lastSeconds}s${failure ? " — " + failure : ""}`);
+    if (checked) console.log(`[call-check] ${opts.mode}: ${checked} survey(s), ${checkStatus.agentsTotal} employee(s), ${written} verdict(s) saved, ${skipped} too recent, ${checkStatus.lastSeconds}s${failure ? " — " + failure : ""}`);
   }
+  const failure = checkStatus.lastError;
   return failure ? { checked, written, skipped, error: failure } : { checked, written, skipped };
 }

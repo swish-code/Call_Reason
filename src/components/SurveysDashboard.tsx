@@ -22,9 +22,10 @@ interface TimeSurvey {
 // Call verification (GET /api/surveys/call-verification) — Team Leaders, Supervisors and Admins only.
 interface CallCheck { result: "answered" | "unanswered" | "no_call"; talk: number; calls: number; call_time: string | null; direction: string | null; xontel_agent: string | null; relation: string | null }
 interface CallAgent { agent: string; linked: boolean; unlinked: number; reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; noCallPct: number | null; suspectPct: number | null }
+interface CheckStatus { lastRunAt: string | null; lastError: string | null; running: boolean; lastChecked: number; lastWritten: number; lastSeconds: number; agentsTotal: number; agentsDone: number; warnings: string[] }
 interface CallVerification {
   configured: boolean; minTalkSeconds: number;
-  status: { lastRunAt: string | null; lastError: string | null; running: boolean; lastChecked: number; lastWritten: number; lastSeconds: number };
+  status: CheckStatus;
   summary: { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; unlinked: number; notReachedNoCall: number };
   agents: CallAgent[]; checks: Record<string, CallCheck>; canLink: boolean;
 }
@@ -217,7 +218,19 @@ export default function SurveysDashboard({ currentUser }: Props) {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Verification failed.");
-      setVerifyMsg({ ok: true, text: j.checked ? `Checked ${j.checked} survey(s), ${j.written} verdict(s) saved${j.skipped ? `, ${j.skipped} too recent to judge yet` : ""}.` : "Nothing left to check in this period." });
+      // It runs in the background (XonTel is slow) — follow it.
+      let st: CheckStatus | null = null;
+      for (let i = 0; i < 900; i++) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const g = await apiFetch("/api/surveys/call-verification/status");
+        if (!g.ok) break;
+        st = await g.json();
+        setCv((prev) => (prev ? { ...prev, status: st! } : prev));
+        if (!st!.running) break;
+      }
+      if (st && !st.running) {
+        setVerifyMsg(st.lastError ? { ok: false, text: st.lastError } : { ok: true, text: st.lastChecked ? `Checked ${st.lastChecked} survey(s) of ${st.agentsTotal} employee(s): ${st.lastWritten} verdict(s) saved in ${st.lastSeconds}s.` : "Nothing left to check in this period." });
+      }
       await load();
     } catch (e: any) { setVerifyMsg({ ok: false, text: e.message }); } finally { setVerifying(false); }
   };
@@ -482,9 +495,10 @@ export default function SurveysDashboard({ currentUser }: Props) {
                   </div>
                 )}
                 {verifyMsg && <div className={`mb-3 p-3 rounded-xl text-xs border ${verifyMsg.ok ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400" : "bg-rose-950/20 border-rose-500/20 text-rose-400"}`}>{verifyMsg.text}</div>}
+                {(cv.status.warnings || []).map((w, i) => <div key={i} className="mb-2 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">⚠ {w}</div>)}
                 {cv.status.lastError && <div className="mb-3 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">Last check could not finish{cv.status.lastWritten ? ` (${cv.status.lastWritten} saved before it stopped)` : ""}: {cv.status.lastError}</div>}
                 <p className="mb-3 text-[11px] text-[var(--muted)]">
-                  {cv.status.running ? "Checking calls right now…"
+                  {cv.status.running ? `Checking calls right now… ${cv.status.agentsTotal ? `${cv.status.agentsDone} of ${cv.status.agentsTotal} employee(s) done` : ""}`
                     : cv.status.lastRunAt ? `Last check ${fmtTime(cv.status.lastRunAt)} · ${cv.status.lastChecked} survey(s) looked at, ${cv.status.lastWritten} verdict(s) saved · ${cv.status.lastSeconds}s`
                     : "The first check has not run since the server started — it runs every 10 minutes, and right after you link an employee."}
                 </p>
