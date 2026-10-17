@@ -2180,10 +2180,12 @@ export class DB {
   }
 
   // ---- Call verification (see server/xontel.ts) ----
-  // Finished surveys whose phone call still needs looking up. `force` (a supervisor's "Verify
-  // now") re-checks everything not yet confirmed; the timer only retries recent ones, because a
-  // call record can arrive late. The agent is whoever finished the survey (last response, else
-  // last logged attempt, else the assigned agent).
+  // Finished surveys whose phone call still needs looking up. A "not confirmed" verdict is looked up
+  // again only while it may have been taken before the call record arrived (checked within an hour
+  // of the survey) — after that it is final, because a busy employee's surveys cost one XonTel
+  // search each. `force` (a supervisor's "Verify now") skips the spacing between re-checks and the
+  // 36-hour limit. The agent is whoever finished the survey (last response, else last logged
+  // attempt, else the assigned agent).
   static async getSurveysForCallCheck(f: { fromISO: string; toISO: string; force: boolean; recheckWindowHours: number; limit: number }): Promise<any[]> {
     const { rows } = await pool.query(`
       SELECT a.id, a.status, a.completed_at, a.customer_phone, a.task_no,
@@ -2198,8 +2200,8 @@ export class DB {
          AND a.completed_at >= $1 AND a.completed_at <= $2
          AND COALESCE(a.customer_phone, '') <> ''
          AND ( c.assignment_id IS NULL OR c.basis IS DISTINCT FROM 'agent'
-               OR (c.result <> 'answered' AND ($3::boolean
-                    OR (a.completed_at > now() - ($4 || ' hours')::interval AND c.checked_at < now() - interval '9 minutes'))) )
+               OR (c.result <> 'answered' AND c.checked_at < a.completed_at + interval '1 hour' AND ($3::boolean
+                    OR (a.completed_at > now() - ($4 || ' hours')::interval AND c.checked_at < now() - interval '19 minutes'))) )
        ORDER BY a.completed_at DESC
        LIMIT $5`, [f.fromISO, f.toISO, f.force, String(f.recheckWindowHours), f.limit]);
     return rows;

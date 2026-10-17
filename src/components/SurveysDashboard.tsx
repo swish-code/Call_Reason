@@ -22,7 +22,7 @@ interface TimeSurvey {
 // Call verification (GET /api/surveys/call-verification) — Team Leaders, Supervisors and Admins only.
 interface CallCheck { result: "answered" | "unanswered" | "no_call"; talk: number; calls: number; call_time: string | null; direction: string | null; xontel_agent: string | null; relation: string | null }
 interface CallAgent { agent: string; linked: boolean; unlinked: number; reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; noCallPct: number | null; suspectPct: number | null }
-interface CheckStatus { lastRunAt: string | null; lastError: string | null; running: boolean; lastChecked: number; lastWritten: number; lastSeconds: number; agentsTotal: number; agentsDone: number; warnings: string[] }
+interface CheckStatus { lastRunAt: string | null; lastError: string | null; running: boolean; lastChecked: number; lastWritten: number; lastSeconds: number; agentsTotal: number; agentsDone: number; surveysTotal?: number; surveysDone?: number; warnings: string[]; pausedUntil: string | null }
 interface CallVerification {
   configured: boolean; minTalkSeconds: number;
   status: CheckStatus;
@@ -498,9 +498,10 @@ export default function SurveysDashboard({ currentUser }: Props) {
                 {(cv.status.warnings || []).map((w, i) => <div key={i} className="mb-2 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">⚠ {w}</div>)}
                 {cv.status.lastError && <div className="mb-3 p-3 rounded-xl text-xs border bg-amber-950/20 border-amber-500/20 text-amber-300">Last check could not finish{cv.status.lastWritten ? ` (${cv.status.lastWritten} saved before it stopped)` : ""}: {cv.status.lastError}</div>}
                 <p className="mb-3 text-[11px] text-[var(--muted)]">
-                  {cv.status.running ? `Checking calls right now… ${cv.status.agentsTotal ? `${cv.status.agentsDone} of ${cv.status.agentsTotal} employee(s) done` : ""}`
+                  {cv.status.running ? `Checking calls right now… ${cv.status.surveysTotal ? `${cv.status.surveysDone ?? 0} of ${cv.status.surveysTotal} survey(s) done · ${cv.status.agentsDone} of ${cv.status.agentsTotal} employee(s)` : cv.status.agentsTotal ? `${cv.status.agentsDone} of ${cv.status.agentsTotal} employee(s) done` : ""}`
                     : cv.status.lastRunAt ? `Last check ${fmtTime(cv.status.lastRunAt)} · ${cv.status.lastChecked} survey(s) looked at, ${cv.status.lastWritten} verdict(s) saved · ${cv.status.lastSeconds}s`
                     : "The first check has not run since the server started — it runs every 10 minutes, and right after you link an employee."}
+                  {!cv.status.running && cv.status.pausedUntil && new Date(cv.status.pausedUntil).getTime() > Date.now() && ` · automatic checks paused until ${fmtTime(cv.status.pausedUntil).slice(11)} so XonTel can recover ("Verify now" still works)`}
                 </p>
                 {cv.agents.length === 0 ? <div className="text-center py-6 text-[var(--muted)] text-xs">No reached surveys {periodLabel}.</div> : (
                   <div className="overflow-x-auto">

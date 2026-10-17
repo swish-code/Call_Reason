@@ -3607,7 +3607,7 @@ const scheduleCallCheck = () => {
 // record may have arrived late). Silent when XonTel isn't configured.
 const CALL_CHECK_EVERY_MIN = Number(process.env.SURVEY_CALL_CHECK_MINUTES ?? 10);
 if (CALL_CHECK_EVERY_MIN > 0) {
-  const tick = () => { if (xontelConfigured()) runSurveyCallChecks({ mode: "auto" }).then((r) => { if (r.error && r.error !== "a check is already running") console.warn("[call-check]", r.error); }).catch(() => {}); };
+  const tick = () => { if (xontelConfigured()) runSurveyCallChecks({ mode: "auto" }).then((r) => { if (r.error && r.error !== "a check is already running" && r.error !== "paused") console.warn("[call-check]", r.error); }).catch(() => {}); };
   setTimeout(tick, 60_000).unref?.();
   setInterval(tick, CALL_CHECK_EVERY_MIN * 60_000).unref?.();
 }

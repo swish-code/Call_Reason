@@ -32,15 +32,9 @@ const NOT_REACHED_LOOKBACK_MS = 24 * 3600_000;     // unanswered attempts can be
 const LOOKAHEAD_MS = 15 * 60_000;                  // a call may be logged just after the save
 const PENDING_GRACE_MS = 30 * 60_000;              // before this, "no call" may just be CDR lag
 const RECHECK_WINDOW_HOURS = 36;
-// XonTel builds every row of a page one by one, so a 500-row page can outlast a timeout while the QA
+// XonTel builds every row of a page one by one, so a big page can outlast a timeout while the QA
 // system's 20-row pages come back at once. Small pages, a generous per-request wait.
-const PAGE_SIZE = Number(process.env.XONTEL_CDR_PAGE_SIZE || 200);
-const MAX_PAGES = 200;
 const CDR_TIMEOUT_MS = Number(process.env.XONTEL_CDR_TIMEOUT_SECONDS || 120) * 1000;
-// If fewer than this share of a batch of reached claims finds ANY call, the records most likely do not
-// hold the customer's number where we look — recording "no call" for all of them would accuse everyone.
-const MIN_MATCH_SHARE = 0.1;
-const MIN_BATCH_FOR_SANITY = 20;
 const KW_OFFSET_MS = 3 * 3600_000;
 
 export const xontelBaseUrl = () => discoveredBase || ENV_BASE;
@@ -81,7 +75,7 @@ async function xontelGet(path: string, timeoutMs = 45000): Promise<any> {
   if (res.status === 401) {
     throw new Error("XonTel rejected the token — the QA system probably signed in again and XonTel issued it a new one. Copy the current XONTEL_TOKEN from QA/Swipr.");
   }
-  if (!res.ok) throw new Error(`XonTel API ${res.status}`);
+  if (!res.ok) { const err: any = new Error(`XonTel API ${res.status}`); err.status = res.status; throw err; }
   return res.json();
 }
 
@@ -135,25 +129,6 @@ export function toCall(r: any): CdrCall | null {
     agentName: r.agent ? String(r.agent) : null,
     keys: [...keys],
   };
-}
-
-async function cdrPage(from: string, to: string, page: number): Promise<any[]> {
-  // The API silently ignores the wrong date parameter names and falls back to "today", and the two
-  // known systems disagree on which pair is right — so send both.
-  const data = await xontelGet(`/api/v1/cdr/?start_date=${from}&end_date=${to}&from_date=${from}&to_date=${to}&page=${page}&size=${PAGE_SIZE}`, CDR_TIMEOUT_MS);
-  return Array.isArray(data) ? data : (data?.results || []);
-}
-
-/** Every call record between two Kuwait days (YYYY-MM-DD). Pages until a short page comes back. */
-export async function fetchCdr(fromDay: string, toDay: string): Promise<{ calls: CdrCall[]; complete: boolean }> {
-  const out = new Map<string, CdrCall>();
-  let complete = false;
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const rows = await cdrPage(fromDay, toDay, page);
-    for (const r of rows) { const c = toCall(r); if (c) out.set(c.id, c); }
-    if (rows.length < PAGE_SIZE) { complete = true; break; }
-  }
-  return { calls: [...out.values()], complete };
 }
 
 export function indexCalls(calls: CdrCall[]): Map<string, CdrCall[]> {
@@ -248,9 +223,44 @@ export function suggestLinks(users: { id: string; name: string }[], agents: Xont
   return out;
 }
 
+// ---- What we have learned about this PBX ---------------------------------------------
+//
+// Measured on the real PBX (Test XonTel and the first runs, 2026-10-15..17):
+//  - every CDR request costs a large fixed time (~13-50s); heavy requests (500 rows, two days, two
+//    at a time) make the gateway in front of XonTel answer 502.
+//  - one employee's calls (`agent=<id>`) read fine for survey-only staff (Essam, Yousif: verdicts
+//    for every survey), but staff who also answer the inbound queues carry thousands of records a
+//    day ("more than 6000 calls in the period"), so all their calls cannot be read in time.
+// So an employee-day is read through the agent filter (outgoing calls only, when XonTel honours
+// that filter) while it stays short; a longer one is looked up survey by survey — a search for the
+// customer's number over the survey's window. That search is used only after it has found a known
+// outgoing call (self-test), so a search that cannot see the dialled number never becomes
+// "no call" verdicts. The process remembers what it learned for a few hours.
+
+const LEARN_TTL_MS = 6 * 3600_000;
+const learned: {
+  typeFilter: { works: boolean; at: number } | null;     // does `call_type=Outgoing` narrow agent= results?
+  search: { works: boolean; at: number } | null;         // does `search=<customer>` find outgoing calls?
+  sample: { id: string; key: string; day: string } | null; // a known outgoing call, to test the search with
+  busy: Map<string, number>;                             // "agentId|day" -> when it was found too long to read
+} = { typeFilter: null, search: null, sample: null, busy: new Map() };
+const fresh = (x: { at: number } | null) => !!x && Date.now() - x.at < LEARN_TTL_MS;
+const TYPE_PARAM = "call_type=Outgoing";
+
+const rowsOf = (d: any): any[] => (Array.isArray(d) ? d : d?.results || []);
+const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 10);
+const nextDay = (day: string) => kwDay(Date.parse(`${day}T00:00:00+03:00`) + 86400_000);
+
+/** Remember one of this agent's outgoing calls (customer in `dst`) to test the number search with. */
+function noteSample(r: any, c: CdrCall) {
+  if (learned.sample || !/outgoing/i.test(c.direction)) return;
+  const key = last8(r?.dst);
+  if (key) learned.sample = { id: c.id, key, day: kwDay(c.ts) };
+}
+
 // ---- Connection test ("Test XonTel") ------------------------------------------------
-// Times a few small requests and shows what an OUTGOING call record looks like (numbers masked), so the
-// job can be tuned against the real PBX instead of guessed.
+// Asks the questions the job depends on, against the busiest linked employees, and shows what an
+// OUTGOING call record looks like (numbers masked). What it finds is also remembered by the job.
 
 export const probeStatus: { running: boolean; startedAt: string | null; steps: { name: string; ms: number | null; info: string; error?: string }[]; layout: any } =
   { running: false, startedAt: null, steps: [], layout: null };
@@ -261,94 +271,211 @@ export async function runProbe(): Promise<void> {
   if (probeStatus.running) return;
   probeStatus.running = true; probeStatus.startedAt = new Date().toISOString(); probeStatus.steps = []; probeStatus.layout = null;
   const today = kwDay(Date.now());
-  const step = async (name: string, path: string, info: (d: any) => string, timeoutMs = 100_000): Promise<any> => {
+  const step = async (name: string, path: string, info: (d: any) => string, timeoutMs = 130_000): Promise<any> => {
     const t0 = Date.now();
     try { const d = await xontelGet(path, timeoutMs); probeStatus.steps.push({ name, ms: Date.now() - t0, info: info(d) }); return d; }
     catch (e: any) { probeStatus.steps.push({ name, ms: Date.now() - t0, info: "", error: e?.message || String(e) }); return null; }
   };
   try {
-    const f = await step("agent list (cdr/filters)", "/api/v1/cdr/filters", (d) => `${(d?.agent || d?.agents || []).length} agents`);
-    const agentId = String((f?.agent || f?.agents || [])[0]?.value ?? (f?.agent || f?.agents || [])[0]?.id ?? "");
-    const rows = (d: any): any[] => (Array.isArray(d) ? d : d?.results || []);
-    const p20 = await step("one day, 20 rows", `/api/v1/cdr/?start_date=${today}&end_date=${today}&size=20&page=1`, (d) => `${rows(d).length} rows`);
-    const p200 = await step("one day, 200 rows", `/api/v1/cdr/?start_date=${today}&end_date=${today}&size=200&page=1`, (d) => `${rows(d).length} rows`);
-    await step("one day, 500 rows (how the first version asked)", `/api/v1/cdr/?start_date=${today}&end_date=${today}&size=500&page=1`, (d) => `${rows(d).length} rows`);
-    if (agentId) await step("one agent, one day, 20 rows", `/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${today}&end_date=${today}&size=20&page=1`, (d) => `${rows(d).length} rows`);
-    // How does an outgoing call look, and does search find it by the customer's number?
-    const all = [...rows(p200), ...rows(p20)];
-    const out = all.find((r) => /outgoing/i.test(String(r?.call_type ?? "")));
-    if (out) {
-      probeStatus.layout = { call_type: String(out.call_type), fields: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v === null ? null : typeof v === "object" ? "{" + Object.keys(v as any).join(",") + "}" : /\d{4,}/.test(String(v)) && !/^\d{4}-\d\d-\d\d/.test(String(v)) && !/url|file/i.test(k) ? maskDigits(v) : String(v).slice(0, 40)])) };
-      const keys = [...toCall(out)?.keys || []];
-      if (keys[0]) await step("search by the customer's number (outgoing call)", `/api/v1/cdr/?search=${keys[0]}&start_date=${today}&end_date=${today}&size=20&page=1`,
-        (d) => `${rows(d).length} rows; found the outgoing call: ${rows(d).some((r) => String(r?.id) === String(out.id))}`);
+    const f = await step("agent list (cdr/filters)", "/api/v1/cdr/filters", (d) => {
+      const types = Object.entries(d || {}).find(([, v]) => Array.isArray(v) && v.some((o) => /outgoing/i.test(JSON.stringify(o))));
+      return `${(d?.agent || d?.agents || []).length} agents · filters offered: ${Object.keys(d || {}).join(", ") || "none"}`
+        + (types ? ` · call types under "${types[0]}": ${(types[1] as any[]).map((o) => o?.value ?? o?.label ?? o).join(" / ")}` : "");
+    });
+    // The two linked employees who finish the most surveys (one of them usually answers the queues too).
+    const links = await DB.getXontelLinks();
+    const users = await DB.getLinkableUsers();
+    const byUser = new Map(links.map((l) => [l.user_id, l]));
+    const picked = users.filter((u) => byUser.has(u.id)).slice(0, 2).map((u) => byUser.get(u.id)!);
+    if (!picked.length) {
+      const first = (f?.agent || f?.agents || [])[0];
+      if (first) picked.push({ user_id: "", xontel_agent_id: String(first.value ?? first.id), xontel_agent_name: String(first.label ?? first.name ?? "") });
+    }
+    const seen: any[] = [];
+    let busiest: { id: string; name: string; notOutgoing: number } | null = null;
+    for (const p of picked) {
+      const id = String(p.xontel_agent_id), name = p.xontel_agent_name || id;
+      const d = await step(`${name}: today, 200 rows`, `/api/v1/cdr/?agent=${encodeURIComponent(id)}&start_date=${today}&end_date=${today}&size=200&page=1`, (d) => {
+        const cs = rowsOf(d).map(toCall).filter(Boolean) as CdrCall[];
+        const own = cs.filter((c) => c.agentId === id);
+        const types: Record<string, number> = {};
+        for (const c of own) types[c.direction || "?"] = (types[c.direction || "?"] || 0) + 1;
+        const noAgent = cs.filter((c) => !c.agentId).length;
+        return `${rowsOf(d).length} rows: ${own.length} this agent's (${Object.entries(types).map(([k, n]) => `${n} ${k}`).join(", ") || "none"}), `
+          + `${noAgent} with no agent, ${cs.length - own.length - noAgent} of other agents, ${own.filter((c) => kwDay(c.ts) !== today).length} not from today`;
+      });
+      if (!d) continue;
+      seen.push(...rowsOf(d));
+      const own = (rowsOf(d).map(toCall).filter(Boolean) as CdrCall[]).filter((c) => c.agentId === id);
+      const notOutgoing = own.filter((c) => !/outgoing/i.test(c.direction)).length;
+      if (!busiest || notOutgoing > busiest.notOutgoing) busiest = { id, name, notOutgoing };
+    }
+    // Does the outgoing-only filter work? Only telling for someone who also has other calls.
+    if (busiest && busiest.notOutgoing > 0) {
+      const b = busiest;
+      const d = await step(`${b.name}: today, outgoing only (${TYPE_PARAM})`, `/api/v1/cdr/?agent=${encodeURIComponent(b.id)}&start_date=${today}&end_date=${today}&${TYPE_PARAM}&size=200&page=1`, (d) => {
+        const own = (rowsOf(d).map(toCall).filter(Boolean) as CdrCall[]).filter((c) => c.agentId === b.id);
+        const bad = own.filter((c) => !/outgoing/i.test(c.direction)).length;
+        return `${rowsOf(d).length} rows, ${own.length} this agent's, ${bad} of them not outgoing → the filter ${bad ? "is IGNORED" : own.length ? "WORKS" : "returned none of their calls"}`;
+      });
+      if (d) {
+        const own = (rowsOf(d).map(toCall).filter(Boolean) as CdrCall[]).filter((c) => c.agentId === b.id);
+        if (own.length) learned.typeFilter = { works: !own.some((c) => !/outgoing/i.test(c.direction)), at: Date.now() };
+      }
+    }
+    // What an outgoing call looks like, and does the number search find it by the customer's number (dst)?
+    const outRow = seen.find((r) => /outgoing/i.test(String(r?.call_type ?? "")) && last8(r?.dst));
+    if (outRow) {
+      probeStatus.layout = { call_type: String(outRow.call_type), fields: Object.fromEntries(Object.entries(outRow).map(([k, v]) => [k, v === null ? null : typeof v === "object" ? "{" + Object.keys(v as any).join(",") + "}" : /\d{4,}/.test(String(v)) && !/^\d{4}-\d\d-\d\d/.test(String(v)) && !/url|file/i.test(k) ? maskDigits(v) : String(v).slice(0, 40)])) };
+      const c = toCall(outRow)!;
+      const key = last8(outRow.dst)!;
+      const d = await step("search by the customer's number (dst of that outgoing call)", `/api/v1/cdr/?search=${key}&start_date=${kwDay(c.ts)}&end_date=${kwDay(c.ts)}&size=50&page=1`,
+        (d) => `${rowsOf(d).length} rows; found that outgoing call: ${rowsOf(d).some((r) => String(r?.id ?? r?.uniqueid) === c.id) ? "YES" : "NO"}`);
+      if (d) {
+        learned.search = { works: rowsOf(d).some((r) => String(r?.id ?? r?.uniqueid) === c.id), at: Date.now() };
+        learned.sample = { id: c.id, key, day: kwDay(c.ts) };
+      }
     } else {
-      probeStatus.steps.push({ name: "outgoing call layout", ms: null, info: "no outgoing call in the first rows — try again during working hours" });
+      probeStatus.steps.push({ name: "outgoing call layout", ms: null, info: "no outgoing call with a customer number in the rows read — try again during working hours" });
     }
   } finally { probeStatus.running = false; }
 }
 
 // ---- The checking job -------------------------------------------------------------
-//
-// Measured on the real PBX (Test XonTel, 2026-10-15): every CDR request costs a large fixed time
-// whatever its size — a whole day: 20 rows 28.5s, 500 rows 47.9s — while ONE AGENT's calls come
-// back in ~13s. So the job asks XonTel once per linked employee (their own calls only, over the
-// days their surveys need, in 500-row pages), two employees at a time, and saves each employee's
-// verdicts as soon as their calls are in.
 
-const AGENT_PAGE_SIZE = 500;
-const AGENT_MAX_PAGES = 12;
+const AGENT_PAGE_SIZE = Number(process.env.XONTEL_AGENT_PAGE_SIZE || 200);
+const QUIET_MAX_PAGES = 3;          // an employee-day longer than this is looked up survey by survey
+const TYPED_MAX_PAGES = 10;         // outgoing calls only: a day this long is still read whole
+const SEARCH_PAGE_SIZE = 50;
+const SEARCH_MAX_PAGES = 4;
 const CONCURRENCY = Math.max(1, Number(process.env.XONTEL_CONCURRENCY || 2));
+const GATEWAY_RETRIES = [5_000, 20_000];          // waits before the 2nd and 3rd try of a request
+// After a run that could not read XonTel at all, the timer leaves it alone for a while.
+const AUTO_PAUSE_MS = 30 * 60_000;
+// A run stops after this long and saves what it judged; the rest waits for the next run.
+const AUTO_BUDGET_MS = 8 * 60_000;
+const MANUAL_BUDGET_MS = 25 * 60_000;
 // Before the first verdicts are saved in a run, this many reached claims must have been judged with at
-// least MIN_GLOBAL_MATCH of them finding a call — otherwise our reading of the records is wrong
-// somewhere (field layout, filter) and saving would accuse everybody.
+// least MIN_GLOBAL_MATCH of them finding the employee's call — otherwise our reading of the records is
+// wrong somewhere (field layout, filter) and saving would accuse everybody. Smaller runs: SMALL_RUN_MIN.
 const GLOBAL_SANITY_MIN = 30;
-const MIN_GLOBAL_MATCH = 0.05;
+const SMALL_RUN_MIN = 10;
+const MIN_GLOBAL_MATCH = 0.2;
+// Wrong-link signal: most of an employee's "no call" reached claims were called by ONE other XonTel user.
+const OTHER_AGENT_MIN = 5;
+const OTHER_AGENT_SHARE = 0.8;
 
 export const checkStatus: {
   lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; lastSeconds: number; running: boolean;
-  agentsTotal: number; agentsDone: number; warnings: string[];
-} = { lastRunAt: null, lastError: null, lastChecked: 0, lastWritten: 0, lastSeconds: 0, running: false, agentsTotal: 0, agentsDone: 0, warnings: [] };
+  agentsTotal: number; agentsDone: number; surveysTotal: number; surveysDone: number; warnings: string[]; pausedUntil: string | null;
+} = { lastRunAt: null, lastError: null, lastChecked: 0, lastWritten: 0, lastSeconds: 0, running: false, agentsTotal: 0, agentsDone: 0, surveysTotal: 0, surveysDone: 0, warnings: [], pausedUntil: null };
 
-const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 10);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const isGatewayError = (e: any) => [502, 503, 504].includes(Number(e?.status)) || /did not answer within/.test(String(e?.message));
+class BudgetSpent extends Error {}
 
-/** One employee's own XonTel calls between two Kuwait days (rows of other agents are dropped). */
-export async function fetchAgentCalls(agentId: string, fromDay: string, toDay: string): Promise<{ calls: CdrCall[]; complete: boolean; outOfRange: boolean }> {
-  const out = new Map<string, CdrCall>();
-  let anyRows = false;
-  for (let page = 1; page <= AGENT_MAX_PAGES; page++) {
-    // start_date/end_date are the parameters XonTel honours (from_date/to_date are ignored, per QA).
-    const data = await xontelGet(`/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${fromDay}&end_date=${toDay}&size=${AGENT_PAGE_SIZE}&page=${page}`, CDR_TIMEOUT_MS);
-    const rows: any[] = Array.isArray(data) ? data : (data?.results || []);
-    if (rows.length) anyRows = true;
-    // With a date range XonTel leaks rows that belong to no agent (internal legs) — keep only theirs.
-    for (const r of rows) { const c = toCall(r); if (c && c.agentId === String(agentId)) out.set(c.id, c); }
-    if (rows.length < AGENT_PAGE_SIZE) {
-      const calls = [...out.values()];
-      const inRange = calls.filter((c) => { const d = kwDay(c.ts); return d >= fromDay && d <= toDay; });
-      // Rows came back but none on the asked days: the date filter was not applied — do not judge on them.
-      return { calls: inRange, complete: true, outOfRange: anyRows && calls.length > 0 && inRange.length === 0 };
+/** One request, retried after a pause when the gateway in front of XonTel gives up (502/503/504, timeout). */
+async function cdrGetWithRetry(path: string, deadline: number): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    if (Date.now() > deadline) throw new BudgetSpent();
+    try { return await xontelGet(path, CDR_TIMEOUT_MS); }
+    catch (e: any) {
+      if (!isGatewayError(e) || attempt >= GATEWAY_RETRIES.length) throw e;
+      await sleep(GATEWAY_RETRIES[attempt]);
     }
   }
-  return { calls: [...out.values()], complete: false, outOfRange: false };
+}
+
+/**
+ * One employee's own calls on one Kuwait day, or "busy" when there are too many to read in time.
+ * Asks for outgoing calls only unless XonTel is known to ignore that filter; if the answer shows other
+ * call types, the filter was ignored and those rows are simply all their calls.
+ */
+export async function readAgentDay(agentId: string, day: string, deadline: number): Promise<{ calls: CdrCall[]; outOfRange: boolean } | "busy"> {
+  const busyKey = `${agentId}|${day}`;
+  const busyAt = learned.busy.get(busyKey);
+  if (busyAt && Date.now() - busyAt < LEARN_TTL_MS) return "busy";
+  let typed = !(fresh(learned.typeFilter) && !learned.typeFilter!.works);
+  const out = new Map<string, CdrCall>();
+  for (let page = 1; page <= (typed && fresh(learned.typeFilter) ? TYPED_MAX_PAGES : QUIET_MAX_PAGES); page++) {
+    // start_date/end_date are the parameters XonTel honours (from_date/to_date are ignored, per QA).
+    const path = `/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${day}&end_date=${day}${typed ? "&" + TYPE_PARAM : ""}&size=${AGENT_PAGE_SIZE}&page=${page}`;
+    let data: any;
+    try { data = await cdrGetWithRetry(path, deadline); }
+    catch (e: any) {
+      // XonTel refuses the filter outright: forget it and read this day again without it.
+      if (typed && page === 1 && Number(e?.status) === 400) { learned.typeFilter = { works: false, at: Date.now() }; typed = false; page = 0; continue; }
+      throw e;
+    }
+    const rows = rowsOf(data);
+    const own: CdrCall[] = [];
+    // XonTel also returns rows that belong to no agent (internal legs) — keep only theirs.
+    for (const r of rows) { const c = toCall(r); if (c && c.agentId === String(agentId)) { own.push(c); out.set(c.id, c); noteSample(r, c); } }
+    if (typed && own.length) {
+      if (own.some((c) => !/outgoing/i.test(c.direction))) { learned.typeFilter = { works: false, at: Date.now() }; typed = false; }
+      else if (!fresh(learned.typeFilter)) learned.typeFilter = { works: true, at: Date.now() };
+    }
+    if (rows.length < AGENT_PAGE_SIZE) {
+      const calls = [...out.values()];
+      const inDay = calls.filter((c) => kwDay(c.ts) === day);
+      // Rows came back but none on the asked day: the date filter was not applied — do not judge on them.
+      return { calls: inDay, outOfRange: calls.length > 0 && inDay.length === 0 };
+    }
+  }
+  learned.busy.set(busyKey, Date.now());
+  return "busy";
+}
+
+/** Every call to/from one customer number between two Kuwait days, or null if there were too many to read. */
+async function searchCustomer(cache: Map<string, CdrCall[] | null>, key: string, fromDay: string, toDay: string, deadline: number): Promise<CdrCall[] | null> {
+  const ck = `${key}|${fromDay}|${toDay}`;
+  if (cache.has(ck)) return cache.get(ck)!;
+  const out = new Map<string, CdrCall>();
+  let complete = false;
+  for (let page = 1; page <= SEARCH_MAX_PAGES; page++) {
+    const rows = rowsOf(await cdrGetWithRetry(`/api/v1/cdr/?search=${key}&start_date=${fromDay}&end_date=${toDay}&size=${SEARCH_PAGE_SIZE}&page=${page}`, deadline));
+    // The search may match on any field — keep only rows that really carry this number.
+    for (const r of rows) { const c = toCall(r); if (c && c.keys.includes(key)) out.set(c.id, c); }
+    if (rows.length < SEARCH_PAGE_SIZE) { complete = true; break; }
+  }
+  const res = complete ? [...out.values()] : null;
+  cache.set(ck, res);
+  return res;
+}
+
+/** Does the number search find a known outgoing call by its customer's number? null = no call to test with yet. */
+async function searchWorks(cache: Map<string, CdrCall[] | null>, deadline: number): Promise<boolean | null> {
+  if (fresh(learned.search)) return learned.search!.works;
+  const s = learned.sample;
+  if (!s) return null;
+  const found = await searchCustomer(cache, s.key, s.day, s.day, deadline);
+  learned.search = { works: !!found && found.some((c) => c.id === s.id), at: Date.now() };
+  return learned.search.works;
 }
 
 /**
  * Looks up the calls for finished surveys and stores the verdicts.
  *  Only surveys whose employee is linked to a XonTel agent are judged.
- *  - auto:   surveys finished in the last 36h that were never checked, or checked without finding
- *            an answered call (the call record may have arrived late) — run on a timer
- *  - manual: a supervisor's "Verify now" for a period; re-checks everything not yet confirmed
+ *  - auto:   surveys finished in the last 36h that were never checked, or whose "not confirmed" verdict
+ *            was taken before the call record could have arrived — run on a timer
+ *  - manual: a supervisor's "Verify now" for a period
  */
 export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromISO?: string | null; toISO?: string | null } = { mode: "auto" }): Promise<{ checked: number; written: number; skipped: number; error?: string }> {
   if (!xontelConfigured()) return { checked: 0, written: 0, skipped: 0, error: "XonTel is not configured" };
   if (checkStatus.running) return { checked: 0, written: 0, skipped: 0, error: "a check is already running" };
+  // The timer leaves a struggling XonTel alone for a while; a supervisor's "Verify now" always runs.
+  if (opts.mode === "auto" && checkStatus.pausedUntil && Date.now() < new Date(checkStatus.pausedUntil).getTime()) {
+    return { checked: 0, written: 0, skipped: 0, error: "paused" };
+  }
   checkStatus.running = true;
-  checkStatus.agentsTotal = 0; checkStatus.agentsDone = 0;
+  checkStatus.pausedUntil = null;
+  checkStatus.agentsTotal = 0; checkStatus.agentsDone = 0; checkStatus.surveysTotal = 0; checkStatus.surveysDone = 0;
+  for (const [k, at] of learned.busy) if (Date.now() - at >= LEARN_TTL_MS) learned.busy.delete(k);
   const started = Date.now();
+  const deadline = started + (opts.mode === "manual" ? MANUAL_BUDGET_MS : AUTO_BUDGET_MS);
   let checked = 0, written = 0, skipped = 0;
   const errors: string[] = [], warnings: string[] = [];
-  let fatal: string | null = null;
+  let fatal: string | null = null, budgetHit = false;
   try {
     const now = Date.now();
     const surveys: any[] = await DB.getSurveysForCallCheck({
@@ -357,6 +484,7 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
       force: opts.mode === "manual", recheckWindowHours: RECHECK_WINDOW_HOURS, limit: 2500,
     });
     checked = surveys.length;
+    checkStatus.surveysTotal = checked;
 
     // One group per linked employee, with the days their surveys' windows cover.
     const groups = new Map<string, { agentId: string; name: string; items: { s: any; completedMs: number }[]; from: number; to: number }>();
@@ -375,36 +503,10 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
     // Verdicts wait here until the run has shown it reads the records correctly (see GLOBAL_SANITY_MIN).
     let held: any[] = [];
     let trusted = false, reachedJudged = 0, reachedMatched = 0, consecutiveFailures = 0, anySuccess = false;
+    const searchCache = new Map<string, CdrCall[] | null>();
     const flush = async (rows: any[]) => { if (rows.length) { await DB.upsertSurveyCallChecks(rows); written += rows.length; } };
-
-    const handle = async (g: typeof queue[number]) => {
-      let res;
-      try { res = await fetchAgentCalls(g.agentId, kwDay(g.from), kwDay(Math.min(g.to, now))); }
-      catch (e: any) {
-        errors.push(`${g.name}: ${e?.message || e}`);
-        consecutiveFailures++;
-        if (!anySuccess && consecutiveFailures >= 3) fatal = `XonTel could not be read for the first ${consecutiveFailures} employees (${e?.message || e})`;
-        return;
-      }
-      anySuccess = true; consecutiveFailures = 0;
-      if (!res.complete) { errors.push(`${g.name}: more than ${AGENT_PAGE_SIZE * AGENT_MAX_PAGES} calls in the period — pick a shorter one`); return; }
-      if (res.outOfRange) { errors.push(`${g.name}: XonTel returned calls from other days (date filter not applied) — not judged`); return; }
-      const reachedClaims = g.items.filter((t) => isReachedClaim(t.s.status)).length;
-      // Not a single call of any kind for this employee on these days, yet many surveys saved as reached:
-      // far more likely a wrong XonTel link than a person who never touched the phone. Don't judge — say so.
-      if (res.calls.length === 0 && reachedClaims >= 10) {
-        warnings.push(`${g.name}: no calls at all in XonTel for ${reachedClaims} reached surveys — check that this employee is linked to the right XonTel user`);
-        return;
-      }
-      const index = indexCalls(res.calls);
-      const rows: any[] = [];
-      for (const t of g.items) {
-        const j = judgeSurvey(index, { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: g.agentId });
-        // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
-        if (j.result === "no_call" && now - t.completedMs < PENDING_GRACE_MS) { skipped++; continue; }
-        rows.push({ assignment_id: t.s.id, ...j });
-        if (isReachedClaim(t.s.status)) { reachedJudged++; if (j.result !== "no_call") reachedMatched++; }
-      }
+    const commit = async (rows: any[]) => {
+      for (const r of rows) if (r.reached) { reachedJudged++; if (r.result !== "no_call") reachedMatched++; }
       if (trusted) { await flush(rows); return; }
       held.push(...rows);
       if (reachedJudged >= GLOBAL_SANITY_MIN) {
@@ -418,19 +520,106 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
         await flush(toWrite);
       }
     };
+    const failed = (g: { name: string }, e: any) => {
+      errors.push(`${g.name}: ${e?.message || e}`);
+      consecutiveFailures++;
+      if (!anySuccess && consecutiveFailures >= 3) fatal = `XonTel could not be read for the first ${consecutiveFailures} employees (${e?.message || e})`;
+    };
 
-    // A small pool: CONCURRENCY employees at a time, stopping early on a fatal problem.
+    const handle = async (g: typeof queue[number]) => {
+      const fromDay = kwDay(g.from), toDay = kwDay(Math.min(g.to, now));
+      const rows: any[] = [];
+      const judged = (t: { s: any; completedMs: number }, j: CallJudgement) => {
+        // A call that just ended may not be in the records yet — only a missing call that is old enough is a finding.
+        if (j.result === "no_call" && now - t.completedMs < PENDING_GRACE_MS) { skipped++; return; }
+        rows.push({ assignment_id: t.s.id, ...j, reached: isReachedClaim(t.s.status) });
+      };
+      // Without a usable number there is nothing to look for — never a "no call".
+      const items = g.items.filter((t) => { if (last8(t.s.customer_phone)) return true; skipped++; checkStatus.surveysDone++; return false; });
+
+      // 1) Their own calls, day by day, while the days are short enough to read.
+      let calls: CdrCall[] | null = [];
+      try {
+        for (let day = fromDay; day <= toDay; day = nextDay(day)) {
+          const r = await readAgentDay(g.agentId, day, deadline);
+          if (r === "busy") { calls = null; break; }
+          if (r.outOfRange) { errors.push(`${g.name}: XonTel returned calls from other days (date filter not applied) — not judged`); checkStatus.surveysDone += items.length; return; }
+          calls.push(...r.calls);
+        }
+      } catch (e: any) {
+        if (e instanceof BudgetSpent) { budgetHit = true; return; }
+        failed(g, e); checkStatus.surveysDone += items.length; return;
+      }
+      anySuccess = true; consecutiveFailures = 0;
+
+      if (calls) {
+        const reachedClaims = items.filter((t) => isReachedClaim(t.s.status)).length;
+        // Not a single call of any kind for this employee on these days, yet many surveys saved as reached:
+        // far more likely a wrong XonTel link than a person who never touched the phone. Don't judge — say so.
+        if (calls.length === 0 && reachedClaims >= 10) {
+          warnings.push(`${g.name}: no calls at all in XonTel for ${reachedClaims} reached surveys — check that this employee is linked to the right XonTel user`);
+          checkStatus.surveysDone += items.length;
+          return;
+        }
+        const index = indexCalls(calls);
+        for (const t of items) judged(t, judgeSurvey(index, { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: g.agentId }));
+        checkStatus.surveysDone += items.length;
+      } else {
+        // 2) Too many records a day: look each survey's customer up instead, reached claims first.
+        let works: boolean | null;
+        try { works = await searchWorks(searchCache, deadline); }
+        catch (e: any) { if (e instanceof BudgetSpent) { budgetHit = true; return; } failed(g, e); checkStatus.surveysDone += items.length; return; }
+        if (works !== true) {
+          errors.push(`${g.name}: too many XonTel records a day to read them all, and ${works === false ? "XonTel's number search does not find outgoing calls" : "the number search could not be tested yet (no outgoing call seen)"} — not judged`);
+          checkStatus.surveysDone += items.length;
+          return;
+        }
+        const ordered = [...items.filter((t) => isReachedClaim(t.s.status)), ...items.filter((t) => !isReachedClaim(t.s.status))];
+        for (const t of ordered) {
+          const key = last8(t.s.customer_phone)!;
+          const w = surveyWindow(t.s.status, t.completedMs);
+          let found: CdrCall[] | null;
+          try { found = await searchCustomer(searchCache, key, kwDay(w.from), kwDay(Math.min(w.to, now)), deadline); }
+          catch (e: any) { if (e instanceof BudgetSpent) budgetHit = true; else errors.push(`${g.name}: ${e?.message || e}`); break; }
+          checkStatus.surveysDone++;
+          if (!found) { skipped++; continue; }
+          judged(t, judgeSurvey(new Map([[key, found]]), { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: g.agentId }));
+        }
+      }
+
+      // Most "no call" reached claims were dialled by ONE other XonTel user: the link is the likelier mistake.
+      const noCall = rows.filter((r) => r.reached && r.result === "no_call");
+      const matched = rows.filter((r) => r.reached && r.result !== "no_call").length;
+      const byOther = new Map<string, number>();
+      for (const r of noCall) if (r.relation === "other" && r.xontel_agent) byOther.set(r.xontel_agent, (byOther.get(r.xontel_agent) || 0) + 1);
+      const top = [...byOther.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (noCall.length >= OTHER_AGENT_MIN && top && top[1] >= noCall.length * OTHER_AGENT_SHARE && matched < noCall.length) {
+        warnings.push(`${g.name}: ${top[1]} of ${noCall.length} reached surveys with no call of theirs were called by XonTel user "${top[0]}" — check that ${g.name} is linked to the right XonTel user; not judged`);
+        return;
+      }
+      await commit(rows);
+    };
+
+    // A small pool: CONCURRENCY employees at a time, stopping early on a fatal problem or a spent budget.
     let next = 0;
     const worker = async () => {
-      while (!fatal && next < queue.length) {
+      while (!fatal && !budgetHit && next < queue.length) {
         const g = queue[next++];
         await handle(g);
         checkStatus.agentsDone++;
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
-    // A small run that never reached the sanity threshold: nothing suggests a systemic problem.
-    if (!fatal && held.length) { const toWrite = held; held = []; await flush(toWrite); }
+    if (!fatal && held.length) {
+      // A run too small for the main sanity threshold still must not look systemic.
+      if (reachedJudged >= SMALL_RUN_MIN && reachedMatched / reachedJudged < MIN_GLOBAL_MATCH) {
+        fatal = `Only ${reachedMatched} of ${reachedJudged} reached surveys found any call from their own agent — nothing was recorded. Run "Test XonTel" and send the result.`;
+      } else { const toWrite = held; held = []; await flush(toWrite); }
+    }
+    if (budgetHit && !fatal) {
+      const left = Math.max(0, checkStatus.surveysTotal - checkStatus.surveysDone);
+      warnings.push(`Stopped after ${Math.round((Date.now() - started) / 60_000)} min so XonTel is not overloaded — ${left} survey(s) wait for the next check (every 10 minutes)`);
+    }
   } catch (e: any) {
     fatal = e?.message || String(e);
   } finally {
@@ -440,8 +629,11 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
     checkStatus.warnings = warnings;
     checkStatus.lastChecked = checked; checkStatus.lastWritten = written;
     checkStatus.lastSeconds = Math.round((Date.now() - started) / 1000);
+    // Nothing could be read at all: give XonTel a rest before the timer tries again.
+    if (fatal && written === 0) checkStatus.pausedUntil = new Date(Date.now() + AUTO_PAUSE_MS).toISOString();
     checkStatus.running = false;
-    if (checked) console.log(`[call-check] ${opts.mode}: ${checked} survey(s), ${checkStatus.agentsTotal} employee(s), ${written} verdict(s) saved, ${skipped} too recent, ${checkStatus.lastSeconds}s${failure ? " — " + failure : ""}`);
+    if (checked) console.log(`[call-check] ${opts.mode}: ${checked} survey(s), ${checkStatus.agentsTotal} employee(s), ${written} verdict(s) saved, ${skipped} skipped, ${checkStatus.lastSeconds}s`
+      + ` (outgoing filter: ${learned.typeFilter ? learned.typeFilter.works : "?"}, search: ${learned.search ? learned.search.works : "?"}, busy days: ${learned.busy.size})${failure ? " — " + failure : ""}`);
   }
   const failure = checkStatus.lastError;
   return failure ? { checked, written, skipped, error: failure } : { checked, written, skipped };
