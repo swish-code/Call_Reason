@@ -228,24 +228,31 @@ export function suggestLinks(users: { id: string; name: string }[], agents: Xont
 // Measured on the real PBX (Test XonTel and the first runs, 2026-10-15..17):
 //  - every CDR request costs a large fixed time (~13-50s); heavy requests (500 rows, two days, two
 //    at a time) make the gateway in front of XonTel answer 502.
-//  - one employee's calls (`agent=<id>`) read fine for survey-only staff (Essam, Yousif: verdicts
-//    for every survey), but staff who also answer the inbound queues carry thousands of records a
-//    day ("more than 6000 calls in the period"), so all their calls cannot be read in time.
-// So an employee-day is read through the agent filter (outgoing calls only, when XonTel honours
-// that filter) while it stays short; a longer one is looked up survey by survey — a search for the
-// customer's number over the survey's window. That search is used only after it has found a known
-// outgoing call (self-test), so a search that cannot see the dialled number never becomes
-// "no call" verdicts. The process remembers what it learned for a few hours.
+//  - with `agent=<id>` XonTel IGNORES the dates: it returns that employee's whole history, newest
+//    first (Test XonTel 2026-10-17: Samah 188 rows, none from the asked day). Long-serving staff
+//    therefore hit "more than 6000 calls"; only new, survey-only staff (Essam, Yousif) got verdicts.
+//  - `call_type` takes XonTel's dialplan contexts (from-internal / ext-queues / ext-local), not
+//    "Outgoing" (that is a 400). Outgoing calls carry dcontext=from-internal.
+//  - `search=<last 8 digits>` finds an outgoing call by the customer's number (dst), ~28s a request.
+// So each employee's calls are read newest first, and the reading stops once it is past the start of
+// the period (from-internal only, if XonTel honours that). Only when the rows are not in time order,
+// or the period is too long to page through, are that employee's surveys looked up one by one with
+// the number search — and only after the search has found a known outgoing call (self-test), so a
+// search that cannot see the dialled number never becomes "no call" verdicts. The process remembers
+// what it learned for a few hours.
 
 const LEARN_TTL_MS = 6 * 3600_000;
 const learned: {
-  typeFilter: { works: boolean; at: number } | null;     // does `call_type=Outgoing` narrow agent= results?
+  typeFilter: { works: boolean; at: number } | null;     // does TYPE_PARAM narrow agent= results to outgoing calls?
   search: { works: boolean; at: number } | null;         // does `search=<customer>` find outgoing calls?
   sample: { id: string; key: string; day: string } | null; // a known outgoing call, to test the search with
-  busy: Map<string, number>;                             // "agentId|day" -> when it was found too long to read
+  busy: Map<string, number>;                             // "agentId|fromDay" -> when it was found too long to read
 } = { typeFilter: null, search: null, sample: null, busy: new Map() };
 const fresh = (x: { at: number } | null) => !!x && Date.now() - x.at < LEARN_TTL_MS;
-const TYPE_PARAM = "call_type=Outgoing";
+const TYPE_PARAM = "call_type=from-internal";
+const isIncoming = (c: CdrCall) => /incoming/i.test(c.direction);
+// Rows may be ordered by when the call ended — allow a little disorder before calling them unsorted.
+const ORDER_TOLERANCE_MS = 10 * 60_000;
 
 const rowsOf = (d: any): any[] => (Array.isArray(d) ? d : d?.results || []);
 const kwDay = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 10);
@@ -301,13 +308,15 @@ export async function runProbe(): Promise<void> {
         const types: Record<string, number> = {};
         for (const c of own) types[c.direction || "?"] = (types[c.direction || "?"] || 0) + 1;
         const noAgent = cs.filter((c) => !c.agentId).length;
+        const newestFirst = own.every((c, i) => i === 0 || c.ts <= own[i - 1].ts + ORDER_TOLERANCE_MS);
         return `${rowsOf(d).length} rows: ${own.length} this agent's (${Object.entries(types).map(([k, n]) => `${n} ${k}`).join(", ") || "none"}), `
-          + `${noAgent} with no agent, ${cs.length - own.length - noAgent} of other agents, ${own.filter((c) => kwDay(c.ts) !== today).length} not from today`;
+          + `${noAgent} with no agent, ${cs.length - own.length - noAgent} of other agents, ${own.filter((c) => kwDay(c.ts) !== today).length} not from today`
+          + (own.length ? ` · ${kwDay(Math.min(...own.map((c) => c.ts)))} to ${kwDay(Math.max(...own.map((c) => c.ts)))}, newest first: ${newestFirst ? "yes" : "NO"}` : "");
       });
       if (!d) continue;
       seen.push(...rowsOf(d));
       const own = (rowsOf(d).map(toCall).filter(Boolean) as CdrCall[]).filter((c) => c.agentId === id);
-      const notOutgoing = own.filter((c) => !/outgoing/i.test(c.direction)).length;
+      const notOutgoing = own.filter(isIncoming).length;
       if (!busiest || notOutgoing > busiest.notOutgoing) busiest = { id, name, notOutgoing };
     }
     // Does the outgoing-only filter work? Only telling for someone who also has other calls.
@@ -315,12 +324,12 @@ export async function runProbe(): Promise<void> {
       const b = busiest;
       const d = await step(`${b.name}: today, outgoing only (${TYPE_PARAM})`, `/api/v1/cdr/?agent=${encodeURIComponent(b.id)}&start_date=${today}&end_date=${today}&${TYPE_PARAM}&size=200&page=1`, (d) => {
         const own = (rowsOf(d).map(toCall).filter(Boolean) as CdrCall[]).filter((c) => c.agentId === b.id);
-        const bad = own.filter((c) => !/outgoing/i.test(c.direction)).length;
-        return `${rowsOf(d).length} rows, ${own.length} this agent's, ${bad} of them not outgoing → the filter ${bad ? "is IGNORED" : own.length ? "WORKS" : "returned none of their calls"}`;
+        const bad = own.filter(isIncoming).length;
+        return `${rowsOf(d).length} rows, ${own.length} this agent's, ${bad} of them incoming → the filter ${bad ? "is IGNORED" : own.length ? "WORKS" : "returned none of their calls"}`;
       });
       if (d) {
         const own = (rowsOf(d).map(toCall).filter(Boolean) as CdrCall[]).filter((c) => c.agentId === b.id);
-        if (own.length) learned.typeFilter = { works: !own.some((c) => !/outgoing/i.test(c.direction)), at: Date.now() };
+        if (own.length) learned.typeFilter = { works: !own.some(isIncoming), at: Date.now() };
       }
     }
     // What an outgoing call looks like, and does the number search find it by the customer's number (dst)?
@@ -344,8 +353,8 @@ export async function runProbe(): Promise<void> {
 // ---- The checking job -------------------------------------------------------------
 
 const AGENT_PAGE_SIZE = Number(process.env.XONTEL_AGENT_PAGE_SIZE || 200);
-const QUIET_MAX_PAGES = 3;          // an employee-day longer than this is looked up survey by survey
-const TYPED_MAX_PAGES = 10;         // outgoing calls only: a day this long is still read whole
+const UNSORTED_MAX_PAGES = 3;       // rows not newest first: more than this is looked up survey by survey
+const SORTED_MAX_PAGES = 15;        // newest first: most pages read to get back to the start of the period
 const SEARCH_PAGE_SIZE = 50;
 const SEARCH_MAX_PAGES = 4;
 const CONCURRENCY = Math.max(1, Number(process.env.XONTEL_CONCURRENCY || 2));
@@ -387,40 +396,42 @@ async function cdrGetWithRetry(path: string, deadline: number): Promise<any> {
 }
 
 /**
- * One employee's own calls on one Kuwait day, or "busy" when there are too many to read in time.
- * Asks for outgoing calls only unless XonTel is known to ignore that filter; if the answer shows other
- * call types, the filter was ignored and those rows are simply all their calls.
+ * One employee's own calls between two Kuwait days, or "busy" when there are too many to read in time.
+ * XonTel ignores the dates with agent=, so pages come newest first from today and the reading stops
+ * once it is past the start of the period. Asks for outgoing calls only (TYPE_PARAM) unless XonTel is
+ * known to ignore that; incoming rows in the answer mean it was ignored — they are then all their calls.
  */
-export async function readAgentDay(agentId: string, day: string, deadline: number): Promise<{ calls: CdrCall[]; outOfRange: boolean } | "busy"> {
-  const busyKey = `${agentId}|${day}`;
+export async function readAgentRange(agentId: string, fromDay: string, toDay: string, deadline: number): Promise<CdrCall[] | "busy"> {
+  const startMs = Date.parse(`${fromDay}T00:00:00+03:00`), endMs = Date.parse(`${nextDay(toDay)}T00:00:00+03:00`);
+  const busyKey = `${agentId}|${fromDay}`;
   const busyAt = learned.busy.get(busyKey);
   if (busyAt && Date.now() - busyAt < LEARN_TTL_MS) return "busy";
   let typed = !(fresh(learned.typeFilter) && !learned.typeFilter!.works);
-  const out = new Map<string, CdrCall>();
-  for (let page = 1; page <= (typed && fresh(learned.typeFilter) ? TYPED_MAX_PAGES : QUIET_MAX_PAGES); page++) {
-    // start_date/end_date are the parameters XonTel honours (from_date/to_date are ignored, per QA).
-    const path = `/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${day}&end_date=${day}${typed ? "&" + TYPE_PARAM : ""}&size=${AGENT_PAGE_SIZE}&page=${page}`;
+  let out = new Map<string, CdrCall>();
+  let sorted = true, prev = Infinity;
+  const inRange = () => [...out.values()].filter((c) => c.ts >= startMs && c.ts < endMs);
+  for (let page = 1; page <= (sorted ? SORTED_MAX_PAGES : UNSORTED_MAX_PAGES); page++) {
+    // The dates are sent anyway, in case XonTel starts honouring them (start_date/end_date, per QA).
+    const path = `/api/v1/cdr/?agent=${encodeURIComponent(agentId)}&start_date=${fromDay}&end_date=${toDay}${typed ? "&" + TYPE_PARAM : ""}&size=${AGENT_PAGE_SIZE}&page=${page}`;
     let data: any;
     try { data = await cdrGetWithRetry(path, deadline); }
     catch (e: any) {
-      // XonTel refuses the filter outright: forget it and read this day again without it.
-      if (typed && page === 1 && Number(e?.status) === 400) { learned.typeFilter = { works: false, at: Date.now() }; typed = false; page = 0; continue; }
+      // XonTel refuses the filter outright: forget it and read again without it.
+      if (typed && page === 1 && Number(e?.status) === 400) { learned.typeFilter = { works: false, at: Date.now() }; typed = false; page = 0; out = new Map(); continue; }
       throw e;
     }
     const rows = rowsOf(data);
     const own: CdrCall[] = [];
     // XonTel also returns rows that belong to no agent (internal legs) — keep only theirs.
     for (const r of rows) { const c = toCall(r); if (c && c.agentId === String(agentId)) { own.push(c); out.set(c.id, c); noteSample(r, c); } }
+    for (const c of own) { if (c.ts > prev + ORDER_TOLERANCE_MS) sorted = false; prev = c.ts; }
     if (typed && own.length) {
-      if (own.some((c) => !/outgoing/i.test(c.direction))) { learned.typeFilter = { works: false, at: Date.now() }; typed = false; }
+      if (own.some(isIncoming)) { learned.typeFilter = { works: false, at: Date.now() }; typed = false; }
       else if (!fresh(learned.typeFilter)) learned.typeFilter = { works: true, at: Date.now() };
     }
-    if (rows.length < AGENT_PAGE_SIZE) {
-      const calls = [...out.values()];
-      const inDay = calls.filter((c) => kwDay(c.ts) === day);
-      // Rows came back but none on the asked day: the date filter was not applied — do not judge on them.
-      return { calls: inDay, outOfRange: calls.length > 0 && inDay.length === 0 };
-    }
+    if (rows.length < AGENT_PAGE_SIZE) return inRange();
+    // Newest first and already older than the period: everything after this is older still.
+    if (sorted && own.length && own[own.length - 1].ts < startMs) return inRange();
   }
   learned.busy.set(busyKey, Date.now());
   return "busy";
@@ -537,15 +548,11 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
       // Without a usable number there is nothing to look for — never a "no call".
       const items = g.items.filter((t) => { if (last8(t.s.customer_phone)) return true; skipped++; checkStatus.surveysDone++; return false; });
 
-      // 1) Their own calls, day by day, while the days are short enough to read.
-      let calls: CdrCall[] | null = [];
+      // 1) Their own calls over the period, newest first, while that is short enough to read.
+      let calls: CdrCall[] | null;
       try {
-        for (let day = fromDay; day <= toDay; day = nextDay(day)) {
-          const r = await readAgentDay(g.agentId, day, deadline);
-          if (r === "busy") { calls = null; break; }
-          if (r.outOfRange) { errors.push(`${g.name}: XonTel returned calls from other days (date filter not applied) — not judged`); checkStatus.surveysDone += items.length; return; }
-          calls.push(...r.calls);
-        }
+        const r = await readAgentRange(g.agentId, fromDay, toDay, deadline);
+        calls = r === "busy" ? null : r;
       } catch (e: any) {
         if (e instanceof BudgetSpent) { budgetHit = true; return; }
         failed(g, e); checkStatus.surveysDone += items.length; return;
@@ -564,13 +571,36 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
         const index = indexCalls(calls);
         for (const t of items) judged(t, judgeSurvey(index, { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: g.agentId }));
         checkStatus.surveysDone += items.length;
+        // Their own records hold no call for ANY of many reached claims. A wrong link looks exactly like
+        // this (their own records cannot show who else called), so before believing it, ask the number
+        // search who called a few of those customers.
+        const noCallRows = rows.filter((r) => r.reached && r.result === "no_call");
+        if (noCallRows.length >= OTHER_AGENT_MIN && !rows.some((r) => r.reached && r.result !== "no_call")) {
+          let works: boolean | null = null, caller: string | null = null;
+          try {
+            works = await searchWorks(searchCache, deadline);
+            if (works) for (const r of noCallRows.slice(0, 3)) {
+              const t = items.find((x) => x.s.id === r.assignment_id)!;
+              const key = last8(t.s.customer_phone)!, w = surveyWindow(t.s.status, t.completedMs);
+              const found = await searchCustomer(searchCache, key, kwDay(w.from), kwDay(Math.min(w.to, now)), deadline);
+              const j = found && judgeSurvey(new Map([[key, found]]), { phone: t.s.customer_phone, status: t.s.status, completedMs: t.completedMs, agentId: g.agentId });
+              if (j && j.relation === "other") { caller = j.xontel_agent || "another user"; break; }
+            }
+          } catch (e: any) { if (e instanceof BudgetSpent) budgetHit = true; works = null; }
+          if (works !== true || caller) {
+            warnings.push(caller
+              ? `${g.name}: none of ${noCallRows.length} reached surveys has a call from their XonTel user, but XonTel user "${caller}" called those customers — check the link; not judged`
+              : `${g.name}: none of ${noCallRows.length} reached surveys has a call from their XonTel user — check the link; not judged until that can be confirmed`);
+            return;
+          }
+        }
       } else {
-        // 2) Too many records a day: look each survey's customer up instead, reached claims first.
+        // 2) Too many records to page through: look each survey's customer up instead, reached claims first.
         let works: boolean | null;
         try { works = await searchWorks(searchCache, deadline); }
         catch (e: any) { if (e instanceof BudgetSpent) { budgetHit = true; return; } failed(g, e); checkStatus.surveysDone += items.length; return; }
         if (works !== true) {
-          errors.push(`${g.name}: too many XonTel records a day to read them all, and ${works === false ? "XonTel's number search does not find outgoing calls" : "the number search could not be tested yet (no outgoing call seen)"} — not judged`);
+          errors.push(`${g.name}: too many XonTel records to read them all, and ${works === false ? "XonTel's number search does not find outgoing calls" : "the number search could not be tested yet (no outgoing call seen)"} — not judged`);
           checkStatus.surveysDone += items.length;
           return;
         }
