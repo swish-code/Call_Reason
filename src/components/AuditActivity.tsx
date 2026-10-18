@@ -55,7 +55,7 @@ const label = (action: string) => LABELS.find(([re]) => re.test(action))?.[1] ||
 
 const recordOf = (r: Row): string => {
   if (r.task_no != null || r.survey_phone) {
-    return [r.task_no != null ? `Task #${r.task_no}` : "", r.survey_phone, r.survey_order, r.survey_brand, r.survey_status ? `(${r.survey_status})` : ""].filter(Boolean).join(" · ");
+    return [r.task_no != null ? `Task #${r.task_no}` : "", r.survey_phone, r.survey_order, r.survey_brand, r.survey_status ? `· now: ${r.survey_status}` : ""].filter(Boolean).join(" · ");
   }
   if (r.rating_order || r.rating_phone) {
     return [r.rating_order, r.rating_phone, r.rating_brand, r.rating != null ? `${r.rating}★` : ""].filter(Boolean).join(" · ");
@@ -63,15 +63,103 @@ const recordOf = (r: Row): string => {
   return r.related_ref || "";
 };
 
-const changeOf = (r: Row): string => {
-  if (r.previous_value || r.new_value) return `${r.previous_value || "—"}  →  ${r.new_value || "—"}`;
-  return "";
+// ---- Plain-language sentence for each action (the raw request text stays in the tooltip) ----
+const pretty = (v: string) => { const t = v.replace(/_/g, " ").trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
+const OUTCOME: Record<string, string> = { busy: "line busy", no_answer: "no answer", wrong_number: "wrong number", declined: "customer declined", answered: "customer answered", switched_off: "phone switched off", voicemail: "voicemail" };
+const kv = (details: string | null, key: string): string => {
+  const m = String(details || "").match(new RegExp("(?:^|, )" + key + "=([^,]*)"));
+  return m ? m[1].trim() : "";
 };
+
+export function describe(r: Row, names: Record<string, string>): string {
+  const d = r.details || "";
+  const act = r.action;
+  const nm = (v: string) => names[v] || v;
+  if (/^GET \/api\/surveys\/assignments\//.test(act)) return "Looked at the survey details.";
+  if (/^GET \/api\/ratings\//.test(act)) return "Opened the review to look at it.";
+  if (/\/work\/start$/.test(act)) return "Started working on this survey.";
+  if (/\/surveys\/work\/[^/]+\/end$/.test(act)) {
+    const reason = kv(d, "reason");
+    return reason === "saved" ? "Survey saved — the timer stopped."
+      : reason === "closed" ? "Left the survey screen."
+      : reason === "idle" ? "Timer stopped — no activity for a while."
+      : reason ? `Timer stopped (${reason.replace(/_/g, " ")}).` : "Timer stopped.";
+  }
+  if (/\/surveys\/work\/[^/]+\/beat$/.test(act)) return "Automatic timer signal while the survey was open.";
+  if (/\/assignments\/[^/]+\/response$/.test(act)) {
+    const reach = kv(d, "reachability"), outcome = kv(d, "outcome"), action = kv(d, "action_type");
+    if (reach === "not_reached") return "Could not reach the customer — saved as not reached.";
+    if (outcome === "refused") return "Reached the customer, who refused to take the survey.";
+    if (outcome === "not_interested") return "Reached the customer, who was not interested.";
+    return "Reached the customer and completed the survey" + (action === "complaint" ? " — the customer raised a complaint." : " — no complaint.");
+  }
+  if (/\/attempts?$/.test(act)) {
+    const o = kv(d, "outcome"), note = kv(d, "note");
+    return `Logged a call attempt: ${OUTCOME[o] || pretty(o || "no result")}` + (note ? ` (note: "${note}")` : "") + ".";
+  }
+  if (/\/assignments\/[^/]+\/assign$/.test(act)) {
+    if (r.new_value || r.previous_value) return `Moved the survey from ${r.previous_value || "nobody"} to ${r.new_value || "nobody"}.`;
+    const to = kv(d, "agent_id");
+    return to ? `Assigned the survey to ${nm(to)}.` : "Removed the person assigned to the survey.";
+  }
+  if (/^PATCH \/api\/surveys\/assignments\//.test(act)) {
+    const st = kv(d, "status"), ac = kv(d, "action_type"), re = kv(d, "reachability");
+    const parts: string[] = [];
+    if (st === "pending") parts.push("Sent the survey back to Pending so it can be done again");
+    else if (st) parts.push(`Changed the survey result to "${pretty(st)}"`);
+    if (ac === "complaint") parts.push("marked it as a complaint");
+    if (ac === "no_action") parts.push("marked it as no complaint");
+    if (re) parts.push(`set reachability to ${pretty(re).toLowerCase()}`);
+    const s = parts.join(", ") || "Edited the survey";
+    return s.charAt(0).toUpperCase() + s.slice(1) + ".";
+  }
+  if (/\/surveys\/campaigns\/[^/]+\/assign$/.test(act)) return `Gave ${kv(d, "count") || "some"} waiting numbers to ${nm(kv(d, "agent_id"))}.`;
+  if (/^POST \/api\/survey-campaigns$/.test(act)) {
+    const t = kv(d, "template_id"), days = kv(d, "duration_days");
+    return `Created a campaign: ${pretty(kv(d, "survey_type") || "survey")}, ${kv(d, "requested_count")} numbers`
+      + (kv(d, "brand_id") ? `, brand ${nm(kv(d, "brand_id"))}` : "") + (t ? `, template "${nm(t)}"` : "") + (days && days !== "0" ? `, ${days} days` : "") + ".";
+  }
+  if (/^PATCH \/api\/survey-campaigns\//.test(act)) return `Set the campaign to "${pretty(kv(d, "status") || "updated")}".`;
+  if (/\/survey-campaigns\/[^/]+\/numbers$/.test(act)) return "Uploaded an Excel file of numbers to a campaign.";
+  if (/^POST \/api\/survey-templates$/.test(act)) return "Created a survey template.";
+  if (/^PUT \/api\/survey-templates\//.test(act)) return "Edited a survey template.";
+  if (/\/survey-records\/.*upload$/.test(act)) return "Uploaded an Excel file of survey data.";
+  if (/\/survey-records\/delete$/.test(act)) return "Deleted survey data.";
+  if (/\/survey-records\/dedupe$/.test(act)) return "Removed duplicate survey data.";
+  if (/call-verification\/run$/.test(act)) return "Started the call check against XonTel.";
+  if (/call-verification\/probe$/.test(act)) return "Tested the XonTel connection.";
+  if (/XonTel user/.test(act) || /call-verification\/links/.test(act)) {
+    const un = /^Unlink/.test(act);
+    const m = d.match(/^(.*) = (.*) \(\d+\)$/);
+    return m ? `${un ? "Unlinked" : "Linked"} ${m[1]} ${un ? "from" : "to"} XonTel user "${m[2]}".` : (un ? "Removed a XonTel link." : "Changed a XonTel link.");
+  }
+  if (/^POST \/api\/ratings\/upload$/.test(act)) {
+    const mode = kv(d, "mode");
+    return "Uploaded an Excel file of reviews" + (mode === "overwrite" ? " (overwriting existing ones)." : mode === "skip" ? " (skipping ones already uploaded)." : ".");
+  }
+  if (/^PATCH \/api\/ratings\//.test(act)) {
+    const st = kv(d, "action_status"), note = kv(d, "action_note");
+    const parts: string[] = [];
+    if (st) parts.push(`Set the review status to "${pretty(st)}"`);
+    if (note) parts.push(`with the note "${note.length > 80 ? note.slice(0, 80) + "…" : note}"`);
+    if (/customer_(phone|name)=/.test(d) && !st) parts.push("Edited the customer's name / phone");
+    if (kv(d, "assigned_agent_id")) parts.push(`assigned it to ${nm(kv(d, "assigned_agent_id"))}`);
+    return (parts.join(" ") || "Updated the review") + ".";
+  }
+  // "ids=[...]" is cut short in the log, so a long list is shown as "N+".
+  const reviews = () => { const n = (d.match(/rat-[\d-]+/g) || []).length; return /…/.test(d.split(", ")[0] || "") ? `${n}+ reviews` : `${n} review${n === 1 ? "" : "s"}`; };
+  if (/^POST \/api\/ratings\/assign$/.test(act)) { const to = kv(d, "assigned_agent_id"); return to && to !== "null" ? `Assigned ${reviews()} to ${nm(to)}.` : `Removed the assignee from ${reviews()}.`; }
+  if (/^POST \/api\/ratings\/bulk-status$/.test(act)) return `Set ${reviews()} to "${pretty(kv(d, "action_status") || "a new status")}".`;
+  if (/^POST \/api\/ratings\/delete$/.test(act)) return "Deleted reviews.";
+  if (/backfill/.test(act)) return "Filled in missing customer phones from the order data.";
+  return "";
+}
 
 export default function AuditActivity({ area }: { area: Area }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [operators, setOperators] = useState<{ operator_id: string; operator_name: string }[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [from, setFrom] = useState("");
@@ -96,7 +184,7 @@ export default function AuditActivity({ area }: { area: Area }) {
       const res = await query(0, PAGE);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to load the log.");
       const d = await res.json();
-      setRows(d.rows); setTotal(d.total); setOperators(d.operators);
+      setRows(d.rows); setTotal(d.total); setOperators(d.operators); setNames(d.names || {});
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   }, [query]);
   useEffect(() => { load(); }, [load]);
@@ -107,7 +195,7 @@ export default function AuditActivity({ area }: { area: Area }) {
       const res = await query(rows.length, PAGE);
       if (!res.ok) throw new Error("Failed to load more.");
       const d = await res.json();
-      setRows((prev) => [...prev, ...d.rows]); setTotal(d.total);
+      setRows((prev) => [...prev, ...d.rows]); setTotal(d.total); setNames((prev) => ({ ...prev, ...(d.names || {}) }));
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   };
 
@@ -118,8 +206,8 @@ export default function AuditActivity({ area }: { area: Area }) {
       if (!res.ok) throw new Error("Export failed.");
       const d = await res.json();
       downloadCSV(
-        ["Date & Time (Kuwait)", "Who", "Role", "Action", "Record", "Change", "Details", "IP"],
-        (d.rows as Row[]).map((r) => [fmt(r.timestamp), r.operator_name || "", r.operator_role || "", label(r.action), recordOf(r), changeOf(r), r.details || "", r.ip_address || ""]),
+        ["Date & Time (Kuwait)", "Who", "Role", "Action", "Record", "What happened", "IP"],
+        (d.rows as Row[]).map((r) => [fmt(r.timestamp), r.operator_name || "", r.operator_role || "", label(r.action), recordOf(r), describe(r, { ...names, ...(d.names || {}) }), r.ip_address || ""]),
         `${area}_activity_${new Date().toISOString().slice(0, 10)}`,
       );
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
@@ -176,8 +264,7 @@ export default function AuditActivity({ area }: { area: Area }) {
                   <th className="text-left py-3 px-4">Who</th>
                   <th className="text-left py-3 px-4">Action</th>
                   <th className="text-left py-3 px-4">Record</th>
-                  <th className="text-left py-3 px-4">Change</th>
-                  <th className="text-left py-3 px-4">Details</th>
+                  <th className="text-left py-3 px-4">What happened</th>
                 </tr>
               </thead>
               <tbody>
@@ -187,8 +274,7 @@ export default function AuditActivity({ area }: { area: Area }) {
                     <td className="py-2.5 px-4 whitespace-nowrap"><span className="font-bold text-[var(--heading)]">{r.operator_name || "—"}</span>{r.operator_role && <span className="text-[var(--muted)]"> · {r.operator_role}</span>}</td>
                     <td className="py-2.5 px-4 font-bold text-[var(--heading)]" title={r.action}>{label(r.action)}</td>
                     <td className="py-2.5 px-4">{recordOf(r) || <span className="text-[var(--muted)]">—</span>}</td>
-                    <td className="py-2.5 px-4 whitespace-nowrap text-amber-400">{changeOf(r)}</td>
-                    <td className="py-2.5 px-4 text-[var(--muted)] break-words max-w-[28rem]">{r.details}</td>
+                    <td className="py-2.5 px-4 text-[var(--text)] max-w-[34rem]" title={r.details || r.action}>{describe(r, names) || <span className="text-[var(--muted)]">—</span>}</td>
                   </tr>
                 ))}
               </tbody>

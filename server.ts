@@ -2882,7 +2882,16 @@ app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncH
     DB.query(`SELECT count(*)::int AS n ${from}`, vals),
     DB.query(`SELECT DISTINCT l.operator_id, l.operator_name FROM audit_logs l WHERE ${area.where} AND l.operator_name IS NOT NULL ORDER BY 2`, []),
   ]);
-  res.json({ rows, total: total[0]?.n ?? 0, operators });
+  // Details mention people, brands and templates by id — send their names so the page can write plain sentences.
+  const idsIn = (re: RegExp) => [...new Set(rows.flatMap((r: any) => String(r.details || "").match(re) || []))];
+  const [users, brands, templates] = await Promise.all([
+    DB.query(`SELECT id, full_name AS name FROM users WHERE id = ANY($1)`, [idsIn(/user-\d+/g)]),
+    DB.query(`SELECT id, brand_name AS name FROM brands WHERE id = ANY($1)`, [idsIn(/\bb-\d+/g)]),
+    DB.query(`SELECT id, name FROM survey_templates WHERE id = ANY($1)`, [idsIn(/\bst-[\d-]+/g)]),
+  ]);
+  const names: Record<string, string> = {};
+  for (const r of [...users, ...brands, ...templates]) names[r.id] = r.name;
+  res.json({ rows, total: total[0]?.n ?? 0, operators, names });
 }));
 
 app.get("/api/audit/uploads", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
