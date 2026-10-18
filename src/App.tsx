@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
 import { User, UserRole } from "./types.js";
 import UsersManagement from "./components/UsersManagement.tsx";
-import AuditUploads from "./components/AuditUploads.tsx";
+import AuditPage from "./components/AuditPage.tsx";
 import Configuration from "./components/Configuration.tsx";
 import OpsLogForm from "./components/OpsLogForm.tsx";
 import OpsLogsList from "./components/OpsLogsList.tsx";
@@ -601,7 +601,7 @@ export default function App() {
               {activePage === "performance" && "Team Performance"}
               {activePage === "teamleaderkpi" && "Team Leader KPI"}
               {activePage === "users" && "User and Access Role Management"}
-              {activePage === "audit" && "Upload Audit"}
+              {activePage === "audit" && "Audit"}
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
@@ -708,7 +708,7 @@ export default function App() {
             <UsersManagement currentUser={currentUser} />
           )}
           {activePage === "audit" && (isAdmin || isSupervisor) && (
-            <AuditUploads currentUser={currentUser} />
+            <AuditPage currentUser={currentUser} />
           )}
           {activePage === "configuration" && currentUser.role !== "marketing" && !isOpsRole && (
             <Configuration currentUser={currentUser} />

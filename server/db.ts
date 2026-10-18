@@ -911,6 +911,12 @@ export class DB {
   // ----------------------------------------------------
   // Audit Logs methods
   // ----------------------------------------------------
+  /** Read-only query helper for report-style endpoints that build their own SQL. */
+  static async query(sql: string, values: any[] = []): Promise<any[]> {
+    const { rows } = await pool.query(sql, values);
+    return rows;
+  }
+
   static async getAuditLogs(): Promise<AuditLog[]> {
     const { rows } = await pool.query<AuditLog>("SELECT * FROM audit_logs ORDER BY timestamp DESC");
     return rows;

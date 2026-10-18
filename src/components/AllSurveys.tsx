@@ -413,7 +413,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                         : <span className="text-[var(--muted)]">—</span>}
                     </td>
                     <td className="p-4">
-                      {canAssign ? (
+                      {canAssign && r.status === 'pending' ? (
                         <select
                           value={r.assigned_agent_id || ""}
                           disabled={savingId === r.id}
@@ -426,7 +426,10 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                         </select>
                       ) : (
                         r.agent_name
-                          ? <span className="inline-flex items-center gap-1 px-2 py-1 bg-violet-500/10 text-violet-400 rounded-lg font-bold"><Users className="w-3 h-3" />{r.agent_name}</span>
+                          ? <span
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-violet-500/10 text-violet-400 rounded-lg font-bold"
+                              title={canAssign ? "Locked — only Pending surveys can be assigned. Send it back to Pending to change it." : undefined}
+                            ><Users className="w-3 h-3" />{r.agent_name}</span>
                           : <span className="text-[var(--muted)]">—</span>
                       )}
                     </td>

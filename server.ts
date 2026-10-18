@@ -56,6 +56,11 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 // are not "actions"), and failed requests (4xx/5xx) are not logged (nothing
 // was actually written).
 const AUDIT_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// Opening a single survey or review is a click worth keeping too, although it only reads.
+const AUDIT_VIEW_PATHS = [
+  /^\/api\/ratings\/(?!template$|uploaded-count$)[^/]+$/,
+  /^\/api\/surveys\/assignments\/[^/]+$/,
+];
 const SENSITIVE_BODY_KEYS = new Set([
   "password", "password_hash", "current_password", "new_password", "token",
 ]);
@@ -84,7 +89,8 @@ function categoryFromPath(p: string): string {
 app.use((req: any, res: any, next: any) => {
   res.on("finish", () => {
     try {
-      if (!AUDIT_METHODS.has(req.method)) return;
+      const isView = req.method === "GET" && AUDIT_VIEW_PATHS.some((re) => re.test(req.path));
+      if (!AUDIT_METHODS.has(req.method) && !isView) return;
       if (res.statusCode >= 400) return; // failed writes changed nothing
       if (!req.user) return; // unauthenticated route (e.g. login itself)
       void DB.addAuditLog({
@@ -97,6 +103,8 @@ app.use((req: any, res: any, next: any) => {
         details: summarizeBody(req.body),
         related_ref: req.params?.id || undefined,
         ip_address: req.ip,
+        // A route can attach what it changed: { details?, previous_value?, new_value? }.
+        ...(req.auditExtra || {}),
       }).catch(() => {});
     } catch { /* logging must never affect the real request */ }
   });
@@ -2835,6 +2843,48 @@ app.get("/api/audit/uploads/:id/issues", authenticateJWT, requireAdminOrSupervis
 
 // Audit page — every file upload (ratings, survey numbers, survey records) with its counts
 // and, per batch, how many of its rows have since been completed.
+// Full action log for one area of the Audit page: every click that saved or opened something.
+const AUDIT_AREAS: Record<string, { where: string }> = {
+  surveys: { where: `(l.category IN ('Surveys','Survey Campaigns','Survey Templates','Survey Records') OR l.action ILIKE '%/api/survey%')` },
+  ratings: { where: `(l.category = 'Ratings' OR l.action ILIKE '%/api/ratings%' OR l.action ILIKE 'ratings.%')` },
+};
+app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
+  const area = AUDIT_AREAS[String(req.query.area || "")];
+  if (!area) return res.status(400).json({ error: "Unknown audit area." });
+  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? String(req.query[k]) : "");
+  const kwToUtc = (dateStr: string, endOfDay: boolean) => {
+    const [y, mo, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0) - KW_OFFSET_MS).toISOString();
+  };
+  const where: string[] = [area.where], vals: any[] = [];
+  if (q("from")) { vals.push(kwToUtc(q("from"), false)); where.push(`l.timestamp::timestamptz >= ${vals.length}`); }
+  if (q("to")) { vals.push(kwToUtc(q("to"), true)); where.push(`l.timestamp::timestamptz <= ${vals.length}`); }
+  if (q("operator")) { vals.push(q("operator")); where.push(`l.operator_id = ${vals.length}`); }
+  if (q("search")) {
+    vals.push("%" + q("search") + "%");
+    where.push(`(l.details ILIKE ${vals.length} OR l.related_ref ILIKE ${vals.length} OR l.action ILIKE ${vals.length} OR sa.customer_phone ILIKE ${vals.length} OR sa.order_id ILIKE ${vals.length} OR r.order_id ILIKE ${vals.length} OR r.customer_phone ILIKE ${vals.length} OR sa.task_no::text ILIKE ${vals.length})`);
+  }
+  // The timer's heartbeat (every 20 s while a survey is open) is not a click — hidden unless asked for.
+  if (q("heartbeats") !== "1") where.push(`l.action NOT ILIKE '%/beat'`);
+  const from = `FROM audit_logs l
+      LEFT JOIN survey_assignments sa ON sa.id = l.related_ref
+      LEFT JOIN brands sb ON sb.id = sa.brand_id
+      LEFT JOIN ratings r ON r.id = l.related_ref
+      LEFT JOIN brands rb ON rb.id = r.brand_id
+     WHERE ${where.join(" AND ")}`;
+  const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  const [rows, total, operators] = await Promise.all([
+    DB.query(`SELECT l.id, l.timestamp, l.operator_id, l.operator_name, l.operator_role, l.action, l.details, l.related_ref, l.previous_value, l.new_value, l.ip_address,
+             sa.task_no, sa.customer_phone AS survey_phone, sa.order_id AS survey_order, sa.status AS survey_status, sb.brand_name AS survey_brand,
+             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand
+        ${from} ORDER BY l.timestamp::timestamptz DESC LIMIT ${limit} OFFSET ${offset}`, vals),
+    DB.query(`SELECT count(*)::int AS n ${from}`, vals),
+    DB.query(`SELECT DISTINCT l.operator_id, l.operator_name FROM audit_logs l WHERE ${area.where} AND l.operator_name IS NOT NULL ORDER BY 2`, []),
+  ]);
+  res.json({ rows, total: total[0]?.n ?? 0, operators });
+}));
+
 app.get("/api/audit/uploads", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
   const kwToUtc = (dateStr: string, endOfDay: boolean) => {
     const [y, mo, d] = dateStr.split("-").map(Number);
@@ -3617,8 +3667,15 @@ app.post("/api/surveys/assignments/:id/assign", authenticateJWT, asyncHandler(as
   if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
+  // Only a survey still waiting to be done can change hands. Once it was worked on, the person who did it
+  // owns it — reports count surveys by their assigned agent, so moving a finished one rewrites history.
+  if (a.status !== "pending") {
+    return res.status(409).json({ error: `This survey is already "${a.status}" — only Pending surveys can be assigned. To hand it to someone else, send it back to Pending first.` });
+  }
   const { agent_id } = req.body;
-  res.json(await DB.assignSurveyAssignment(req.params.id, agent_id || null));
+  const updated = await DB.assignSurveyAssignment(req.params.id, agent_id || null);
+  req.auditExtra = { details: `task ${a.task_no ?? "-"}, ${a.customer_phone || "-"}`, previous_value: a.agent_name || "(unassigned)", new_value: updated?.agent_name || "(unassigned)" };
+  res.json(updated);
 }));
 
 // Team-leader edit of a survey's outcome: change status/action, or send a
