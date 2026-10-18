@@ -34,6 +34,8 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [agentFilter, setAgentFilter] = useState<string>("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [editLog, setEditLog] = useState<OpsLog | null>(null);
   // Owner progress update (status + time) for Open/In Progress tasks
   const [progressLog, setProgressLog] = useState<OpsLog | null>(null);
@@ -111,6 +113,12 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
     if (typeFilter && l.log_type !== typeFilter) return false;
     if (statusFilter && l.status !== statusFilter) return false;
     if (agentFilter && l.agent_name !== agentFilter) return false;
+    // Dates are Kuwait days (UTC+3), the same clock the Date & Time column shows.
+    if (dateFrom || dateTo) {
+      const day = new Date(new Date(l.created_at).getTime() + 3 * 3600_000).toISOString().slice(0, 10);
+      if (dateFrom && day < dateFrom) return false;
+      if (dateTo && day > dateTo) return false;
+    }
     if (q) {
       const hay = [l.activity_type, l.agent_name, l.branch, l.brand, l.order_number, l.customer_name, l.complaint_id, l.target_agent_name, l.notes].map((x) => (x || "").toLowerCase()).join(" ");
       if (!hay.includes(q)) return false;
@@ -121,7 +129,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
   // Pagination over the filtered set
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   useEffect(() => { setPage(1); setAgentFilter(""); }, [typeFilter]); // reset agent when type changes
-  useEffect(() => { setPage(1); }, [search, statusFilter, agentFilter]);
+  useEffect(() => { setPage(1); }, [search, statusFilter, agentFilter, dateFrom, dateTo]);
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]); // clamp (e.g. after delete)
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = filtered.slice(pageStart, pageStart + PAGE_SIZE);
@@ -153,7 +161,7 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
       l.calls_reviewed ?? "", avgPerCall(l) !== null ? avgPerCall(l)!.toFixed(1) : "",
       l.agent_name || "", l.branch || "", l.brand || "", l.order_number || "", l.customer_name || "", l.complaint_id || "", l.target_agent_name || "", (l.activity_type === "Survey" ? surveyOutcome(l.notes)?.label : "") || "", (surveyOutcome(l.notes)?.plain ?? (l.notes || l.action_taken)) || "",
     ]);
-    downloadCSV(headers, rows, `Logs_${new Date().toISOString().split("T")[0]}`);
+    downloadCSV(headers, rows, dateFrom || dateTo ? `Logs_${dateFrom || "start"}_to_${dateTo || "today"}` : `Logs_${new Date().toISOString().split("T")[0]}`);
   };
 
   const title = isAgent ? "My Logs" : currentUser.role === "admin" ? "All Logs" : "Team Logs";
@@ -201,6 +209,15 @@ export default function OpsLogsList({ currentUser }: OpsLogsListProps) {
           <option value="">All Statuses</option>
           {["Open", "In Progress", "Completed", "Solved", "Not Solved", "Waiting Feedback"].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        <label className="flex items-center gap-2 text-[11px] font-bold text-[var(--muted)]">From
+          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className="px-3 py-2.5 bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        </label>
+        <label className="flex items-center gap-2 text-[11px] font-bold text-[var(--muted)]">To
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} className="px-3 py-2.5 bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] rounded-2xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+        </label>
+        {(dateFrom || dateTo) && (
+          <button onClick={() => { setDateFrom(""); setDateTo(""); }} className="px-3 py-2.5 rounded-2xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)] border border-[var(--border)]">Clear dates</button>
+        )}
         {!isAgent && agentNames.length > 0 && (
           <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)} className="px-3 py-3 bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] rounded-2xl text-xs font-bold [&>option]:bg-[var(--surface)]">
             <option value="">All Agents</option>
