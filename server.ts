@@ -2877,7 +2877,8 @@ app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncH
   const [rows, total, operators] = await Promise.all([
     DB.query(`SELECT l.id, l.timestamp, l.operator_id, l.operator_name, l.operator_role, l.action, l.details, l.related_ref, l.previous_value, l.new_value, l.ip_address,
              sa.task_no, sa.customer_phone AS survey_phone, sa.order_id AS survey_order, sa.status AS survey_status, sb.brand_name AS survey_brand,
-             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand
+             sa.customer_name AS survey_customer, sa.branch AS survey_branch, sa.order_date AS survey_order_date, sa.item_name AS survey_item, sa.platform_label AS survey_platform,
+             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand, r.customer_name AS rating_customer, r.branch AS rating_branch, r.order_date AS rating_order_date, r.review_text AS rating_text
         ${from} ORDER BY l.timestamp::timestamptz DESC LIMIT ${limit} OFFSET ${offset}`, vals),
     DB.query(`SELECT count(*)::int AS n ${from}`, vals),
     DB.query(`SELECT DISTINCT l.operator_id, l.operator_name FROM audit_logs l WHERE ${area.where} AND l.operator_name IS NOT NULL ORDER BY 2`, []),

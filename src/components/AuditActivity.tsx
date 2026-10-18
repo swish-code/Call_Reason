@@ -13,6 +13,8 @@ interface Row {
   action: string; details: string | null; related_ref: string | null; previous_value: string | null; new_value: string | null; ip_address: string | null;
   task_no: number | null; survey_phone: string | null; survey_order: string | null; survey_status: string | null; survey_brand: string | null;
   rating_order: string | null; rating_phone: string | null; rating: number | null; rating_brand: string | null;
+  survey_customer: string | null; survey_branch: string | null; survey_order_date: string | null; survey_item: string | null; survey_platform: string | null;
+  rating_customer: string | null; rating_branch: string | null; rating_order_date: string | null; rating_text: string | null;
 }
 
 const KW_MS = 3 * 3600_000;
@@ -53,15 +55,28 @@ const LABELS: [RegExp, string][] = [
 ];
 const label = (action: string) => LABELS.find(([re]) => re.test(action))?.[1] || action;
 
-const recordOf = (r: Row): string => {
-  if (r.task_no != null || r.survey_phone) {
-    return [r.task_no != null ? `Task #${r.task_no}` : "", r.survey_phone, r.survey_order, r.survey_brand, r.survey_status ? `· now: ${r.survey_status}` : ""].filter(Boolean).join(" · ");
+// Which order / customer a row is about, as labelled lines (so "Order", "Customer", "Task" are never guessed).
+const recordLines = (r: Row): string[] => {
+  const kind = r.task_no != null || r.survey_phone || r.survey_order ? "survey" : r.rating_order || r.rating_phone ? "rating" : "";
+  if (kind === "survey") {
+    return [
+      [r.survey_order ? `Order ${r.survey_order}` : "", r.survey_brand, r.survey_platform].filter(Boolean).join(" · "),
+      [r.survey_customer ? `Customer: ${r.survey_customer}` : "Customer", r.survey_phone].filter(Boolean).join(" · "),
+      [r.survey_branch ? `Branch: ${r.survey_branch}` : "", r.survey_order_date ? `Order date: ${String(r.survey_order_date).slice(0, 10)}` : ""].filter(Boolean).join(" · "),
+      r.survey_item ? `Item: ${r.survey_item.length > 70 ? r.survey_item.slice(0, 70) + "…" : r.survey_item}` : "",
+      [r.task_no != null ? `Survey task #${r.task_no}` : "", r.survey_status ? `status now: ${r.survey_status}` : ""].filter(Boolean).join(" · "),
+    ].filter(Boolean);
   }
-  if (r.rating_order || r.rating_phone) {
-    return [r.rating_order, r.rating_phone, r.rating_brand, r.rating != null ? `${r.rating}★` : ""].filter(Boolean).join(" · ");
+  if (kind === "rating") {
+    return [
+      [r.rating_order ? `Order ${r.rating_order}` : "", r.rating_brand, r.rating != null ? `rated ${r.rating}★` : ""].filter(Boolean).join(" · "),
+      [r.rating_customer ? `Customer: ${r.rating_customer}` : "", r.rating_phone].filter(Boolean).join(" · "),
+      [r.rating_branch ? `Branch: ${r.rating_branch}` : "", r.rating_order_date ? `Order date: ${String(r.rating_order_date).slice(0, 10)}` : ""].filter(Boolean).join(" · "),
+    ].filter(Boolean);
   }
-  return r.related_ref || "";
+  return r.related_ref ? [`Record ${r.related_ref}`] : [];
 };
+const recordOf = (r: Row): string => recordLines(r).join(" | ");
 
 // ---- Plain-language sentence for each action (the raw request text stays in the tooltip) ----
 const pretty = (v: string) => { const t = v.replace(/_/g, " ").trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
@@ -273,7 +288,7 @@ export default function AuditActivity({ area }: { area: Area }) {
                     <td className="py-2.5 px-4 font-mono whitespace-nowrap">{fmt(r.timestamp)}</td>
                     <td className="py-2.5 px-4 whitespace-nowrap"><span className="font-bold text-[var(--heading)]">{r.operator_name || "—"}</span>{r.operator_role && <span className="text-[var(--muted)]"> · {r.operator_role}</span>}</td>
                     <td className="py-2.5 px-4 font-bold text-[var(--heading)]" title={r.action}>{label(r.action)}</td>
-                    <td className="py-2.5 px-4">{recordOf(r) || <span className="text-[var(--muted)]">—</span>}</td>
+                    <td className="py-2.5 px-4 min-w-[16rem]">{(() => { const L = recordLines(r); return L.length ? L.map((t, i) => <div key={i} className={i === 0 ? "font-bold text-[var(--heading)]" : "text-[var(--muted)]"}>{t}</div>) : <span className="text-[var(--muted)]">—</span>; })()}</td>
                     <td className="py-2.5 px-4 text-[var(--text)] max-w-[34rem]" title={r.details || r.action}>{describe(r, names) || <span className="text-[var(--muted)]">—</span>}</td>
                   </tr>
                 ))}
