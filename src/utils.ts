@@ -22,7 +22,8 @@ export function downloadCSV(headers: string[], rows: string[][], filename: strin
     ...rows.map((row) =>
       row
         .map((val) => {
-          const cleanVal = (val || "").replace(/"/g, '""');
+          // A cell can be a number (e.g. calls reviewed) — String() first, or .replace throws and nothing downloads.
+          const cleanVal = String(val ?? "").replace(/"/g, '""');
           return `"${cleanVal}"`;
         })
         .join(",")
