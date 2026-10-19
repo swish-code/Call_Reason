@@ -3526,6 +3526,23 @@ app.get("/api/surveys/live-dashboard", authenticateJWT, asyncHandler(async (req:
   res.json(await DB.getLiveSurveyDashboard(kwDayToUtc(qs(req.query.from), false) ?? null, kwDayToUtc(qs(req.query.to), true) ?? null));
 }));
 
+// Charts for the Surveys Dashboard (filters: Kuwait day range + brand). Same audience as the live dashboard.
+app.get("/api/surveys/analytics", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "agent" || req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
+    return res.status(403).json({ error: "Access denied." });
+  }
+  const isDay = (v: any) => typeof v === "string" && /^d{4}-d{2}-d{2}$/.test(v);
+  const kwToday = new Date(Date.now() + KW_OFFSET_MS).toISOString().slice(0, 10);
+  const from = isDay(req.query.from) ? String(req.query.from) : kwToday;
+  const to = isDay(req.query.to) ? String(req.query.to) : from;
+  if (from > to) return res.status(400).json({ error: "From is after To." });
+  // The monthly charts end at the month of "to" and look back 11 months; the daily ones show that month.
+  const monthTo = to.slice(0, 7) + "-01";
+  const monthsFrom = new Date(Date.UTC(Number(monthTo.slice(0, 4)), Number(monthTo.slice(5, 7)) - 1 - 11, 1)).toISOString().slice(0, 10);
+  const brandId = typeof req.query.brand_id === "string" && req.query.brand_id ? req.query.brand_id : null;
+  res.json({ from, to, month: monthTo.slice(0, 7), ...(await DB.getSurveyAnalytics({ from, to, brandId, monthsFrom, monthFrom: monthTo, monthTo })) });
+}));
+
 // ---- Call verification (XonTel) — admin, supervisor and team leader ONLY ----
 // For each finished survey: was the customer really called? (server/xontel.ts). Agents, managers,
 // marketing and the Operations roles never see any of it.

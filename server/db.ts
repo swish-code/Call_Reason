@@ -2733,6 +2733,50 @@ export class DB {
    *    just the system's own copy of a finished call), counted by upload time.
    * from/to are UTC instants (Kuwait-day bounds); null means no bound.
    */
+  /**
+   * Charts for the Surveys Dashboard. Counts follow the UPLOAD day (Kuwait) of each survey number, so every
+   * percentage has the uploaded total as its denominator:
+   *   reached = successful · refused = refused + not_interested · not reached = unreachable + declined ·
+   *   waiting = pending + in_progress (uploaded, not finished yet).
+   * Survey kinds come from the campaign: daily_normal = normal orders, marketing_item = new item, the rest = other marketing.
+   * from/to are Kuwait days (YYYY-MM-DD) for the totals, per-brand days and answers; monthsFrom..monthTo (first days of
+   * months) is the window of the monthly series.
+   */
+  static async getSurveyAnalytics(f: { from: string; to: string; brandId: string | null; monthsFrom: string; monthFrom: string; monthTo: string }): Promise<any> {
+    const DAY = `(a.created_at AT TIME ZONE 'Asia/Kuwait')::date`;
+    const COUNTS = `
+      count(*)::int AS uploaded,
+      count(*) FILTER (WHERE a.status = 'successful')::int AS reached,
+      count(*) FILTER (WHERE a.status IN ('refused','not_interested'))::int AS refused,
+      count(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
+      count(*) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS waiting,
+      count(*) FILTER (WHERE c.survey_type = 'daily_normal')::int AS normal,
+      count(*) FILTER (WHERE c.survey_type = 'marketing_item')::int AS new_item,
+      count(*) FILTER (WHERE c.survey_type IS DISTINCT FROM 'daily_normal' AND c.survey_type IS DISTINCT FROM 'marketing_item')::int AS other`;
+    const FROM = `FROM survey_assignments a LEFT JOIN survey_campaigns c ON c.id = a.campaign_id`;
+    const brand = `($1::text IS NULL OR a.brand_id = $1)`;
+    const [kpi, months, days, brandDays, brands, answers] = await Promise.all([
+      pool.query(`SELECT ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} BETWEEN $2::date AND $3::date`, [f.brandId, f.from, f.to]),
+      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM') AS month, ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} >= $2::date AND ${DAY} < ($3::date + interval '1 month') GROUP BY 1 ORDER BY 1`, [f.brandId, f.monthsFrom, f.monthTo]),
+      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} >= $2::date AND ${DAY} < ($2::date + interval '1 month') GROUP BY 1 ORDER BY 1`, [f.brandId, f.monthFrom]),
+      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, a.brand_id, count(*)::int AS n ${FROM} WHERE ${brand} AND ${DAY} >= $2::date AND ${DAY} < ($2::date + interval '1 month') GROUP BY 1, 2 ORDER BY 1`, [f.brandId, f.monthFrom]),
+      pool.query(`SELECT b.id, b.brand_name AS name, count(a.id)::int AS total FROM brands b LEFT JOIN survey_assignments a ON a.brand_id = b.id GROUP BY b.id, b.brand_name HAVING count(a.id) > 0 ORDER BY total DESC, b.brand_name`),
+      // Latest saved response of each finished survey in the period, answer by answer.
+      pool.query(`
+        SELECT q.id AS qid, q.text, q.answer_type, q.q_order, t.name AS template,
+               CASE WHEN q.answer_type = 'free_text' THEN '(answered)' ELSE x.answer_value END AS value, count(*)::int AS n
+          FROM survey_assignments a
+          JOIN survey_campaigns c ON c.id = a.campaign_id
+          LEFT JOIN survey_templates t ON t.id = c.template_id
+          JOIN LATERAL (SELECT r.id FROM survey_responses r WHERE r.assignment_id = a.id ORDER BY r.answered_at DESC LIMIT 1) lr ON true
+          JOIN survey_answers x ON x.response_id = lr.id AND COALESCE(x.answer_value, '') <> ''
+          JOIN survey_questions q ON q.id = x.question_id
+         WHERE ${brand} AND a.completed_at IS NOT NULL AND (a.completed_at AT TIME ZONE 'Asia/Kuwait')::date BETWEEN $2::date AND $3::date
+         GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY t.name, q.q_order, 6 DESC`, [f.brandId, f.from, f.to]),
+    ]);
+    return { kpi: kpi.rows[0], months: months.rows, days: days.rows, brandDays: brandDays.rows, brands: brands.rows, answers: answers.rows };
+  }
+
   static async getLiveSurveyDashboard(fromISO: string | null, toISO: string | null): Promise<any> {
     const range = `($1::timestamptz IS NULL OR a.completed_at >= $1) AND ($2::timestamptz IS NULL OR a.completed_at <= $2)`;
     const DONE = `('successful','unreachable','declined','refused','not_interested')`;

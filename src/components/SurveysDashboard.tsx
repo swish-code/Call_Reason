@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import SurveyCharts from "./SurveyCharts.tsx";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import {
   AlertCircle, Filter, X, PhoneCall, Hourglass, CalendarClock, PauseCircle, CheckCircle2, PhoneOff, Ban,
@@ -337,6 +338,14 @@ export default function SurveysDashboard({ currentUser }: Props) {
         <span className="bg-violet-950/45 text-violet-400 text-xs font-bold px-3 py-1 rounded-full border border-violet-500/30">Survey Analytics</span>
         <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Surveys Dashboard</h1>
         <p className="text-[var(--muted)] text-sm mt-1 font-light">The calls agents are working inside the system, how many they finished, and the answers they collected. Uploaded Excel history is counted separately at the bottom.</p>
+      </div>
+
+      {/* Performance charts (own filters: day / month / brand) */}
+      <SurveyCharts />
+
+      <div className="border-t border-[var(--border)] pt-6">
+        <h2 className="text-lg font-extrabold text-[var(--heading)]">Agents &amp; queue — live</h2>
+        <p className="text-xs text-[var(--muted)] mt-1">What agents did in the period below (by the day they finished the call).</p>
       </div>
 
       {/* Period */}
