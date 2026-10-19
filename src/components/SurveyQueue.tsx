@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacity, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
-import { useDoNotCall, DNC_TEXT } from "../lib/dnc.ts";
+import { useDoNotCall } from "../lib/dnc.ts";
+import DncBadge from "./DncBadge.tsx";
 import {
   ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox, Timer, ChevronDown,
 } from "lucide-react";
@@ -409,7 +410,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                     {list.map((r) => (
                       <tr key={r.assignment_id}>
                         <td className="p-3 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.first_opened_at)}</td>
-                        <td className="p-3"><span className="font-mono font-bold text-[var(--heading)]">{r.customer_phone}</span>{dnc.isDnc(r.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}{r.customer_name && <span className="text-[10px] text-[var(--muted)] ml-2">{r.customer_name}</span>}</td>
+                        <td className="p-3"><span className="font-mono font-bold text-[var(--heading)]">{r.customer_phone}</span>{dnc.isDnc(r.customer_phone) && <DncBadge />}{r.customer_name && <span className="text-[10px] text-[var(--muted)] ml-2">{r.customer_name}</span>}</td>
                         <td className="p-3 text-[var(--text)]">{r.brand_name || "—"}</td>
                         <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${statusColor(r.status)}`}>{statusLabel(r.status)}</span></td>
                         <td className="p-3 text-right font-mono font-bold text-[var(--heading)]" title={r.sessions > 1 ? `${r.sessions} times opened` : undefined}>{fmtDur(r.seconds)}</td>
@@ -471,7 +472,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                 {queue.map(q => (
                   <tr key={q.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
                     <td className="p-4">
-                      <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}{dnc.isDnc(q.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}</div>
+                      <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}</div>{dnc.isDnc(q.customer_phone) && <DncBadge block />}
                       {(q.customer_name || q.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[q.customer_name, q.order_id].filter(Boolean).join(' · ')}</div>}
                     </td>
                     <td className="p-4 text-[var(--text)]">{q.brand_name || <span className="text-[var(--muted)]">—</span>}</td>
@@ -519,7 +520,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                   <div>
                     <h3 className="text-sm font-extrabold text-[var(--heading)]">Work Survey</h3>
                     <p className="text-[11px] text-[var(--muted)]">
-                      {assignment?.customer_phone}{dnc.isDnc(assignment?.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}{assignment?.brand_name ? ` · ${assignment.brand_name}` : ''}
+                      {assignment?.customer_phone}{dnc.isDnc(assignment?.customer_phone) && <DncBadge />}{assignment?.brand_name ? ` · ${assignment.brand_name}` : ''}
                       {assignment?.template_name ? ` · ${assignment.template_name}` : ''}
                     </p>
                     {assignment?.item_name && (

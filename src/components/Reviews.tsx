@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { useDoNotCall, DNC_TEXT } from "../lib/dnc.ts";
+import { useDoNotCall } from "../lib/dnc.ts";
+import DncBadge from "./DncBadge.tsx";
 import {
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download,
 } from "lucide-react";
@@ -691,7 +692,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       {r.customer_phone ? (
                         <div className="space-y-0.5">
                           <div className="font-mono text-[12px] font-bold text-[var(--heading)] select-all" dir="ltr">{r.customer_phone}</div>
-                          {dnc.isDnc(r.customer_phone) && <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}
+                          {dnc.isDnc(r.customer_phone) && <DncBadge block />}
                           {r.customer_name && <div className="text-[10px] text-[var(--muted)] max-w-[140px] truncate" title={r.customer_name}>{r.customer_name}</div>}
                         </div>
                       ) : (

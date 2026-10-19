@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { useDoNotCall, DNC_TEXT } from "../lib/dnc.ts";
+import { useDoNotCall } from "../lib/dnc.ts";
+import DncBadge from "./DncBadge.tsx";
 import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw, UserX, Search, X } from "lucide-react";
 
 interface AllSurveysProps { currentUser: User; }
@@ -401,7 +402,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     <td className="p-4 font-mono text-[11px] font-bold text-indigo-400 whitespace-nowrap">
                       {r.task_no != null ? `#${r.task_no}` : '—'}
                     </td>
-                    <td className="p-4 font-mono text-[11px] text-[var(--heading)]">{r.customer_phone || '—'}{dnc.isDnc(r.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold font-sans">{DNC_TEXT}</span>}</td>
+                    <td className="p-4 font-mono text-[11px] text-[var(--heading)] whitespace-nowrap">{r.customer_phone || '—'}{dnc.isDnc(r.customer_phone) && <DncBadge block />}</td>
                     <td className="p-4 text-[var(--text)]">{r.brand_name || '—'}</td>
                     <td className="p-4 text-[var(--text)] max-w-[260px]">
                       {r.item_name ? <span className="line-clamp-2" title={r.item_name}>{r.item_name}</span> : '—'}
