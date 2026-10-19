@@ -3531,7 +3531,7 @@ app.get("/api/surveys/analytics", authenticateJWT, asyncHandler(async (req: any,
   if (req.user.role === "agent" || req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) {
     return res.status(403).json({ error: "Access denied." });
   }
-  const isDay = (v: any) => typeof v === "string" && /^d{4}-d{2}-d{2}$/.test(v);
+  const isDay = (v: any) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
   const kwToday = new Date(Date.now() + KW_OFFSET_MS).toISOString().slice(0, 10);
   const from = isDay(req.query.from) ? String(req.query.from) : kwToday;
   const to = isDay(req.query.to) ? String(req.query.to) : from;
