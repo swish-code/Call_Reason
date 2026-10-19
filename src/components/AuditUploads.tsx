@@ -29,6 +29,7 @@ const SKIP_LABEL: Record<string, string> = {
   dup_file: "duplicate in file",
   dup_10day: "surveyed in last 10 days",
   already_queued: "already in queue",
+  do_not_call: "do not call",
   already_uploaded: "already uploaded",
   empty_row: "empty row",
 };
@@ -36,6 +37,7 @@ const SKIP_HELP: Record<string, string> = {
   dup_file: "The same number (for the same brand) appears more than once in this file — only the first one was added.",
   dup_10day: "This customer was already surveyed for this brand in the last 10 days, so they are not called again yet.",
   already_queued: "This number is already waiting in the survey queue for this brand from an earlier upload.",
+  do_not_call: "This customer asked us not to call them again (Surveys → Do Not Call), so they are not queued.",
   already_uploaded: "This order's review was uploaded before; in \"skip duplicates\" mode the existing review is kept.",
   empty_row: "The row had no order ID, phone, item, brand or rate.",
 };

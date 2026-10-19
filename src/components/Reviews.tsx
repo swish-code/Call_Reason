@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import { useDoNotCall, DNC_TEXT } from "../lib/dnc.ts";
 import {
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download,
 } from "lucide-react";
@@ -123,6 +124,7 @@ const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border
 const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
 export default function Reviews({ currentUser }: ReviewsProps) {
+  const dnc = useDoNotCall();
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [brands, setBrands] = useState<{ id: string; brand_name: string }[]>([]);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -689,6 +691,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       {r.customer_phone ? (
                         <div className="space-y-0.5">
                           <div className="font-mono text-[12px] font-bold text-[var(--heading)] select-all" dir="ltr">{r.customer_phone}</div>
+                          {dnc.isDnc(r.customer_phone) && <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}
                           {r.customer_name && <div className="text-[10px] text-[var(--muted)] max-w-[140px] truncate" title={r.customer_name}>{r.customer_name}</div>}
                         </div>
                       ) : (
@@ -1007,6 +1010,17 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   {/* Editable customer contact */}
                   <div className="p-4 bg-[var(--bg)] border border-[var(--border)] rounded-2xl space-y-3">
                     <p className="text-[10px] text-[var(--muted)] font-bold uppercase tracking-wide">Customer Contact</p>
+                    {dnc.isDnc(custPhone) ? (
+                      <div className="p-3 rounded-xl border-2 border-rose-500 bg-rose-600/15 text-rose-300 text-xs">
+                        <b>DO NOT CALL THIS CUSTOMER</b> — they asked us not to contact them again. Handle this review without calling.
+                      </div>
+                    ) : custPhone ? (
+                      <button type="button" onClick={async () => {
+                        if (!window.confirm("Add this customer to the Do Not Call list?\nNobody will be asked to call this number again (surveys are skipped, and every screen warns the agent).")) return;
+                        const err = await dnc.add(custPhone, "Asked not to be called again (review follow-up)", "review");
+                        if (err) window.alert(err);
+                      }} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-rose-600/15 text-rose-400 border border-rose-500/30 hover:bg-rose-600/25">The customer asked not to be called again</button>
+                    ) : null}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[10px] text-[var(--muted)] font-bold">Customer Name</label>

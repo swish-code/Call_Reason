@@ -1,16 +1,17 @@
 import { useState, type ReactNode } from "react";
 import { User } from "../types.js";
-import { Megaphone, ListChecks, ClipboardList, Database, LayoutList, BarChart2 } from "lucide-react";
+import { Megaphone, ListChecks, ClipboardList, Database, LayoutList, BarChart2, PhoneOff } from "lucide-react";
 import SurveyCampaigns from "./SurveyCampaigns.tsx";
 import SurveyQueue from "./SurveyQueue.tsx";
 import SurveyTemplates from "./SurveyTemplates.tsx";
 import SurveysData from "./SurveysData.tsx";
 import AllSurveys from "./AllSurveys.tsx";
 import SurveysDashboard from "./SurveysDashboard.tsx";
+import DoNotCall from "./DoNotCall.tsx";
 
 interface SurveysProps { currentUser: User; }
 
-type Tab = "dashboard" | "campaigns" | "queue" | "all" | "templates" | "data";
+type Tab = "dashboard" | "campaigns" | "queue" | "all" | "templates" | "data" | "dnc";
 
 export default function Surveys({ currentUser }: SurveysProps) {
   const role = currentUser.role;
@@ -24,6 +25,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
     { key: "all", label: "All Surveys", icon: <LayoutList className="w-4 h-4" />, visible: !isAgent },
     { key: "data", label: "Survey Data", icon: <Database className="w-4 h-4" />, visible: !isAgent },
     { key: "dashboard", label: "Dashboard", icon: <BarChart2 className="w-4 h-4" />, visible: !isAgent && !isMarketing },
+    { key: "dnc", label: "Do Not Call", icon: <PhoneOff className="w-4 h-4" />, visible: ["admin", "supervisor", "leader"].includes(role) },
   ];
 
   const visibleTabs = tabs.filter(t => t.visible);
@@ -53,6 +55,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
 
       {/* Content */}
       {activeTab === "dashboard" && <SurveysDashboard currentUser={currentUser} />}
+      {activeTab === "dnc" && <DoNotCall currentUser={currentUser} />}
       {activeTab === "campaigns" && <SurveyCampaigns currentUser={currentUser} />}
       {activeTab === "queue" && <SurveyQueue currentUser={currentUser} />}
       {activeTab === "all" && <AllSurveys currentUser={currentUser} />}

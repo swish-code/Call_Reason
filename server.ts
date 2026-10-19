@@ -2818,6 +2818,7 @@ const uploadIssueLabel = (reason: string): string => ({
   dup_file: "Duplicate in the same file",
   dup_10day: `Surveyed in the last ${SURVEY_DEDUP_DAYS} days`,
   already_queued: "Already in the survey queue",
+  do_not_call: "Customer asked not to be called again",
   already_uploaded: "Review already uploaded",
   empty_row: "Empty row",
   error: "Rejected (error)",
@@ -2845,7 +2846,7 @@ app.get("/api/audit/uploads/:id/issues", authenticateJWT, requireAdminOrSupervis
 // and, per batch, how many of its rows have since been completed.
 // Full action log for one area of the Audit page: every click that saved or opened something.
 const AUDIT_AREAS: Record<string, { where: string }> = {
-  surveys: { where: `(l.category IN ('Surveys','Survey Campaigns','Survey Templates','Survey Records') OR l.action ILIKE '%/api/survey%')` },
+  surveys: { where: `(l.category IN ('Surveys','Survey Campaigns','Survey Templates','Survey Records','Do Not Call') OR l.action ILIKE '%/api/survey%' OR l.action ILIKE '%/api/do-not-call%')` },
   ratings: { where: `(l.category = 'Ratings' OR l.action ILIKE '%/api/ratings%' OR l.action ILIKE 'ratings.%')` },
 };
 app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
@@ -3162,11 +3163,13 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
 
   const result = {
-    total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0, enriched: 0,
+    total: rows.length, inserted: 0, duplicates_file: 0, duplicates_10day: 0, already_queued: 0, do_not_call: 0, enriched: 0,
     scheduled: [] as { date: string; count: number }[], first_date: "", today_full: false, daily_limit: DAILY_SURVEY_LIMIT,
     errors: [] as { row: number; message: string }[],
   };
   const seen = new Set<string>();
+  // Customers who asked not to be called again are never queued (matched on the last 8 digits).
+  const dncByKey = new Map<string, any>((await DB.listDnc()).map((r: any) => [r.phone_key, r]));
   const candidates: { phone: string; segment: string | null; brand_id: string | null; item_name: string | null;
     order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null }[] = [];
   // Kuwait numbers arrive as 965XXXXXXXX (11 digits); the queue and the duplicate checks use the
@@ -3234,6 +3237,12 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
       continue;
     }
     seen.add(key); firstRowOf.set(key, i + 2);
+    const dnc = dncByKey.get(DB.dncKey(phone));
+    if (dnc) {
+      result.do_not_call++;
+      issues.push({ ...base, reason: "do_not_call", detail: `Asked not to be called again${dnc.reason ? ` (${dnc.reason})` : ""} — added ${kwDateTime(dnc.added_at)}${dnc.added_by_name ? ` by ${dnc.added_by_name}` : ""}` });
+      continue;
+    }
     const recent = await DB.getRecentContact(brandId, phone, SURVEY_DEDUP_DAYS);
     if (recent) {
       result.duplicates_10day++;
@@ -3289,11 +3298,41 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     ref_id: campaign.id, ref_label: [campaign.brand_name, campaign.template_name].filter(Boolean).join(" · ") || null,
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
     total_rows: result.total, inserted: result.inserted,
-    skipped: result.duplicates_file + result.duplicates_10day + result.already_queued, errors: result.errors.length,
-    skip_breakdown: { dup_file: result.duplicates_file, dup_10day: result.duplicates_10day, already_queued: result.already_queued, error: result.errors.length },
+    skipped: result.duplicates_file + result.duplicates_10day + result.already_queued + result.do_not_call, errors: result.errors.length,
+    skip_breakdown: { dup_file: result.duplicates_file, dup_10day: result.duplicates_10day, already_queued: result.already_queued, do_not_call: result.do_not_call, error: result.errors.length },
     issue_rows: issues,
   });
   res.json(result);
+}));
+
+// ---- Do Not Call: customers who asked us not to contact them again ----
+// Keys (last 8 digits) are public to everyone who can call customers, so the screens can warn; the full list
+// (who added it and why) is for leaders, supervisors and admins. Anyone who talks to customers can add one — it
+// is audit-logged with their name — but only leaders and above can take one off.
+const DNC_MANAGERS = ["admin", "supervisor", "leader"];
+app.get("/api/do-not-call/keys", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) return res.json({ keys: [] });
+  res.json({ keys: await DB.getDncKeys() });
+}));
+app.get("/api/do-not-call", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!DNC_MANAGERS.includes(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  res.json(await DB.listDnc());
+}));
+app.post("/api/do-not-call", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "marketing" || OPS_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const phone = String(req.body.phone || "").trim();
+  if (!DB.dncKey(phone)) return res.status(400).json({ error: "Enter a phone number with at least 8 digits." });
+  const reason = String(req.body.reason || "").trim().slice(0, 200);
+  const r = await DB.addDnc({ phone, reason, source: ["manual", "review", "survey"].includes(req.body.source) ? req.body.source : "manual", assignmentId: req.body.assignment_id || null, by: req.user.id, byName: req.user.full_name });
+  req.auditExtra = { details: `Do Not Call: ${phone}${reason ? ` — ${reason}` : ""}${r.closed ? `, ${r.closed} waiting survey(s) closed` : ""}` };
+  res.json(r);
+}));
+app.delete("/api/do-not-call/:key", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!DNC_MANAGERS.includes(req.user.role)) return res.status(403).json({ error: "Only leaders, supervisors and admins can take a number off the list." });
+  const ok = await DB.removeDnc(String(req.params.key));
+  if (!ok) return res.status(404).json({ error: "Not on the list." });
+  req.auditExtra = { details: `Removed from Do Not Call: ${req.params.key}` };
+  res.json({ ok: true });
 }));
 
 // Daily capacity for the next 7 days
@@ -3469,6 +3508,7 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   const { answers, reachability, action_type, segment, outcome } = req.body;
+  const wantsDnc = req.body.do_not_call === true && reachability !== "not_reached";   // only a customer we actually spoke to can ask this
   const notReached = reachability === "not_reached";
   const declined = !notReached && (outcome === "refused" || outcome === "not_interested");
   // Only a genuine completed survey requires actual answers — a customer who
@@ -3490,6 +3530,10 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
   // Close this agent's open handling-time session on the survey, tagged with the result.
   await DB.endOpenWorkSessions(req.params.id, req.user.id, "saved", updated?.status ?? null).catch(() => {});
   await logFinishedSurvey(req.user, updated);
+  if (wantsDnc) {
+    // The request body (logged as the audit details) already carries do_not_call=true.
+    await DB.addDnc({ phone: a.customer_phone, reason: String(req.body.do_not_call_reason || "").slice(0, 200) || "Asked during a survey call not to be called again", source: "survey", assignmentId: a.id, by: req.user.id, byName: req.user.full_name, keepAssignmentId: a.id }).catch(() => null);
+  }
   res.json(updated);
 }));
 

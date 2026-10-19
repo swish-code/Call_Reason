@@ -553,6 +553,9 @@ export class DB {
         AND NOT EXISTS (SELECT 1 FROM survey_records sr WHERE sr.platform_id = platforms.id)
     `);
 
+    // Seed the Do Not Call list once, when the table is first created (see do_not_call below).
+    const dncExisted = (await pool.query("SELECT to_regclass('public.do_not_call') AS t")).rows[0].t !== null;
+
     // Migrations for databases created before newer features
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS can_upload BOOLEAN DEFAULT false;
@@ -682,7 +685,26 @@ export class DB {
       CREATE INDEX IF NOT EXISTS idx_ratings_upload_batch ON ratings(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_assignments_upload_batch ON survey_assignments(upload_batch_id);
       CREATE INDEX IF NOT EXISTS idx_survey_records_upload_batch ON survey_records(upload_batch_id);
+      -- Do Not Call: customers who told us not to contact them again. One row per customer number across
+      -- every brand, keyed by the LAST 8 DIGITS (how numbers are matched everywhere else, so 965 / +965 /
+      -- 0 prefixes never hide one). Such numbers are skipped by survey uploads, hidden from the Survey
+      -- Queue, and flagged wherever an agent could still see them.
+      CREATE TABLE IF NOT EXISTS do_not_call (
+        phone_key TEXT PRIMARY KEY,
+        phone TEXT NOT NULL,
+        reason TEXT,
+        source TEXT,
+        assignment_id TEXT,
+        added_by TEXT,
+        added_by_name TEXT,
+        added_at TIMESTAMPTZ DEFAULT now()
+      );
     `);
+    if (!dncExisted) {
+      await pool.query(
+        `INSERT INTO do_not_call (phone_key, phone, reason, source, added_by_name) VALUES ('94449544', '94449544', 'Customer called and asked not to be contacted for surveys again (2026-10-19)', 'manual', 'System') ON CONFLICT DO NOTHING`
+      );
+    }
 
     // FM staff are supervised by Quality — move any existing FM accounts there
     await pool.query(
@@ -2370,6 +2392,55 @@ export class DB {
     return rows[0];
   }
 
+  // ---- Do Not Call (see the do_not_call table) ----
+  /** Numbers are matched on their last 8 digits; shorter ones can't be matched reliably and are refused. */
+  static dncKey(phone: string): string {
+    const d = String(phone || "").replace(/\D/g, "");
+    return d.length >= 8 ? d.slice(-8) : "";
+  }
+
+  static async getDncKeys(): Promise<string[]> {
+    const { rows } = await pool.query("SELECT phone_key FROM do_not_call");
+    return rows.map((r) => r.phone_key);
+  }
+
+  static async listDnc(): Promise<any[]> {
+    const { rows } = await pool.query(`SELECT phone_key, phone, reason, source, assignment_id, added_by, added_by_name, added_at FROM do_not_call ORDER BY added_at DESC`);
+    return rows;
+  }
+
+  static async getDnc(phone: string): Promise<any | undefined> {
+    const key = DB.dncKey(phone);
+    if (!key) return undefined;
+    const { rows } = await pool.query("SELECT phone_key, phone, reason, added_by_name, added_at FROM do_not_call WHERE phone_key = $1", [key]);
+    return rows[0];
+  }
+
+  /**
+   * Adds a customer to the list (a second add keeps the first entry untouched) and closes every survey of this
+   * number that is still waiting, as "declined", so nobody is asked to call it. `keepAssignmentId` is the survey
+   * the agent is saving right now, which is closed by that save itself.
+   */
+  static async addDnc(d: { phone: string; reason?: string | null; source: string; assignmentId?: string | null; by: string; byName: string; keepAssignmentId?: string | null }): Promise<{ added: boolean; closed: number; key: string }> {
+    const key = DB.dncKey(d.phone);
+    if (!key) throw new Error("A phone number with at least 8 digits is required.");
+    const ins = await pool.query(
+      `INSERT INTO do_not_call (phone_key, phone, reason, source, assignment_id, added_by, added_by_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (phone_key) DO NOTHING`,
+      [key, String(d.phone).trim(), (d.reason || "").trim() || null, d.source, d.assignmentId || null, d.by, d.byName]);
+    const closed = await pool.query(
+      `UPDATE survey_assignments SET status = 'declined', completed_at = now()
+        WHERE status IN ('pending','in_progress') AND id <> COALESCE($2, '')
+          AND right(regexp_replace(COALESCE(customer_phone, ''), '[^0-9]', '', 'g'), 8) = $1`,
+      [key, d.keepAssignmentId || null]);
+    return { added: (ins.rowCount ?? 0) > 0, closed: closed.rowCount ?? 0, key };
+  }
+
+  static async removeDnc(key: string): Promise<boolean> {
+    const res = await pool.query("DELETE FROM do_not_call WHERE phone_key = $1", [key]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   static async getQueuedAssignment(brandId: string | null, phone: string): Promise<{ status: string; scheduled_date: string; created_at: string; template_name: string | null; brand_name: string | null } | undefined> {
     const { rows } = await pool.query(
       `SELECT a.status, to_char(a.scheduled_date, 'YYYY-MM-DD') AS scheduled_date, a.created_at, t.name AS template_name, b.brand_name
@@ -2470,6 +2541,7 @@ export class DB {
       LEFT JOIN brands b ON b.id = a.brand_id
       LEFT JOIN survey_templates t ON t.id = c.template_id
       WHERE a.status = 'pending' AND a.scheduled_date <= CURRENT_DATE AND c.status = 'active'
+        AND NOT EXISTS (SELECT 1 FROM do_not_call d WHERE d.phone_key = right(regexp_replace(COALESCE(a.customer_phone, ''), '[^0-9]', '', 'g'), 8))
         AND (
           a.assigned_agent_id = $1
           OR (

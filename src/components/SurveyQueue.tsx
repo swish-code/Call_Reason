@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacity, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
+import { useDoNotCall, DNC_TEXT } from "../lib/dnc.ts";
 import {
   ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox, Timer, ChevronDown,
 } from "lucide-react";
@@ -70,6 +71,10 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
   const [capacity, setCapacity] = useState<DailyCapacity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const dnc = useDoNotCall();
+  // "The customer asked not to be called again" — ticked while closing a survey; adds the number to the Do Not Call list.
+  const [dncAsked, setDncAsked] = useState(false);
 
   // Work modal
   const [workId, setWorkId] = useState<string | null>(null);
@@ -189,6 +194,8 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
 
   const openWork = async (a: SurveyAssignment) => {
     startSession(a.id);
+    setDncAsked(false);
+    dnc.reload();
     setWorkId(a.id);
     setAssignment(a);
     setQuestions([]);
@@ -269,7 +276,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
       const res = await apiFetch(`/api/surveys/assignments/${workId}/response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers: list, reachability: 'reached', action_type: actionType, segment: segment || undefined }),
+        body: JSON.stringify({ answers: list, reachability: 'reached', action_type: actionType, segment: segment || undefined, do_not_call: dncAsked || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setModalError(data.error || "Failed to save response."); return; }
@@ -296,7 +303,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
       const res = await apiFetch(`/api/surveys/assignments/${workId}/response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reachability: 'reached', action_type: actionType, outcome, segment: segment || undefined }),
+        body: JSON.stringify({ reachability: 'reached', action_type: actionType, outcome, segment: segment || undefined, do_not_call: dncAsked || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setModalError(data.error || "Failed to update."); return; }
@@ -402,7 +409,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                     {list.map((r) => (
                       <tr key={r.assignment_id}>
                         <td className="p-3 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.first_opened_at)}</td>
-                        <td className="p-3"><span className="font-mono font-bold text-[var(--heading)]">{r.customer_phone}</span>{r.customer_name && <span className="text-[10px] text-[var(--muted)] ml-2">{r.customer_name}</span>}</td>
+                        <td className="p-3"><span className="font-mono font-bold text-[var(--heading)]">{r.customer_phone}</span>{dnc.isDnc(r.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}{r.customer_name && <span className="text-[10px] text-[var(--muted)] ml-2">{r.customer_name}</span>}</td>
                         <td className="p-3 text-[var(--text)]">{r.brand_name || "—"}</td>
                         <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${statusColor(r.status)}`}>{statusLabel(r.status)}</span></td>
                         <td className="p-3 text-right font-mono font-bold text-[var(--heading)]" title={r.sessions > 1 ? `${r.sessions} times opened` : undefined}>{fmtDur(r.seconds)}</td>
@@ -464,7 +471,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                 {queue.map(q => (
                   <tr key={q.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
                     <td className="p-4">
-                      <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}</div>
+                      <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}{dnc.isDnc(q.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}</div>
                       {(q.customer_name || q.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[q.customer_name, q.order_id].filter(Boolean).join(' · ')}</div>}
                     </td>
                     <td className="p-4 text-[var(--text)]">{q.brand_name || <span className="text-[var(--muted)]">—</span>}</td>
@@ -512,7 +519,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                   <div>
                     <h3 className="text-sm font-extrabold text-[var(--heading)]">Work Survey</h3>
                     <p className="text-[11px] text-[var(--muted)]">
-                      {assignment?.customer_phone}{assignment?.brand_name ? ` · ${assignment.brand_name}` : ''}
+                      {assignment?.customer_phone}{dnc.isDnc(assignment?.customer_phone) && <span className="ml-2 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold">{DNC_TEXT}</span>}{assignment?.brand_name ? ` · ${assignment.brand_name}` : ''}
                       {assignment?.template_name ? ` · ${assignment.template_name}` : ''}
                     </p>
                     {assignment?.item_name && (
@@ -542,6 +549,12 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                 </div>
               ) : (
                 <div className="p-6 space-y-6">
+                  {dnc.isDnc(assignment?.customer_phone) && (
+                    <div className="p-4 rounded-2xl border-2 border-rose-500 bg-rose-600/15 text-rose-300">
+                      <p className="text-sm font-extrabold flex items-center gap-2"><AlertCircle className="w-5 h-5" /> DO NOT CALL THIS CUSTOMER</p>
+                      <p className="text-xs mt-1">This customer told us they do not want to be contacted again. Do not dial this number. Close the survey as <b>Not Interested</b> and tell your team leader if it reached you from an upload.</p>
+                    </div>
+                  )}
                   {/* Section A: Log Attempt */}
                   <div className="space-y-3">
                     <p className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-2">
@@ -724,6 +737,12 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                         <option value="complaint">Complaint</option>
                       </select>
                     </div>
+                    {!dnc.isDnc(assignment?.customer_phone) && (
+                      <label className="flex items-start gap-2 text-[11px] text-[var(--text)] cursor-pointer select-none p-2 rounded-xl border border-[var(--border)] bg-[var(--bg)]">
+                        <input type="checkbox" checked={dncAsked} onChange={(e) => setDncAsked(e.target.checked)} className="mt-0.5" />
+                        <span><b className="text-rose-400">The customer asked not to be called again.</b> Tick this before closing the survey — the number goes on the Do Not Call list and nobody will be asked to call it.</span>
+                      </label>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       <button
                         onClick={markNotReached}

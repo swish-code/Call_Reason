@@ -34,6 +34,8 @@ const LABELS: [RegExp, string][] = [
   [/\/surveys\/campaigns\/[^/]+\/assign$/, "Bulk-assigned campaign numbers"],
   [/call-verification\/run$/, "Ran call verification"],
   [/call-verification\/probe$/, "Tested XonTel"],
+  [/^POST \/api\/do-not-call$/, "Added a customer to Do Not Call"],
+  [/^DELETE \/api\/do-not-call\//, "Removed a customer from Do Not Call"],
   [/call-verification\/links/, "Changed a XonTel link"],
   [/XonTel user/, "Changed a XonTel link"],
   [/^POST \/api\/survey-campaigns\/[^/]+\/numbers$/, "Uploaded numbers to a campaign"],
@@ -90,6 +92,7 @@ export function describe(r: Row, names: Record<string, string>): string {
   const d = r.details || "";
   const act = r.action;
   const nm = (v: string) => names[v] || v;
+  if (/\/api\/do-not-call/.test(act)) return d ? `${d}.` : "Changed the Do Not Call list.";
   if (/^GET \/api\/surveys\/assignments\//.test(act)) return "Looked at the survey details.";
   if (/^GET \/api\/ratings\//.test(act)) return "Opened the review to look at it.";
   if (/\/work\/start$/.test(act)) return "Started working on this survey.";
@@ -103,10 +106,11 @@ export function describe(r: Row, names: Record<string, string>): string {
   if (/\/surveys\/work\/[^/]+\/beat$/.test(act)) return "Automatic timer signal while the survey was open.";
   if (/\/assignments\/[^/]+\/response$/.test(act)) {
     const reach = kv(d, "reachability"), outcome = kv(d, "outcome"), action = kv(d, "action_type");
+    const dncNote = kv(d, "do_not_call") === "true" ? " The customer asked not to be called again — added to Do Not Call." : "";
     if (reach === "not_reached") return "Could not reach the customer — saved as not reached.";
-    if (outcome === "refused") return "Reached the customer, who refused to take the survey.";
-    if (outcome === "not_interested") return "Reached the customer, who was not interested.";
-    return "Reached the customer and completed the survey" + (action === "complaint" ? " — the customer raised a complaint." : " — no complaint.");
+    if (outcome === "refused") return "Reached the customer, who refused to take the survey." + dncNote;
+    if (outcome === "not_interested") return "Reached the customer, who was not interested." + dncNote;
+    return "Reached the customer and completed the survey" + (action === "complaint" ? " — the customer raised a complaint." : " — no complaint.") + dncNote;
   }
   if (/\/attempts?$/.test(act)) {
     const o = kv(d, "outcome"), note = kv(d, "note");
