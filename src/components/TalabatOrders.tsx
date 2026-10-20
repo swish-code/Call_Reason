@@ -1,16 +1,16 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/api.ts";
 import { parseCsv, brandOf } from "../lib/talabatCsv.ts";
 import { downloadCSV } from "../utils.js";
-import { Search, X, Download, AlertTriangle, Copy, Check, ChevronLeft, ChevronRight, Loader2, ArrowDown, ArrowUp, Crown, MapPin, CreditCard, Truck, Ban } from "lucide-react";
+import { Search, X, Download, AlertTriangle, Copy, Check, ChevronLeft, ChevronRight, Loader2, ArrowDown, ArrowUp, Crown, MapPin, CreditCard, Truck, Ban, Undo2 } from "lucide-react";
 
 // The orders of one day's Talabat report. The page fetches that day's CSV (sent gzipped, ~0.4 MB), reads it in
 // the browser and lists every order — search, filters, sorting — with a side panel showing everything Talabat
 // recorded about an order: timeline, items, money, complaint and cancellation. Columns are found by name,
 // case-insensitively, because Talabat renames them now and then.
 
-export interface OrdersPreset { brand?: string; status?: "all" | "delivered" | "cancelled"; complaints?: boolean; nonce: number }
+export interface OrdersPreset { brand?: string; status?: "all" | "delivered" | "cancelled"; complaints?: boolean; q?: string; openId?: string; nonce: number }
 
 interface Order {
   row: string[];
@@ -22,6 +22,7 @@ interface Order {
   items: Item[]; payMethod: string; search: string;
 }
 interface Item { qty: number; name: string; options: string[] }
+interface Refund { id: string; state: "refunded" | "pending" | "compensated"; original_fils: number; refund_fils: number; after_fils: number; pro_fee_fils: number; compensation_fils: number }
 interface Parsed { header: string[]; col: (name: string) => number; orders: Order[] }
 
 const PAGE = 50;
@@ -120,6 +121,18 @@ export default function TalabatOrders({ day, version, preset }: { day: string; v
   const [page, setPage] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const dq = useDeferredValue(q.trim().toLowerCase());
+  // This day's partial refunds, once pulled (two days after the day): the Order report is pulled the morning
+  // after, often before Talabat has charged a refunded order, so its money fields alone can disagree.
+  const [refunds, setRefunds] = useState<Map<string, Refund>>(new Map());
+  useEffect(() => {
+    let gone = false;
+    setRefunds(new Map());
+    apiFetch(`/api/talabat-reports/deductions/${day}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!gone && d?.summary?.rows) setRefunds(new Map((d.summary.rows as Refund[]).map((x) => [x.id, x]))); })
+      .catch(() => {});
+    return () => { gone = true; };
+  }, [day]);
 
   useEffect(() => {
     let gone = false;
@@ -130,7 +143,7 @@ export default function TalabatOrders({ day, version, preset }: { day: string; v
     (async () => {
       const res = await apiFetch(`/api/talabat-reports/${day}/download`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not load the orders.");
-      const text = (await res.text()).replace(/^﻿/, "");
+      const text = (await res.text()).replace(/^\uFEFF/, "");
       await new Promise((r) => setTimeout(r, 0)); // let the spinner paint before parsing
       const parsed = build(parseCsv(text));
       cache.set(key, parsed);
@@ -140,15 +153,18 @@ export default function TalabatOrders({ day, version, preset }: { day: string; v
     return () => { gone = true; };
   }, [day, version]);
 
-  // A jump from the overview (a brand row, the Cancelled or Complaints card) opens the list pre-filtered.
+  // A jump from the overview (a brand row, the Cancelled or Complaints card) opens the list pre-filtered;
+  // one from Partial refunds searches the order and opens its panel.
   useEffect(() => {
     if (!preset) return;
     setBrand(preset.brand || ""); setStatus(preset.status || "all"); setComplaints(!!preset.complaints);
-    setLate(false); setQ(""); setPage(0);
+    setLate(false); setQ(preset.q || ""); setPage(0); setOpenId(preset.openId || null);
   }, [preset?.nonce]);
 
   useEffect(() => { setPage(0); }, [dq, brand, status, complaints, late, sort, day]);
-  useEffect(() => { setOpenId(null); }, [day]);
+  // Close the panel when the day changes — but not on the first render, where a preset may have just opened it.
+  const shownDay = useRef(day);
+  useEffect(() => { if (shownDay.current !== day) { shownDay.current = day; setOpenId(null); } }, [day]);
 
   const brands = useMemo(() => {
     const m = new Map<string, number>();
@@ -272,6 +288,7 @@ export default function TalabatOrders({ day, version, preset }: { day: string; v
                       <StatusBadge o={o} />
                       {o.complaint && <span title="Has a complaint"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /></span>}
                       {o.pro && <span title="Pro order"><Crown className="w-3.5 h-3.5 text-violet-400" /></span>}
+                      {refunds.get(o.id)?.state === "refunded" && <span title={`Partial refund −${kwd(refunds.get(o.id)!.refund_fils)} KWD`}><Undo2 className="w-3.5 h-3.5 text-rose-500" /></span>}
                     </div>
                   </td>
                   <td className="py-2 px-3 font-mono whitespace-nowrap">{o.totalMin !== null ? `${o.totalMin} min` : "—"}</td>
@@ -299,7 +316,7 @@ export default function TalabatOrders({ day, version, preset }: { day: string; v
       )}
 
       {open && data && (
-        <OrderPanel o={open} data={data}
+        <OrderPanel o={open} data={data} refund={refunds.get(open.id)}
           onClose={() => setOpenId(null)}
           onPrev={openIdx > 0 ? () => setOpenId(rows[openIdx - 1].id) : undefined}
           onNext={openIdx >= 0 && openIdx < rows.length - 1 ? () => setOpenId(rows[openIdx + 1].id) : undefined}
@@ -310,7 +327,7 @@ export default function TalabatOrders({ day, version, preset }: { day: string; v
 }
 
 // Everything Talabat recorded about one order.
-function OrderPanel({ o, data, onClose, onPrev, onNext, position }: { o: Order; data: Parsed; onClose: () => void; onPrev?: () => void; onNext?: () => void; position: string }) {
+function OrderPanel({ o, data, refund, onClose, onPrev, onNext, position }: { o: Order; data: Parsed; refund?: Refund; onClose: () => void; onPrev?: () => void; onNext?: () => void; position: string }) {
   const [copied, setCopied] = useState(false);
   const [all, setAll] = useState(false);
   const g = (name: string) => { const i = data.col(name); return i >= 0 ? (o.row[i] || "").trim() : ""; };
@@ -374,6 +391,22 @@ function OrderPanel({ o, data, onClose, onPrev, onNext, position }: { o: Order; 
             {fact(MapPin, "Store address", o.address)}
             {fact(Check, "Payable", g("Is Payable"))}
           </div>
+
+          {refund && refund.state !== "pending" && (
+            <div className={`rounded-2xl border p-3 text-xs ${refund.state === "refunded" ? "border-rose-500/30 bg-rose-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
+              <div className={`font-bold flex items-center gap-1.5 ${refund.state === "refunded" ? "text-rose-500" : "text-emerald-500"}`}>
+                {refund.state === "refunded" ? <><Undo2 className="w-4 h-4" /> Partial refund</> : <><Check className="w-4 h-4" /> Compensated by Talabat</>}
+              </div>
+              {refund.state === "refunded" ? (
+                <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-[10px] text-[var(--muted)]">Original</div><div className="font-mono font-bold text-[var(--heading)]">{kwd(refund.original_fils)}</div></div>
+                  <div><div className="text-[10px] text-[var(--muted)]">Refunded</div><div className="font-mono font-bold text-rose-500">−{kwd(refund.refund_fils)}</div></div>
+                  <div><div className="text-[10px] text-[var(--muted)]">After refund</div><div className="font-mono font-bold text-[var(--heading)]">{kwd(refund.after_fils)}</div></div>
+                </div>
+              ) : <div className="mt-1 text-[var(--heading)]">Talabat paid the restaurant back <b className="font-mono">+{kwd(refund.compensation_fils)}</b> KWD on this order.</div>}
+              <div className="text-[10px] text-[var(--muted)] mt-2">From Talabat's "Orders with deductions", pulled after Talabat charged the order — the amounts below come from the morning report and may predate that.</div>
+            </div>
+          )}
 
           {(o.complaint || o.cancelled) && (
             <div className="space-y-2">

@@ -46,7 +46,7 @@ export class TalabatReportError extends Error {}
 
 /** Parses and checks one day's report. Throws TalabatReportError when the file is not that day's Order report. */
 export function readReport(csv: Buffer, day: string): { summary: TalabatSummary; columns: string[] } {
-  const text = csv.toString("utf8").replace(/^﻿/, "");
+  const text = csv.toString("utf8").replace(/^\uFEFF/, "");
   const rows = parseCsv(text).filter((r) => r.length > 1 || (r[0] || "").trim());
   if (!rows.length) throw new TalabatReportError("The file is empty.");
   const columns = rows[0].map((h) => h.trim());
@@ -131,6 +131,117 @@ export function readReport(csv: Buffer, day: string): { summary: TalabatSummary;
     .map(({ storeSet, ...b }) => ({ ...b, stores: storeSet.size }))
     .sort((a, b) => b.orders - a.orders);
   s.cancel_reasons = [...reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 8);
+  return { summary: s, columns };
+}
+
+// ---- Partial refunds: the day's "Orders with deductions" (transaction status MODIFIED) ----
+// The report has no refund column. Once Talabat has charged an order, Subtotal is the ORIGINAL basket and the
+// refund charged to the restaurant sits inside "Operational charges", together with the 0.30 Pro fee that every
+// Pro order keeps whenever it is still worth 3 KWD or more after the refund (1,395 Pro orders carried exactly
+// 0.30 on 19 Oct 2026, no non-Pro order did). Checked against Talabat's own before/after subtotals on 24 orders:
+// 23 matched, one was off by the 0.30. Before Talabat has itemised an order there is no deduction on it at all
+// (and Subtotal still shows the after-refund value) — such orders are "pending" and kept out of every total.
+
+export interface RefundRow {
+  id: string;
+  store: string;
+  brand: string;
+  received: string;
+  status: string;
+  reason: string;
+  pro: boolean;
+  state: "refunded" | "pending" | "compensated";
+  original_fils: number;
+  refund_fils: number;
+  after_fils: number;
+  pro_fee_fils: number;
+  compensation_fils: number;
+  payout_fils: number | null;
+  items: string;
+}
+
+export interface RefundGroup { key: string; orders: number; original_fils: number; refund_fils: number }
+
+export interface DeductionSummary {
+  orders: number;
+  refunded: number;
+  pending: number;
+  compensated: number;
+  original_fils: number;
+  refund_fils: number;
+  after_fils: number;
+  compensation_fils: number;
+  by_reason: RefundGroup[];
+  by_brand: RefundGroup[];
+  rows: RefundRow[];
+}
+
+const PRO_FEE_FILS = 300;
+const PRO_FEE_MIN_AFTER_FILS = 3000;
+
+/** Parses one day's "Orders with deductions" file and works out each order's original value, refund and value after it. */
+export function readDeductions(csv: Buffer, day: string): { summary: DeductionSummary; columns: string[] } {
+  const text = csv.toString("utf8").replace(/^\uFEFF/, "");
+  const rows = parseCsv(text).filter((r) => r.length > 1 || (r[0] || "").trim());
+  if (!rows.length) throw new TalabatReportError("The file is empty.");
+  const columns = rows[0].map((h) => h.trim());
+  const idx = new Map(columns.map((h, i) => [h.toLowerCase(), i]));
+  const g = (r: string[], name: string) => { const i = idx.get(name.toLowerCase()); return i === undefined ? "" : (r[i] || "").trim(); };
+  const need = ["Restaurant name", "Order ID", "Store ID", "Order status", "Order received at"];
+  const missing = need.filter((n) => !idx.has(n.toLowerCase()));
+  if (missing.length) throw new TalabatReportError(`Not a Talabat Order report — missing column(s): ${missing.join(", ")}.`);
+
+  const s: DeductionSummary = { orders: 0, refunded: 0, pending: 0, compensated: 0, original_fils: 0, refund_fils: 0, after_fils: 0, compensation_fils: 0, by_reason: [], by_brand: [], rows: [] };
+  const groups = { reason: new Map<string, RefundGroup>(), brand: new Map<string, RefundGroup>() };
+  const add = (m: Map<string, RefundGroup>, key: string, r: RefundRow) => {
+    const x = m.get(key) || { key, orders: 0, original_fils: 0, refund_fils: 0 };
+    x.orders++; x.original_fils += r.original_fils; x.refund_fils += r.refund_fils;
+    m.set(key, x);
+  };
+  const ids = new Set<string>();
+  let onDay = 0;
+
+  for (const r of rows.slice(1)) {
+    const id = g(r, "Order ID");
+    if (!id || ids.has(id)) continue;
+    ids.add(id);
+    const received = g(r, "Order received at");
+    if (received.slice(0, 10) === day) onDay++;
+    const status = g(r, "Order status") || "Unknown";
+    const pro = yes(g(r, "Is Pro order"));
+    const sub = fils(g(r, "Subtotal")), ops = fils(g(r, "Operational charges")), comp = fils(g(r, "Vendor refunds"));
+    const payoutRaw = g(r, "Payout amount");
+    const proFee = pro && ops >= PRO_FEE_FILS && sub - ops >= PRO_FEE_MIN_AFTER_FILS ? PRO_FEE_FILS : 0;
+    const refund = Math.max(0, ops - proFee);
+    const state: RefundRow["state"] = refund > 0 ? "refunded" : comp > 0 ? "compensated" : "pending";
+    const cancelled = /^cancel/i.test(status);
+    const row: RefundRow = {
+      id, store: g(r, "Restaurant name"), brand: brandOf(g(r, "Restaurant name")), received, status,
+      reason: g(r, "Complaint reason") || (cancelled && g(r, "Cancellation reason") ? `Cancelled: ${g(r, "Cancellation reason")}` : "No complaint recorded"),
+      pro, state,
+      original_fils: sub, refund_fils: refund, after_fils: sub - refund, pro_fee_fils: proFee,
+      compensation_fils: comp, payout_fils: payoutRaw === "" ? null : fils(payoutRaw),
+      items: g(r, "Order items").slice(0, 400),
+    };
+    s.rows.push(row);
+    s.orders++;
+    s.compensation_fils += comp;
+    if (state === "refunded") {
+      s.refunded++;
+      s.original_fils += sub; s.refund_fils += refund; s.after_fils += sub - refund;
+      add(groups.reason, row.reason, row);
+      add(groups.brand, row.brand, row);
+    } else if (state === "compensated") s.compensated++;
+    else s.pending++;
+  }
+
+  if (s.orders >= 20 && onDay / s.orders < 0.9) {
+    throw new TalabatReportError(`This file is not the deductions of ${day}: only ${onDay} of ${s.orders} orders were received that day.`);
+  }
+  const sorted = (m: Map<string, RefundGroup>) => [...m.values()].sort((a, b) => b.refund_fils - a.refund_fils);
+  s.by_reason = sorted(groups.reason);
+  s.by_brand = sorted(groups.brand);
+  s.rows.sort((a, b) => b.refund_fils - a.refund_fils || a.id.localeCompare(b.id));
   return { summary: s, columns };
 }
 

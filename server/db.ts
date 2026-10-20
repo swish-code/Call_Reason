@@ -713,6 +713,17 @@ export class DB {
         export_id TEXT,
         uploaded_at TIMESTAMPTZ DEFAULT now()
       );
+      -- The same day's "Orders with deductions" (partial refunds), pulled two days later and again while Talabat is
+      -- still itemising them. summary holds every order's original value, refund and value after it.
+      CREATE TABLE IF NOT EXISTS talabat_deductions (
+        report_day TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        csv_gz BYTEA NOT NULL,
+        csv_bytes INTEGER NOT NULL,
+        order_count INTEGER NOT NULL,
+        summary JSONB NOT NULL,
+        uploaded_at TIMESTAMPTZ DEFAULT now()
+      );
     `);
     if (!dncExisted) {
       await pool.query(
@@ -2478,6 +2489,36 @@ export class DB {
 
   static async getTalabatReportFile(day: string): Promise<{ file_name: string; csv_gz: Buffer } | undefined> {
     const { rows } = await pool.query("SELECT file_name, csv_gz FROM talabat_reports WHERE report_day = $1", [day]);
+    return rows[0];
+  }
+
+  /** Saves one day's deductions; a re-pull of the same day replaces it. True when the day was new. */
+  static async saveTalabatDeductions(r: { day: string; fileName: string; csvGz: Buffer; csvBytes: number; orderCount: number; summary: any }): Promise<boolean> {
+    const { rows } = await pool.query(
+      `INSERT INTO talabat_deductions (report_day, file_name, csv_gz, csv_bytes, order_count, summary, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6, now())
+       ON CONFLICT (report_day) DO UPDATE SET file_name = EXCLUDED.file_name, csv_gz = EXCLUDED.csv_gz, csv_bytes = EXCLUDED.csv_bytes,
+         order_count = EXCLUDED.order_count, summary = EXCLUDED.summary, uploaded_at = now()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.day, r.fileName, r.csvGz, r.csvBytes, r.orderCount, JSON.stringify(r.summary)]);
+    return !!rows[0]?.inserted;
+  }
+
+  /** Every day's refund totals, newest first — without the per-order rows. */
+  static async listTalabatDeductions(limit = 400): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT report_day, order_count, uploaded_at, summary - 'rows' AS summary
+         FROM talabat_deductions ORDER BY report_day DESC LIMIT $1`, [limit]);
+    return rows;
+  }
+
+  static async getTalabatDeductions(day: string): Promise<any | undefined> {
+    const { rows } = await pool.query("SELECT report_day, order_count, uploaded_at, summary FROM talabat_deductions WHERE report_day = $1", [day]);
+    return rows[0];
+  }
+
+  static async getTalabatDeductionsFile(day: string): Promise<{ file_name: string; csv_gz: Buffer } | undefined> {
+    const { rows } = await pool.query("SELECT file_name, csv_gz FROM talabat_deductions WHERE report_day = $1", [day]);
     return rows[0];
   }
 

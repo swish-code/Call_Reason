@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import TalabatOrders, { type OrdersPreset } from "./TalabatOrders.tsx";
-import { ShoppingBag, Download, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, Clock, Store, RefreshCw, LayoutDashboard, ListOrdered } from "lucide-react";
+import TalabatRefunds from "./TalabatRefunds.tsx";
+import { ShoppingBag, Download, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, Clock, Store, RefreshCw, LayoutDashboard, ListOrdered, Undo2 } from "lucide-react";
 
 // Talabat partner-portal Order report (every store, one row per order). The talabat-export tool on the office PC
 // downloads it each morning after 06:00 Kuwait time and uploads it here; the server keeps the CSV and a summary of
@@ -39,6 +40,8 @@ const STYLE = `
 .tlb-rise { animation: tlb-rise .45s cubic-bezier(.2,.8,.2,1) both }
 @keyframes tlb-pulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
 .tlb-pulse { animation: tlb-pulse 1.6s ease-in-out infinite }
+@keyframes tlb-grow { from { transform: scaleX(0) } to { transform: none } }
+.tlb-grow { transform-origin: left; animation: tlb-grow .7s cubic-bezier(.2,.8,.2,1) both }
 `;
 
 /** Counts up from the previous value to the new one, so switching days visibly moves the numbers. */
@@ -172,7 +175,7 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
   const [error, setError] = useState("");
   const [day, setDay] = useState("");
   const [busy, setBusy] = useState("");
-  const [tab, setTab] = useState<"overview" | "orders">("overview");
+  const [tab, setTab] = useState<"overview" | "orders" | "refunds">("overview");
   const [preset, setPreset] = useState<OrdersPreset | undefined>();
   const showOrders = (p: Omit<OrdersPreset, "nonce">) => { setPreset({ ...p, nonce: Date.now() }); setTab("orders"); };
 
@@ -273,7 +276,7 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
           </div>
 
           <div className="flex items-center gap-1 p-1 bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-lg w-fit" role="tablist">
-            {([["overview", "Overview", LayoutDashboard], ["orders", `Orders · ${num(s.orders)}`, ListOrdered]] as const).map(([k, label, Icon]) => (
+            {([["overview", "Overview", LayoutDashboard], ["orders", `Orders · ${num(s.orders)}`, ListOrdered], ["refunds", "Partial refunds", Undo2]] as const).map(([k, label, Icon]) => (
               <button key={k} role="tab" aria-selected={tab === k} onClick={() => { if (k === "orders") setPreset(undefined); setTab(k); }}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${tab === k ? "text-white shadow-md" : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"}`}
                 style={tab === k ? { background: "var(--t-orange)" } : undefined}>
@@ -284,6 +287,10 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
 
           {tab === "orders" ? (
             <TalabatOrders day={cur.report_day} version={cur.uploaded_at} preset={preset} />
+          ) : tab === "refunds" ? (
+            <TalabatRefunds initialDay={cur.report_day} orderDays={new Set(reports.map((r) => r.report_day))}
+              dayOrders={(d) => byDay.get(d)?.order_count}
+              onOpenOrder={(d, id) => { setDay(d); showOrders({ q: id, openId: id }); }} />
           ) : (<>
           <div key={day} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <Kpi i={0} label="Orders" color="var(--t-orange)" value={s.orders} format={num} sub={`${s.stores} stores`} delta={<Delta now={s.orders} before={p?.orders} against={against} />} />

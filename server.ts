@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
-import { readReport, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
+import { readReport, readDeductions, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3355,8 +3355,21 @@ app.post("/api/talabat-reports/upload",
     const day = String(req.query.day || "");
     if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
     if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Send the CSV as the request body (text/csv or application/gzip)." });
+    const kind = String(req.query.kind || "orders");
+    if (kind !== "orders" && kind !== "deductions") return res.status(400).json({ error: "kind must be orders or deductions." });
     let csv: Buffer;
     try { csv = plainCsv(req.body); } catch { return res.status(400).json({ error: "The gzip body could not be read." }); }
+    if (kind === "deductions") {
+      let ded;
+      try { ded = readDeductions(csv, day); } catch (e: any) {
+        if (e instanceof TalabatReportError) return res.status(422).json({ error: e.message });
+        throw e;
+      }
+      const s = ded.summary;
+      const created = await DB.saveTalabatDeductions({ day, fileName: `talabat-deductions_${day}.csv`, csvGz: gzip(csv), csvBytes: csv.length, orderCount: s.orders, summary: s });
+      console.log(`[talabat] ${created ? "saved" : "replaced"} deductions ${day}: ${s.orders} orders, ${s.refunded} refunded, ${s.pending} pending`);
+      return res.json({ ok: true, day, kind, created, orders: s.orders, refunded: s.refunded, pending: s.pending, compensated: s.compensated, refund_fils: s.refund_fils });
+    }
     let report;
     try { report = readReport(csv, day); } catch (e: any) {
       if (e instanceof TalabatReportError) return res.status(422).json({ error: e.message });
@@ -3373,6 +3386,29 @@ app.post("/api/talabat-reports/upload",
 
 app.get("/api/talabat-reports", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await DB.listTalabatReports());
+}));
+
+// Partial refunds: every day's totals, then one day with its orders, then that day's raw file.
+app.get("/api/talabat-reports/deductions", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
+  res.json(await DB.listTalabatDeductions());
+}));
+
+app.get("/api/talabat-reports/deductions/:day", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const day = String(req.params.day);
+  if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
+  const d = await DB.getTalabatDeductions(day);
+  if (!d) return res.status(404).json({ error: "No deductions pulled for that day yet." });
+  res.json(d);
+}));
+
+app.get("/api/talabat-reports/deductions/:day/download", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const day = String(req.params.day);
+  if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
+  const f = await DB.getTalabatDeductionsFile(day);
+  if (!f) return res.status(404).json({ error: "No deductions pulled for that day yet." });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${f.file_name}"`);
+  res.send(gunzip(f.csv_gz));
 }));
 
 app.get("/api/talabat-reports/:day/download", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
