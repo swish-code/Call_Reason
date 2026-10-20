@@ -133,7 +133,7 @@ export default function App() {
         const c = count || 0;
         if (c > prevUnseenRef.current) {
           playBeep();
-          setTaskToast("ðŸ”” You have a new task assigned");
+          setTaskToast("🔔 You have a new task assigned");
           setTimeout(() => setTaskToast(""), 6000);
           if ("Notification" in window && Notification.permission === "granted") {
             try { new Notification("Swish Tasks", { body: "You have a new task assigned to you." }); } catch (e) {}
@@ -150,7 +150,7 @@ export default function App() {
 
   const openTasks = () => { setActivePage("mytasks"); setUnseenTasks(0); prevUnseenRef.current = 0; };
 
-  // The Owner has no Dashboard / New Log / Team Logs / My Tasks â€” keep them off those pages
+  // The Owner has no Dashboard / New Log / Team Logs / My Tasks — keep them off those pages
   useEffect(() => {
     if (currentUser?.role === "owner" && ["dashboard", "newlog", "logs", "mytasks"].includes(activePage)) {
       setActivePage("tracker");
@@ -268,7 +268,7 @@ export default function App() {
 
         <div className="w-full max-w-5xl grid lg:grid-cols-2 bg-[var(--surface)]/80 backdrop-blur-2xl border border-white/10 rounded-[2rem] overflow-hidden shadow-2xl shadow-black/60 relative z-10 animate-fade-in">
 
-          {/* Left â€” brand / marketing panel */}
+          {/* Left — brand / marketing panel */}
           <div className="hidden lg:flex flex-col justify-between p-10 relative bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 overflow-hidden">
             <div className="absolute inset-0 opacity-20" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, #fff 1px, transparent 1px)", backgroundSize: "26px 26px" }}></div>
             <div className="absolute -bottom-20 -right-20 w-72 h-72 bg-white/10 rounded-full blur-2xl"></div>
@@ -279,7 +279,7 @@ export default function App() {
               </div>
               <h2 className="text-3xl font-black text-white mt-8 leading-tight tracking-tight">Swish Tasks</h2>
               <p className="text-blue-100/80 text-sm mt-4 font-light leading-relaxed max-w-xs">
-                One workspace for your call center, technical and complaints teams â€” log activities, track performance, and stay in control.
+                One workspace for your call center, technical and complaints teams — log activities, track performance, and stay in control.
               </p>
             </div>
 
@@ -296,10 +296,10 @@ export default function App() {
               ))}
             </div>
 
-            <div className="relative z-10 text-[11px] text-blue-100/50 font-medium mt-10">Â© {new Date().getFullYear()} Swish Tasks Â· Secure Access</div>
+            <div className="relative z-10 text-[11px] text-blue-100/50 font-medium mt-10">© {new Date().getFullYear()} Swish Tasks · Secure Access</div>
           </div>
 
-          {/* Right â€” login form */}
+          {/* Right — login form */}
           <div className="p-8 sm:p-10 md:p-12 flex flex-col justify-center">
             {/* Mobile logo */}
             <div className="lg:hidden flex items-center gap-3 mb-8">
@@ -347,7 +347,7 @@ export default function App() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                    placeholder="••••••••"
                     className="w-full pl-11 pr-11 py-3.5 bg-[var(--surface-2)] text-[var(--heading)] placeholder:text-zinc-600 border border-[var(--border)] rounded-2xl text-sm focus:ring-2 focus:ring-blue-600 focus:border-blue-600 focus:outline-none transition"
                     dir="ltr"
                   />
@@ -370,7 +370,7 @@ export default function App() {
               </button>
             </form>
 
-            <p className="text-[11px] text-zinc-600 mt-8 text-center">Protected system Â· authorized personnel only</p>
+            <p className="text-[11px] text-zinc-600 mt-8 text-center">Protected system · authorized personnel only</p>
           </div>
         </div>
       </div>
@@ -392,7 +392,7 @@ export default function App() {
   };
 
   // ----------------------------------------------------
-  // Sidebar navigation â€” config-driven, collapsible groups
+  // Sidebar navigation — config-driven, collapsible groups
   // ----------------------------------------------------
   const role = currentUser.role;
   const isMarketing = role === "marketing";
@@ -483,7 +483,7 @@ export default function App() {
         </div>
       )}
       
-      {/* Mobile backdrop â€” closes the drawer when tapped */}
+      {/* Mobile backdrop — closes the drawer when tapped */}
       {sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-30 md:hidden" aria-hidden="true" />
       )}
@@ -609,7 +609,7 @@ export default function App() {
               {activePage === "configuration" && "System Configuration"}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
-              {activePage === "history" && "History Logs â€” Audit Trail"}
+              {activePage === "history" && "History Logs — Audit Trail"}
               {activePage === "mytasks" && "My Tasks"}
               {activePage === "tasks" && "Assign Tasks"}
               {activePage === "tracker" && "Task Tracker"}
@@ -637,7 +637,7 @@ export default function App() {
                     ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                     : "bg-[var(--surface)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--heading)]"
                 }`}
-                title={shiftStatus === "on" ? "You are On Shift â€” click to end" : "You are Out of Shift â€” click to start"}
+                title={shiftStatus === "on" ? "You are On Shift — click to end" : "You are Out of Shift — click to start"}
               >
                 <Power className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{shiftStatus === "on" ? "On Shift" : "Out of Shift"}</span>
