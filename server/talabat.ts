@@ -157,6 +157,10 @@ export interface RefundRow {
   pro_fee_fils: number;
   compensation_fils: number;
   payout_fils: number | null;
+  // Pending orders only: how much lower Talabat's Estimated earnings are than the subtotal minus every listed
+  // charge. On itemised orders that identity holds exactly (3,515 of 3,517 orders, Oct 2026), so this is a
+  // deduction Talabat applied without itemising it — possibly the refund, not confirmed, never in the totals.
+  held_fils: number;
   items: string;
 }
 
@@ -171,6 +175,7 @@ export interface DeductionSummary {
   refund_fils: number;
   after_fils: number;
   compensation_fils: number;
+  held_fils: number;
   by_reason: RefundGroup[];
   by_brand: RefundGroup[];
   rows: RefundRow[];
@@ -178,6 +183,9 @@ export interface DeductionSummary {
 
 const PRO_FEE_FILS = 300;
 const PRO_FEE_MIN_AFTER_FILS = 3000;
+// Every charge the report lists against the restaurant: Estimated earnings = Subtotal − these + Vendor refunds.
+const LISTED_CHARGES = ["Packaging charges", "Minimum order value fee", "Online payment fee", "Discount Funded by you", "Voucher Funded by you",
+  "Commission", "Operational charges", "Ads fee", "Wait time fee", "Marketing fees total", "Avoidable cancellation fee", "Tax charge"];
 
 /** Parses one day's "Orders with deductions" file and works out each order's original value, refund and value after it. */
 export function readDeductions(csv: Buffer, day: string): { summary: DeductionSummary; columns: string[] } {
@@ -191,7 +199,7 @@ export function readDeductions(csv: Buffer, day: string): { summary: DeductionSu
   const missing = need.filter((n) => !idx.has(n.toLowerCase()));
   if (missing.length) throw new TalabatReportError(`Not a Talabat Order report — missing column(s): ${missing.join(", ")}.`);
 
-  const s: DeductionSummary = { orders: 0, refunded: 0, pending: 0, compensated: 0, original_fils: 0, refund_fils: 0, after_fils: 0, compensation_fils: 0, by_reason: [], by_brand: [], rows: [] };
+  const s: DeductionSummary = { orders: 0, refunded: 0, pending: 0, compensated: 0, original_fils: 0, refund_fils: 0, after_fils: 0, compensation_fils: 0, held_fils: 0, by_reason: [], by_brand: [], rows: [] };
   const groups = { reason: new Map<string, RefundGroup>(), brand: new Map<string, RefundGroup>() };
   const add = (m: Map<string, RefundGroup>, key: string, r: RefundRow) => {
     const x = m.get(key) || { key, orders: 0, original_fils: 0, refund_fils: 0 };
@@ -214,18 +222,23 @@ export function readDeductions(csv: Buffer, day: string): { summary: DeductionSu
     const proFee = pro && ops >= PRO_FEE_FILS && sub - ops >= PRO_FEE_MIN_AFTER_FILS ? PRO_FEE_FILS : 0;
     const refund = Math.max(0, ops - proFee);
     const state: RefundRow["state"] = refund > 0 ? "refunded" : comp > 0 ? "compensated" : "pending";
+    const earningsRaw = g(r, "Estimated earnings");
+    const held = state === "pending" && earningsRaw !== "" && fils(g(r, "Commission")) !== 0
+      ? Math.max(0, sub - LISTED_CHARGES.reduce((a, c) => a + fils(g(r, c)), 0) + comp - fils(earningsRaw))
+      : 0;
     const cancelled = /^cancel/i.test(status);
     const row: RefundRow = {
       id, store: g(r, "Restaurant name"), brand: brandOf(g(r, "Restaurant name")), received, status,
       reason: g(r, "Complaint reason") || (cancelled && g(r, "Cancellation reason") ? `Cancelled: ${g(r, "Cancellation reason")}` : "No complaint recorded"),
       pro, state,
       original_fils: sub, refund_fils: refund, after_fils: sub - refund, pro_fee_fils: proFee,
-      compensation_fils: comp, payout_fils: payoutRaw === "" ? null : fils(payoutRaw),
+      compensation_fils: comp, payout_fils: payoutRaw === "" ? null : fils(payoutRaw), held_fils: held,
       items: g(r, "Order items").slice(0, 400),
     };
     s.rows.push(row);
     s.orders++;
     s.compensation_fils += comp;
+    s.held_fils += held;
     if (state === "refunded") {
       s.refunded++;
       s.original_fils += sub; s.refund_fils += refund; s.after_fils += sub - refund;

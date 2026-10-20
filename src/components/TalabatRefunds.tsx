@@ -12,11 +12,11 @@ interface Row {
   id: string; store: string; brand: string; received: string; status: string; reason: string; pro: boolean;
   state: "refunded" | "pending" | "compensated";
   original_fils: number; refund_fils: number; after_fils: number; pro_fee_fils: number; compensation_fils: number;
-  payout_fils: number | null; items: string;
+  payout_fils: number | null; held_fils?: number; items: string;
 }
 interface Totals {
   orders: number; refunded: number; pending: number; compensated: number;
-  original_fils: number; refund_fils: number; after_fils: number; compensation_fils: number;
+  original_fils: number; refund_fils: number; after_fils: number; compensation_fils: number; held_fils?: number;
   by_reason: Group[]; by_brand: Group[];
 }
 interface DayList { report_day: string; order_count: number; uploaded_at: string; summary: Totals }
@@ -148,8 +148,8 @@ export default function TalabatRefunds({ initialDay, orderDays, dayOrders, onOpe
   );
   const chip = (on: boolean) => `px-3 py-1.5 rounded-xl text-[11px] font-bold border transition ${on ? "text-white border-transparent" : "bg-[var(--bg)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--heading)]"}`;
   const exportRows = () => downloadCSV(
-    ["Order ID", "Received", "Store", "Brand", "Status", "Reason", "Pro order", "State", "Original (KWD)", "Refund (KWD)", "After refund (KWD)", "Refunded %", "Pro fee kept (KWD)", "Compensation from Talabat (KWD)", "Items"],
-    rows.map((r) => [r.id, r.received, r.store, r.brand, r.status, r.reason, r.pro ? "Y" : "N", STATE[r.state].label, kwd(r.original_fils), kwd(r.refund_fils), kwd(r.after_fils), r.state === "refunded" ? fmtPct(pct(r.refund_fils, r.original_fils)) : "", kwd(r.pro_fee_fils), kwd(r.compensation_fils), r.items]),
+    ["Order ID", "Received", "Store", "Brand", "Status", "Reason", "Pro order", "State", "Original (KWD)", "Refund (KWD)", "After refund (KWD)", "Refunded %", "Pro fee kept (KWD)", "Compensation from Talabat (KWD)", "Lower earnings, not itemised (KWD)", "Items"],
+    rows.map((r) => [r.id, r.received, r.store, r.brand, r.status, r.reason, r.pro ? "Y" : "N", STATE[r.state].label, kwd(r.original_fils), kwd(r.refund_fils), kwd(r.after_fils), r.state === "refunded" ? fmtPct(pct(r.refund_fils, r.original_fils)) : "", kwd(r.pro_fee_fils), kwd(r.compensation_fils), kwd(r.held_fils || 0), r.items]),
     `talabat-partial-refunds_${day}`,
   );
   const rawDownload = async () => {
@@ -182,7 +182,8 @@ export default function TalabatRefunds({ initialDay, orderDays, dayOrders, onOpe
           {s.pending > 0 && (
             <div className="p-3 rounded-xl text-xs border bg-amber-500/10 border-amber-500/30 text-amber-500 flex items-start gap-2">
               <Clock className="w-4 h-4 shrink-0 mt-0.5" />
-              <span><b>{s.pending}</b> of this day's {s.orders} orders with deductions are not itemised by Talabat yet, so they are left out of the totals. The office PC pulls this day again every two days until {dayLong(addDays(day, 7))}; the numbers below grow as Talabat catches up.</span>
+              <span><b>{s.pending}</b> of this day's {s.orders} orders with deductions are not itemised by Talabat yet, so they are left out of the totals. The office PC pulls this day again every two days until {dayLong(addDays(day, 7))}; the numbers below grow as Talabat catches up.
+                {(s.held_fils || 0) > 0 && <> On these orders Talabat already lowered the restaurant's earnings by <b className="font-mono">≈ {kwd(s.held_fils || 0)}</b> KWD without saying why — probably the refunds, but not confirmed, so it is shown beside each order and never added to the totals.</>}</span>
             </div>
           )}
 
@@ -192,7 +193,7 @@ export default function TalabatRefunds({ initialDay, orderDays, dayOrders, onOpe
             <Card i={2} label="Refunded" color="var(--t-rose)" value={kwd(s.refund_fils)} sub={`KWD · ${fmtPct(pct(s.refund_fils, s.original_fils))} of their value`} />
             <Card i={3} label="After refund" color="var(--t-aqua)" value={kwd(s.after_fils)} sub="KWD left on these orders" />
             <Card i={4} label="Compensation" color="var(--t-amber)" value={`+${kwd(s.compensation_fils)}`} sub={`KWD Talabat paid back · ${s.compensated} order${s.compensated === 1 ? "" : "s"}`} icon={HandCoins} />
-            <Card i={5} label="Waiting for Talabat" color="var(--t-orange)" value={String(s.pending)} sub="not itemised yet" icon={Clock} />
+            <Card i={5} label="Waiting for Talabat" color="var(--t-orange)" value={String(s.pending)} sub={(s.held_fils || 0) > 0 ? `not itemised · ≈ ${kwd(s.held_fils || 0)} KWD lower earnings` : "not itemised yet"} icon={Clock} />
           </div>
 
           <div className="grid lg:grid-cols-2 gap-4">
@@ -253,7 +254,10 @@ export default function TalabatRefunds({ initialDay, orderDays, dayOrders, onOpe
                           </td>
                           <td className="py-2 px-3 text-right font-mono whitespace-nowrap">{kwd(r.original_fils)}</td>
                           <td className="py-2 px-3 text-right font-mono whitespace-nowrap font-bold" style={{ color: r.refund_fils ? "var(--t-rose)" : undefined }}>
-                            {r.refund_fils ? `−${kwd(r.refund_fils)}` : r.compensation_fils ? <span className="text-emerald-500">+{kwd(r.compensation_fils)}</span> : "—"}
+                            {r.refund_fils ? `−${kwd(r.refund_fils)}`
+                              : r.compensation_fils ? <span className="text-emerald-500">+{kwd(r.compensation_fils)}</span>
+                              : (r.held_fils || 0) > 0 ? <span className="text-[var(--muted)] font-normal" title="Talabat lowered this order's earnings by this much without itemising it — probably the refund, not confirmed, not in the totals">≈ −{kwd(r.held_fils || 0)}</span>
+                              : "—"}
                           </td>
                           <td className="py-2 px-3 text-right font-mono whitespace-nowrap text-[var(--heading)]">{r.state === "pending" ? "—" : kwd(r.after_fils)}</td>
                           <td className="py-2 px-3 text-right whitespace-nowrap">
