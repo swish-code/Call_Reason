@@ -19,6 +19,7 @@ import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
 import ChangePassword from "./components/ChangePassword.tsx";
 import OpsTasks from "./components/OpsTasks.tsx";
 import OpsTaskTypes from "./components/OpsTaskTypes.tsx";
+import TalabatReports from "./components/TalabatReports.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -60,16 +61,17 @@ import {
   Send,
   Star,
   MessageSquare,
-  KeyRound
+  KeyRound,
+  ShoppingBag
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
+type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "talabat" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
   newlog: "logs", logs: "logs", history: "logs",
   mytasks: "tasks", tasks: "tasks", pool: "tasks", tracker: "tasks", recurring: "tasks",
-  reports: "insights", performance: "insights",
+  reports: "insights", performance: "insights", talabat: "insights",
   reviews: "feedback", surveys: "feedback", feedbackdash: "feedback",
   users: "admin", configuration: "admin", audit: "admin",
 };
@@ -427,6 +429,7 @@ export default function App() {
       { page: "reports", label: "Reports & Export", icon: FileText, visible: notAgent },
       { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
       { page: "teamleaderkpi", label: "Team Leader KPI", icon: Crown, visible: notAgent },
+      { page: "talabat", label: "Talabat Report", icon: ShoppingBag, visible: isAdmin },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
       { page: "feedbackdash", label: "Feedback Dashboard", icon: BarChart2, visible: notAgent },
@@ -600,6 +603,7 @@ export default function App() {
               {activePage === "reports" && "Reports & Export"}
               {activePage === "performance" && "Team Performance"}
               {activePage === "teamleaderkpi" && "Team Leader KPI"}
+              {activePage === "talabat" && "Talabat Report"}
               {activePage === "users" && "User and Access Role Management"}
               {activePage === "audit" && "Audit"}
               {activePage === "configuration" && "System Configuration"}
@@ -724,6 +728,9 @@ export default function App() {
           )}
           {activePage === "teamleaderkpi" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
             <TeamLeaderKpi currentUser={currentUser} onViewTasks={(id) => { setTrackerFocusUserId(id); setActivePage("tracker"); }} />
+          )}
+          {activePage === "talabat" && isAdmin && (
+            <TalabatReports currentUser={currentUser} />
           )}
           {activePage === "reviews" && !isOpsRole && (
             <Reviews currentUser={currentUser} />

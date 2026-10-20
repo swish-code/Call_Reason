@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import { timingSafeEqual } from "crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
@@ -7,6 +8,7 @@ import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
+import { readReport, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3333,6 +3335,54 @@ app.delete("/api/do-not-call/:key", authenticateJWT, asyncHandler(async (req: an
   if (!ok) return res.status(404).json({ error: "Not on the list." });
   req.auditExtra = { details: `Removed from Do Not Call: ${req.params.key}` };
   res.json({ ok: true });
+}));
+
+// ---- Talabat Order report: uploaded every morning by the talabat-export tool on the office PC ----
+// The tool has no user account, so the upload route takes the shared key in TALABAT_UPLOAD_KEY instead of a
+// login. Without that variable the route stays closed (503), never open. Reading the reports is admin only.
+const TALABAT_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const talabatKeyOk = (given: unknown): boolean => {
+  const key = process.env.TALABAT_UPLOAD_KEY || "";
+  const a = Buffer.from(String(given || ""));
+  const b = Buffer.from(key);
+  return key.length >= 24 && a.length === b.length && timingSafeEqual(a, b);
+};
+app.post("/api/talabat-reports/upload",
+  express.raw({ type: ["text/csv", "application/gzip", "application/octet-stream"], limit: "60mb" }),
+  asyncHandler(async (req: any, res) => {
+    if (!process.env.TALABAT_UPLOAD_KEY) return res.status(503).json({ error: "TALABAT_UPLOAD_KEY is not set on the server." });
+    if (!talabatKeyOk(req.headers["x-upload-key"])) return res.status(401).json({ error: "Wrong upload key." });
+    const day = String(req.query.day || "");
+    if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Send the CSV as the request body (text/csv or application/gzip)." });
+    let csv: Buffer;
+    try { csv = plainCsv(req.body); } catch { return res.status(400).json({ error: "The gzip body could not be read." }); }
+    let report;
+    try { report = readReport(csv, day); } catch (e: any) {
+      if (e instanceof TalabatReportError) return res.status(422).json({ error: e.message });
+      throw e;
+    }
+    const fileName = `talabat-orders_${day}.csv`;
+    const created = await DB.saveTalabatReport({
+      day, fileName, csvGz: gzip(csv), csvBytes: csv.length, orderCount: report.summary.orders,
+      summary: report.summary, columns: report.columns, exportId: String(req.query.export_id || "").slice(0, 80) || null,
+    });
+    console.log(`[talabat] ${created ? "saved" : "replaced"} ${day}: ${report.summary.orders} orders, ${csv.length} bytes`);
+    res.json({ ok: true, day, created, orders: report.summary.orders, stores: report.summary.stores });
+  }));
+
+app.get("/api/talabat-reports", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
+  res.json(await DB.listTalabatReports());
+}));
+
+app.get("/api/talabat-reports/:day/download", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const day = String(req.params.day);
+  if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
+  const f = await DB.getTalabatReportFile(day);
+  if (!f) return res.status(404).json({ error: "No Talabat report for that day." });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${f.file_name}"`);
+  res.send(gunzip(f.csv_gz));
 }));
 
 // Daily capacity for the next 7 days

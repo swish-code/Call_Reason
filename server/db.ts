@@ -699,6 +699,20 @@ export class DB {
         added_by_name TEXT,
         added_at TIMESTAMPTZ DEFAULT now()
       );
+      -- Talabat partner-portal Order report, one row per Kuwait day (YYYY-MM-DD), uploaded each morning by
+      -- the talabat-export tool. The CSV is kept gzipped, and its summary (see server/talabat.ts) beside it.
+      -- A re-upload of the same day replaces it. Admin only.
+      CREATE TABLE IF NOT EXISTS talabat_reports (
+        report_day TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        csv_gz BYTEA NOT NULL,
+        csv_bytes INTEGER NOT NULL,
+        order_count INTEGER NOT NULL,
+        summary JSONB NOT NULL,
+        columns JSONB,
+        export_id TEXT,
+        uploaded_at TIMESTAMPTZ DEFAULT now()
+      );
     `);
     if (!dncExisted) {
       await pool.query(
@@ -2439,6 +2453,32 @@ export class DB {
   static async removeDnc(key: string): Promise<boolean> {
     const res = await pool.query("DELETE FROM do_not_call WHERE phone_key = $1", [key]);
     return (res.rowCount ?? 0) > 0;
+  }
+
+  // ---- Talabat Order report (see the talabat_reports table) ----
+  /** Saves one day's report; a second upload of the same day replaces it. True when the day was new. */
+  static async saveTalabatReport(r: { day: string; fileName: string; csvGz: Buffer; csvBytes: number; orderCount: number; summary: any; columns: string[]; exportId: string | null }): Promise<boolean> {
+    const { rows } = await pool.query(
+      `INSERT INTO talabat_reports (report_day, file_name, csv_gz, csv_bytes, order_count, summary, columns, export_id, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())
+       ON CONFLICT (report_day) DO UPDATE SET file_name = EXCLUDED.file_name, csv_gz = EXCLUDED.csv_gz, csv_bytes = EXCLUDED.csv_bytes,
+         order_count = EXCLUDED.order_count, summary = EXCLUDED.summary, columns = EXCLUDED.columns, export_id = EXCLUDED.export_id, uploaded_at = now()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.day, r.fileName, r.csvGz, r.csvBytes, r.orderCount, JSON.stringify(r.summary), JSON.stringify(r.columns), r.exportId]);
+    return !!rows[0]?.inserted;
+  }
+
+  /** Every uploaded day, newest first, without the file itself. */
+  static async listTalabatReports(limit = 400): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT report_day, file_name, csv_bytes, order_count, summary, export_id, uploaded_at
+         FROM talabat_reports ORDER BY report_day DESC LIMIT $1`, [limit]);
+    return rows;
+  }
+
+  static async getTalabatReportFile(day: string): Promise<{ file_name: string; csv_gz: Buffer } | undefined> {
+    const { rows } = await pool.query("SELECT file_name, csv_gz FROM talabat_reports WHERE report_day = $1", [day]);
+    return rows[0];
   }
 
   static async getQueuedAssignment(brandId: string | null, phone: string): Promise<{ status: string; scheduled_date: string; created_at: string; template_name: string | null; brand_name: string | null } | undefined> {
