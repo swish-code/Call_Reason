@@ -3382,6 +3382,13 @@ app.get("/api/talabat-reports/:day/download", authenticateJWT, requireAdmin, asy
   if (!f) return res.status(404).json({ error: "No Talabat report for that day." });
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${f.file_name}"`);
+  res.setHeader("Vary", "Accept-Encoding");
+  // The page reads this file for its orders table: send the stored gzip as it is (a tenth of the size), the
+  // browser unpacks it. Only a client that cannot take gzip gets it unpacked here.
+  if (req.acceptsEncodings("gzip")) {
+    res.setHeader("Content-Encoding", "gzip");
+    return res.send(f.csv_gz);
+  }
   res.send(gunzip(f.csv_gz));
 }));
 

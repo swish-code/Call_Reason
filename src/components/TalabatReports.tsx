@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { ShoppingBag, Download, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, Clock, Store, RefreshCw } from "lucide-react";
+import TalabatOrders, { type OrdersPreset } from "./TalabatOrders.tsx";
+import { ShoppingBag, Download, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, Clock, Store, RefreshCw, LayoutDashboard, ListOrdered } from "lucide-react";
 
 // Talabat partner-portal Order report (every store, one row per order). The talabat-export tool on the office PC
 // downloads it each morning after 06:00 Kuwait time and uploads it here; the server keeps the CSV and a summary of
@@ -87,10 +88,11 @@ function Delta({ now, before, against, invert }: { now: number; before?: number;
   );
 }
 
-function Kpi({ label, color, value, format, sub, delta, i }: { label: string; color: string; value: number; format: (n: number) => string; sub?: string; delta: ReactNode; i: number }) {
+function Kpi({ label, color, value, format, sub, delta, i, onClick }: { label: string; color: string; value: number; format: (n: number) => string; sub?: string; delta: ReactNode; i: number; onClick?: () => void }) {
   const v = useCountUp(value);
   return (
-    <div className="tlb-rise relative overflow-hidden bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-lg" style={{ animationDelay: `${i * 60}ms` }}>
+    <div onClick={onClick} title={onClick ? "Show these orders" : undefined}
+      className={`tlb-rise relative overflow-hidden bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-lg ${onClick ? "cursor-pointer transition hover:-translate-y-0.5 hover:shadow-xl" : ""}`} style={{ animationDelay: `${i * 60}ms` }}>
       <div className="absolute -top-10 -right-10 w-28 h-28 rounded-full blur-2xl opacity-20" style={{ background: color }} />
       <div className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider text-[var(--muted)] uppercase">
         <span className="w-2 h-2 rounded-full" style={{ background: color }} />{label}
@@ -170,6 +172,9 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
   const [error, setError] = useState("");
   const [day, setDay] = useState("");
   const [busy, setBusy] = useState("");
+  const [tab, setTab] = useState<"overview" | "orders">("overview");
+  const [preset, setPreset] = useState<OrdersPreset | undefined>();
+  const showOrders = (p: Omit<OrdersPreset, "nonce">) => { setPreset({ ...p, nonce: Date.now() }); setTab("orders"); };
 
   const load = useCallback(async () => {
     try {
@@ -267,11 +272,24 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
             </button>
           </div>
 
+          <div className="flex items-center gap-1 p-1 bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-lg w-fit" role="tablist">
+            {([["overview", "Overview", LayoutDashboard], ["orders", `Orders · ${num(s.orders)}`, ListOrdered]] as const).map(([k, label, Icon]) => (
+              <button key={k} role="tab" aria-selected={tab === k} onClick={() => { if (k === "orders") setPreset(undefined); setTab(k); }}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${tab === k ? "text-white shadow-md" : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"}`}
+                style={tab === k ? { background: "var(--t-orange)" } : undefined}>
+                <Icon className="w-4 h-4" /> {label}
+              </button>
+            ))}
+          </div>
+
+          {tab === "orders" ? (
+            <TalabatOrders day={cur.report_day} version={cur.uploaded_at} preset={preset} />
+          ) : (<>
           <div key={day} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <Kpi i={0} label="Orders" color="var(--t-orange)" value={s.orders} format={num} sub={`${s.stores} stores`} delta={<Delta now={s.orders} before={p?.orders} against={against} />} />
             <Kpi i={1} label="Delivered" color="var(--t-aqua)" value={s.delivered} format={num} sub={`${fmtPct(pct(s.delivered, s.orders))} of orders`} delta={<Delta now={s.delivered} before={p?.delivered} against={against} />} />
-            <Kpi i={2} label="Cancelled" color="var(--t-rose)" value={s.cancelled} format={num} sub={`${fmtPct(pct(s.cancelled, s.orders))} cancel rate`} delta={<Delta now={s.cancelled} before={p?.cancelled} against={against} invert />} />
-            <Kpi i={3} label="Complaints" color="var(--t-amber)" value={s.complaints} format={num} sub={`${fmtPct(pct(s.complaints, s.orders))} of orders`} delta={<Delta now={s.complaints} before={p?.complaints} against={against} invert />} />
+            <Kpi i={2} label="Cancelled" color="var(--t-rose)" value={s.cancelled} format={num} sub={`${fmtPct(pct(s.cancelled, s.orders))} cancel rate`} delta={<Delta now={s.cancelled} before={p?.cancelled} against={against} invert />} onClick={() => showOrders({ status: "cancelled" })} />
+            <Kpi i={3} label="Complaints" color="var(--t-amber)" value={s.complaints} format={num} sub={`${fmtPct(pct(s.complaints, s.orders))} of orders`} delta={<Delta now={s.complaints} before={p?.complaints} against={against} invert />} onClick={() => showOrders({ complaints: true })} />
             <Kpi i={4} label="Sales (KWD)" color="var(--t-violet)" value={s.sales_fils} format={(f) => kwd(f, 0)} sub={`${kwd(s.sales_fils)} subtotal, not cancelled`} delta={<Delta now={s.sales_fils} before={p?.sales_fils} against={against} />} />
             <Kpi i={5} label="Avg order (KWD)" color="var(--t-orange-soft)" value={avgFils(s)} format={(f) => kwd(f)} sub={`Pro orders ${fmtPct(pct(s.pro_orders, s.orders))}`} delta={<Delta now={avgFils(s)} before={p ? avgFils(p) : undefined} against={against} />} />
           </div>
@@ -328,7 +346,7 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
                   {s.brands.map((b, i) => {
                     const cr = pct(b.cancelled, b.orders);
                     return (
-                      <tr key={b.brand} className="border-b border-[var(--border)]/40 hover:bg-[var(--surface-2)]/30">
+                      <tr key={b.brand} onClick={() => showOrders({ brand: b.brand })} title={`Show the ${b.brand} orders`} className="border-b border-[var(--border)]/40 hover:bg-[var(--surface-2)]/30 cursor-pointer">
                         <td className="py-2.5 px-4 font-bold text-[var(--heading)] whitespace-nowrap">{b.brand}</td>
                         <td className="py-2.5 px-4">
                           <div className="flex items-center gap-2">
@@ -406,6 +424,7 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
               </table>
             </div>
           </div>
+          </>)}
         </>
       )}
       <p className="text-[11px] text-[var(--muted)]">Signed in as {currentUser.full_name}. Only System Admins can open this page.</p>
