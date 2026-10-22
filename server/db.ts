@@ -724,6 +724,54 @@ export class DB {
         summary JSONB NOT NULL,
         uploaded_at TIMESTAMPTZ DEFAULT now()
       );
+      -- Keeta's daily Download-center "Order data" report (by completion date), kept as gzipped CSV like Talabat's.
+      CREATE TABLE IF NOT EXISTS keeta_reports (
+        report_day TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        csv_gz BYTEA NOT NULL,
+        csv_bytes INTEGER NOT NULL,
+        order_count INTEGER NOT NULL,
+        summary JSONB NOT NULL,
+        columns JSONB,
+        uploaded_at TIMESTAMPTZ DEFAULT now()
+      );
+      -- One row per order of every delivery platform (platform = 'talabat' | 'keeta'), money in fils. The base_*
+      -- columns are what the platform's report says; platform_refunds then restates refunded orders.
+      -- base_payout NULL = the platform has not charged the order yet (no payout known, never guessed).
+      -- adjust = cancelled orders only: compensation paid to us (+) or commission taken back (-).
+      CREATE TABLE IF NOT EXISTS platform_orders (
+        platform TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        day TEXT NOT NULL,
+        brand TEXT,
+        store TEXT,
+        valid BOOLEAN NOT NULL,
+        cancelled BOOLEAN NOT NULL DEFAULT false,
+        base_item INTEGER NOT NULL DEFAULT 0,
+        base_promo INTEGER NOT NULL DEFAULT 0,
+        base_payout INTEGER,
+        adjust INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (platform, order_id, day)
+      );
+      CREATE INDEX IF NOT EXISTS idx_platform_orders_day ON platform_orders(platform, day, brand);
+      CREATE INDEX IF NOT EXISTS idx_platform_orders_order ON platform_orders(platform, order_id);
+      CREATE TABLE IF NOT EXISTS platform_refunds (
+        platform TEXT NOT NULL,
+        order_id TEXT NOT NULL,
+        original INTEGER NOT NULL,
+        item_after INTEGER NOT NULL,
+        promo_after INTEGER,
+        payout_after INTEGER,
+        refund_money INTEGER,
+        partial BOOLEAN,
+        reason TEXT,
+        responsible TEXT,
+        ordered_at TEXT,
+        refunded_at TEXT,
+        store TEXT,
+        brand TEXT,
+        PRIMARY KEY (platform, order_id)
+      );
     `);
     if (!dncExisted) {
       await pool.query(
@@ -2519,6 +2567,135 @@ export class DB {
 
   static async getTalabatDeductionsFile(day: string): Promise<{ file_name: string; csv_gz: Buffer } | undefined> {
     const { rows } = await pool.query("SELECT file_name, csv_gz FROM talabat_deductions WHERE report_day = $1", [day]);
+    return rows[0];
+  }
+
+  /** Days of Talabat uploads, for rebuilding platform_orders (see syncTalabatPlatformData in server.ts). */
+  static async talabatReportDays(): Promise<{ report_day: string; has_facts: boolean }[]> {
+    const { rows } = await pool.query(
+      `SELECT t.report_day, EXISTS (SELECT 1 FROM platform_orders p WHERE p.platform = 'talabat' AND p.day = t.report_day) AS has_facts
+         FROM talabat_reports t ORDER BY t.report_day`);
+    return rows;
+  }
+  static async getTalabatReportCsvGz(day: string): Promise<Buffer | undefined> {
+    const { rows } = await pool.query("SELECT csv_gz FROM talabat_reports WHERE report_day = $1", [day]);
+    return rows[0]?.csv_gz;
+  }
+  static async talabatDeductionRows(day: string): Promise<any[]> {
+    const { rows } = await pool.query("SELECT summary FROM talabat_deductions WHERE report_day = $1", [day]);
+    return rows[0]?.summary?.rows || [];
+  }
+
+  // ---- Delivery platforms (platform_orders / platform_refunds / keeta_reports) ----
+  /** Replaces one platform's orders of one day (a re-upload of the day wins). */
+  static async replacePlatformOrders(platform: string, day: string, facts: any[]): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM platform_orders WHERE platform = $1 AND day = $2", [platform, day]);
+      for (let i = 0; i < facts.length; i += 500) {
+        const chunk = facts.slice(i, i + 500);
+        const params: any[] = [];
+        const values = chunk.map((f, k) => {
+          const b = k * 11;
+          params.push(platform, f.order_id, day, f.brand, f.store, f.valid, f.cancelled, f.base_item, f.base_promo, f.base_payout, f.adjust);
+          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9},$${b + 10},$${b + 11})`;
+        });
+        await client.query(
+          `INSERT INTO platform_orders (platform, order_id, day, brand, store, valid, cancelled, base_item, base_promo, base_payout, adjust)
+           VALUES ${values.join(",")} ON CONFLICT (platform, order_id, day) DO NOTHING`, params);
+      }
+      await client.query("COMMIT");
+    } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; } finally { client.release(); }
+  }
+
+  /** Adds / updates refunds. `replaceForDay` first removes the refunds of that day's orders (Talabat re-pulls a whole day). */
+  static async upsertPlatformRefunds(platform: string, rows: any[], replaceForDay?: string): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (replaceForDay) {
+        await client.query(
+          `DELETE FROM platform_refunds WHERE platform = $1 AND order_id IN (SELECT order_id FROM platform_orders WHERE platform = $1 AND day = $2)`,
+          [platform, replaceForDay]);
+      }
+      for (let i = 0; i < rows.length; i += 400) {
+        const chunk = rows.slice(i, i + 400);
+        const params: any[] = [];
+        const values = chunk.map((r, k) => {
+          const b = k * 14;
+          params.push(platform, r.order_id, r.original, r.item_after, r.promo_after ?? null, r.payout_after ?? null, r.refund_money ?? null, r.partial ?? null,
+            r.reason ?? null, r.responsible ?? null, r.ordered_at ?? null, r.refunded_at ?? null, r.store ?? null, r.brand ?? null);
+          return `(${Array.from({ length: 14 }, (_, j) => `$${b + j + 1}`).join(",")})`;
+        });
+        await client.query(
+          `INSERT INTO platform_refunds (platform, order_id, original, item_after, promo_after, payout_after, refund_money, partial, reason, responsible, ordered_at, refunded_at, store, brand)
+           VALUES ${values.join(",")}
+           ON CONFLICT (platform, order_id) DO UPDATE SET original = EXCLUDED.original, item_after = EXCLUDED.item_after, promo_after = EXCLUDED.promo_after,
+             payout_after = EXCLUDED.payout_after, refund_money = EXCLUDED.refund_money, partial = EXCLUDED.partial, reason = EXCLUDED.reason,
+             responsible = EXCLUDED.responsible, ordered_at = EXCLUDED.ordered_at, refunded_at = EXCLUDED.refunded_at, store = EXCLUDED.store, brand = EXCLUDED.brand`, params);
+      }
+      await client.query("COMMIT");
+    } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; } finally { client.release(); }
+  }
+
+  /**
+   * Per platform / day / brand: orders, cancelled, gross sales (item value before refunds), our promotion cost, refunds
+   * (items refunded), payout (only orders whose payout is known), how many orders that is and what those orders' net
+   * sales are (net_known, so the commission rate can be measured on exactly the orders that have a payout), and the
+   * cancelled-order adjustments. Refunded orders are restated from platform_refunds: gross = their original value, promo / payout = after.
+   */
+  static async platformDaily(from: string, to: string): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT o.platform, o.day, COALESCE(o.brand, 'Unknown') AS brand,
+              COUNT(*) FILTER (WHERE o.valid)::int AS orders,
+              COUNT(*) FILTER (WHERE o.cancelled)::int AS cancelled,
+              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.original, o.base_item) END), 0)::bigint AS gross,
+              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.promo_after, o.base_promo) END), 0)::bigint AS promo,
+              COALESCE(SUM(CASE WHEN o.valid AND r.order_id IS NOT NULL THEN r.original - r.item_after END), 0)::bigint AS refund,
+              COUNT(*) FILTER (WHERE o.valid AND r.order_id IS NOT NULL)::int AS refunded_orders,
+              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.payout_after, o.base_payout) END), 0)::bigint AS payout,
+              COUNT(*) FILTER (WHERE o.valid AND COALESCE(r.payout_after, o.base_payout) IS NOT NULL)::int AS payout_orders,
+              COALESCE(SUM(CASE WHEN o.valid AND COALESCE(r.payout_after, o.base_payout) IS NOT NULL
+                                THEN COALESCE(r.original, o.base_item) - COALESCE(r.promo_after, o.base_promo) - CASE WHEN r.order_id IS NOT NULL THEN r.original - r.item_after ELSE 0 END END), 0)::bigint AS net_known,
+              COALESCE(SUM(o.adjust) FILTER (WHERE o.cancelled), 0)::bigint AS adjust
+         FROM platform_orders o
+         LEFT JOIN platform_refunds r ON r.platform = o.platform AND r.order_id = o.order_id
+        WHERE o.day >= $1 AND o.day <= $2
+        GROUP BY o.platform, o.day, COALESCE(o.brand, 'Unknown')
+        ORDER BY o.day, o.platform, brand`, [from, to]);
+    return rows.map((r) => ({ ...r, gross: Number(r.gross), promo: Number(r.promo), refund: Number(r.refund), payout: Number(r.payout), net_known: Number(r.net_known), adjust: Number(r.adjust) }));
+  }
+
+  /** Every refund of a platform, newest first, with the day / brand of the order when the order is on file. */
+  static async platformRefunds(platform: string, limit = 5000): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT r.order_id, r.original, r.item_after, r.promo_after, r.payout_after, r.refund_money, r.partial, r.reason, r.responsible,
+              r.ordered_at, r.refunded_at, COALESCE(r.store, o.store) AS store, COALESCE(NULLIF(r.brand, ''), o.brand) AS brand,
+              o.day AS day, o.cancelled AS order_cancelled, o.base_payout
+         FROM platform_refunds r
+         LEFT JOIN LATERAL (SELECT day, store, brand, cancelled, base_payout FROM platform_orders p WHERE p.platform = r.platform AND p.order_id = r.order_id ORDER BY day DESC LIMIT 1) o ON TRUE
+        WHERE r.platform = $1 ORDER BY r.refunded_at DESC NULLS LAST, r.order_id LIMIT $2`, [platform, limit]);
+    return rows;
+  }
+
+  static async saveKeetaReport(r: { day: string; fileName: string; csvGz: Buffer; csvBytes: number; orderCount: number; summary: any; columns: string[] }): Promise<boolean> {
+    const { rows } = await pool.query(
+      `INSERT INTO keeta_reports (report_day, file_name, csv_gz, csv_bytes, order_count, summary, columns, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, now())
+       ON CONFLICT (report_day) DO UPDATE SET file_name = EXCLUDED.file_name, csv_gz = EXCLUDED.csv_gz, csv_bytes = EXCLUDED.csv_bytes,
+         order_count = EXCLUDED.order_count, summary = EXCLUDED.summary, columns = EXCLUDED.columns, uploaded_at = now()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.day, r.fileName, r.csvGz, r.csvBytes, r.orderCount, JSON.stringify(r.summary), JSON.stringify(r.columns)]);
+    return !!rows[0]?.inserted;
+  }
+  static async listKeetaReports(limit = 400): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT report_day, file_name, csv_bytes, order_count, summary, uploaded_at FROM keeta_reports ORDER BY report_day DESC LIMIT $1`, [limit]);
+    return rows;
+  }
+  static async getKeetaReportFile(day: string): Promise<{ file_name: string; csv_gz: Buffer } | undefined> {
+    const { rows } = await pool.query("SELECT file_name, csv_gz FROM keeta_reports WHERE report_day = $1", [day]);
     return rows[0];
   }
 

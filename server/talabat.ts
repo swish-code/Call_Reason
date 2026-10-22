@@ -5,6 +5,7 @@
 // ("Has Complaint?" became "Has complaint?" in Oct 2026).
 import { gunzipSync, gzipSync } from "zlib";
 import { parseCsv, brandOf } from "../src/lib/talabatCsv.js";
+import type { PlatformFact } from "./keeta.js";
 
 export { parseCsv, brandOf };
 
@@ -256,6 +257,46 @@ export function readDeductions(csv: Buffer, day: string): { summary: DeductionSu
   s.by_brand = sorted(groups.brand);
   s.rows.sort((a, b) => b.refund_fils - a.refund_fils || a.id.localeCompare(b.id));
   return { summary: s, columns };
+}
+
+/**
+ * The day's orders as platform facts (see PlatformFact): what the Delivery Platforms dashboard adds up.
+ * Item value = Subtotal; our own promotion cost = Discount + Voucher funded by us; what Talabat pays us = Estimated
+ * earnings, but only once Talabat has charged the order (Commission present) — on the morning after only ~41% of the
+ * orders are charged, ~99% after four days, so an uncharged order has NO payout yet (null), never a guessed one.
+ * A cancelled order keeps its Estimated earnings as an adjustment (negative when Talabat takes the commission back).
+ */
+export function readTalabatFacts(csv: Buffer, day: string): PlatformFact[] {
+  const text = csv.toString("utf8").replace(/^\uFEFF/, "");
+  const rows = parseCsv(text).filter((r) => r.length > 1 || (r[0] || "").trim());
+  if (!rows.length) return [];
+  const idx = new Map(rows[0].map((h, i) => [h.trim().toLowerCase(), i]));
+  const col = (n: string) => idx.get(n.toLowerCase()) ?? -1;
+  const c = {
+    id: col("Order ID"), name: col("Restaurant name"), status: col("Order status"), subtotal: col("Subtotal"),
+    disc: col("Discount Funded by you"), voucher: col("Voucher Funded by you"), comm: col("Commission"), earn: col("Estimated earnings"),
+  };
+  if (c.id < 0 || c.status < 0) return [];
+  const g = (r: string[], i: number) => (i >= 0 ? (r[i] || "").trim() : "");
+  const out: PlatformFact[] = [];
+  const seen = new Set<string>();
+  for (const r of rows.slice(1)) {
+    const id = g(r, c.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const store = g(r, c.name);
+    const cancelled = /^cancel/i.test(g(r, c.status));
+    const charged = fils(g(r, c.comm)) !== 0;
+    const earn = fils(g(r, c.earn));
+    out.push({
+      order_id: id, day, brand: brandOf(store), store, valid: !cancelled, cancelled,
+      base_item: cancelled ? 0 : fils(g(r, c.subtotal)),
+      base_promo: cancelled ? 0 : fils(g(r, c.disc)) + fils(g(r, c.voucher)),
+      base_payout: cancelled ? null : charged ? earn : null,
+      adjust: cancelled ? earn : 0,
+    });
+  }
+  return out;
 }
 
 /** The upload body may arrive gzipped (the tool compresses it) or as plain CSV. */

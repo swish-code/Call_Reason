@@ -17,23 +17,23 @@ interface Summary {
 }
 interface Report { report_day: string; file_name: string; csv_bytes: number; order_count: number; summary: Summary; export_id: string | null; uploaded_at: string }
 
-const KW_MS = 3 * 3600_000;
-const kwNow = () => new Date(Date.now() + KW_MS);
-const kwToday = () => kwNow().toISOString().slice(0, 10);
-const addDays = (day: string, n: number) => new Date(Date.parse(day + "T00:00:00Z") + n * 86400_000).toISOString().slice(0, 10);
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const dayShort = (d: string) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
-const dayLong = (d: string) => `${WEEKDAYS[new Date(d + "T00:00:00Z").getUTCDay()]} ${dayShort(d)} ${d.slice(0, 4)}`;
-const kwTime = (ts: string) => new Date(new Date(ts).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16);
-const kwd = (f: number, dp = 3) => (f / 1000).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
-const num = (n: number) => Math.round(n).toLocaleString("en-US");
-const pct = (n: number, d: number) => (d > 0 ? (n / d) * 100 : 0);
-const fmtPct = (v: number) => `${v.toFixed(v >= 10 || v === 0 ? 0 : 1)}%`;
-const mb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
+export const KW_MS = 3 * 3600_000;
+export const kwNow = () => new Date(Date.now() + KW_MS);
+export const kwToday = () => kwNow().toISOString().slice(0, 10);
+export const addDays = (day: string, n: number) => new Date(Date.parse(day + "T00:00:00Z") + n * 86400_000).toISOString().slice(0, 10);
+export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const dayShort = (d: string) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
+export const dayLong = (d: string) => `${WEEKDAYS[new Date(d + "T00:00:00Z").getUTCDay()]} ${dayShort(d)} ${d.slice(0, 4)}`;
+export const kwTime = (ts: string) => new Date(new Date(ts).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16);
+export const kwd = (f: number, dp = 3) => (f / 1000).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+export const num = (n: number) => Math.round(n).toLocaleString("en-US");
+export const pct = (n: number, d: number) => (d > 0 ? (n / d) * 100 : 0);
+export const fmtPct = (v: number) => `${v.toFixed(v >= 10 || v === 0 ? 0 : 1)}%`;
+export const mb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
 const avgFils = (s: { sales_fils: number; orders: number; cancelled: number }) => (s.orders - s.cancelled > 0 ? s.sales_fils / (s.orders - s.cancelled) : 0);
 
-const STYLE = `
+export const STYLE = `
 .tlb { --t-orange:#ff5a00; --t-orange-soft:#ffb27f; --t-aqua:#1baf7a; --t-rose:#e11d48; --t-violet:#6250d6; --t-amber:#eda100; }
 .dark .tlb { --t-orange:#ff6d1f; --t-orange-soft:#9a4a1f; --t-aqua:#199e70; --t-rose:#f43f5e; --t-violet:#9085e9; --t-amber:#c98500; }
 @keyframes tlb-rise { from { opacity:0; transform: translateY(6px) } to { opacity:1; transform:none } }
@@ -45,7 +45,7 @@ const STYLE = `
 `;
 
 /** Counts up from the previous value to the new one, so switching days visibly moves the numbers. */
-function useCountUp(target: number, ms = 650): number {
+export function useCountUp(target: number, ms = 650): number {
   const [v, setV] = useState(0);
   const from = useRef(0);
   useEffect(() => {
@@ -67,7 +67,7 @@ function useCountUp(target: number, ms = 650): number {
 }
 
 /** False for one frame after `key` changes, so bars can grow in from zero. */
-function useGrow(key: unknown): boolean {
+export function useGrow(key: unknown): boolean {
   const [grown, setGrown] = useState(false);
   useEffect(() => {
     setGrown(false);
@@ -78,7 +78,7 @@ function useGrow(key: unknown): boolean {
   return grown;
 }
 
-function Delta({ now, before, against, invert }: { now: number; before?: number; against?: string; invert?: boolean }) {
+export function Delta({ now, before, against, invert }: { now: number; before?: number; against?: string; invert?: boolean }) {
   if (before === undefined || !against) return <span className="text-[10px] text-[var(--muted)]">no earlier day to compare</span>;
   if (before === 0) return <span className="text-[10px] text-[var(--muted)]">vs {against}: —</span>;
   const d = ((now - before) / before) * 100;
@@ -91,7 +91,7 @@ function Delta({ now, before, against, invert }: { now: number; before?: number;
   );
 }
 
-function Kpi({ label, color, value, format, sub, delta, i, onClick }: { label: string; color: string; value: number; format: (n: number) => string; sub?: string; delta: ReactNode; i: number; onClick?: () => void }) {
+export function Kpi({ label, color, value, format, sub, delta, i, onClick }: { label: string; color: string; value: number; format: (n: number) => string; sub?: string; delta: ReactNode; i: number; onClick?: () => void }) {
   const v = useCountUp(value);
   return (
     <div onClick={onClick} title={onClick ? "Show these orders" : undefined}
@@ -107,7 +107,7 @@ function Kpi({ label, color, value, format, sub, delta, i, onClick }: { label: s
   );
 }
 
-function HourlyChart({ hourly, grown }: { hourly: number[]; grown: boolean }) {
+export function HourlyChart({ hourly, grown }: { hourly: number[]; grown: boolean }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 720, H = 230, ML = 36, MR = 8, MT = 22, MB = 26, PW = W - ML - MR, PH = H - MT - MB;
   const max = Math.max(1, ...hourly);

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { User, UserRole } from "./types.js";
 import UsersManagement from "./components/UsersManagement.tsx";
 import AuditPage from "./components/AuditPage.tsx";
@@ -19,7 +19,7 @@ import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
 import ChangePassword from "./components/ChangePassword.tsx";
 import OpsTasks from "./components/OpsTasks.tsx";
 import OpsTaskTypes from "./components/OpsTaskTypes.tsx";
-import TalabatReports from "./components/TalabatReports.tsx";
+import DeliveryPlatforms from "./components/DeliveryPlatforms.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Phone,
@@ -429,7 +429,7 @@ export default function App() {
       { page: "reports", label: "Reports & Export", icon: FileText, visible: notAgent },
       { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
       { page: "teamleaderkpi", label: "Team Leader KPI", icon: Crown, visible: notAgent },
-      { page: "talabat", label: "Talabat Report", icon: ShoppingBag, visible: isAdmin },
+      { page: "talabat", label: "Delivery Platforms", icon: ShoppingBag, visible: isAdmin },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
       { page: "feedbackdash", label: "Feedback Dashboard", icon: BarChart2, visible: notAgent },
@@ -603,7 +603,7 @@ export default function App() {
               {activePage === "reports" && "Reports & Export"}
               {activePage === "performance" && "Team Performance"}
               {activePage === "teamleaderkpi" && "Team Leader KPI"}
-              {activePage === "talabat" && "Talabat Report"}
+              {activePage === "talabat" && "Delivery Platforms"}
               {activePage === "users" && "User and Access Role Management"}
               {activePage === "audit" && "Audit"}
               {activePage === "configuration" && "System Configuration"}
@@ -730,7 +730,7 @@ export default function App() {
             <TeamLeaderKpi currentUser={currentUser} onViewTasks={(id) => { setTrackerFocusUserId(id); setActivePage("tracker"); }} />
           )}
           {activePage === "talabat" && isAdmin && (
-            <TalabatReports currentUser={currentUser} />
+            <DeliveryPlatforms currentUser={currentUser} />
           )}
           {activePage === "reviews" && !isOpsRole && (
             <Reviews currentUser={currentUser} />

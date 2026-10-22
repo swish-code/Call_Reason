@@ -8,7 +8,8 @@ import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
-import { readReport, readDeductions, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
+import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
+import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3356,9 +3357,32 @@ app.post("/api/talabat-reports/upload",
     if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
     if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Send the CSV as the request body (text/csv or application/gzip)." });
     const kind = String(req.query.kind || "orders");
-    if (kind !== "orders" && kind !== "deductions") return res.status(400).json({ error: "kind must be orders or deductions." });
+    if (!["orders", "deductions", "keeta-orders", "keeta-refunds"].includes(kind)) return res.status(400).json({ error: "kind must be orders, deductions, keeta-orders or keeta-refunds." });
     let csv: Buffer;
     try { csv = plainCsv(req.body); } catch { return res.status(400).json({ error: "The gzip body could not be read." }); }
+    if (kind === "keeta-orders") {
+      // The day's Download-center workbook (.xlsx, by completion date), sent as it came from Keeta.
+      let k;
+      try { k = readKeetaOrders(csv, day); } catch (e: any) {
+        if (e instanceof KeetaReportError) return res.status(422).json({ error: e.message });
+        throw e;
+      }
+      const created = await DB.saveKeetaReport({ day, fileName: `keeta-orders_${day}.csv`, csvGz: k.csvGz, csvBytes: k.csvBytes, orderCount: k.facts.length, summary: k.summary, columns: k.columns });
+      await DB.replacePlatformOrders("keeta", day, k.facts);
+      console.log(`[keeta] ${created ? "saved" : "replaced"} ${day}: ${k.facts.length} orders (${k.summary.orders} valid, ${k.summary.cancelled} cancelled)`);
+      return res.json({ ok: true, day, kind, created, orders: k.summary.orders, cancelled: k.summary.cancelled, stores: k.summary.stores });
+    }
+    if (kind === "keeta-refunds") {
+      // The whole refund list (it only grows); `day` is the day it was pulled.
+      let list;
+      try { list = readKeetaRefunds(csv); } catch (e: any) {
+        if (e instanceof KeetaReportError) return res.status(422).json({ error: e.message });
+        throw e;
+      }
+      await DB.upsertPlatformRefunds("keeta", list);
+      console.log(`[keeta] refunds pulled ${day}: ${list.length} orders (${list.filter((r) => r.partial).length} partial)`);
+      return res.json({ ok: true, day, kind, refunds: list.length, partial: list.filter((r) => r.partial).length });
+    }
     if (kind === "deductions") {
       let ded;
       try { ded = readDeductions(csv, day); } catch (e: any) {
@@ -3368,6 +3392,7 @@ app.post("/api/talabat-reports/upload",
       const s = ded.summary;
       const created = await DB.saveTalabatDeductions({ day, fileName: `talabat-deductions_${day}.csv`, csvGz: gzip(csv), csvBytes: csv.length, orderCount: s.orders, summary: s });
       console.log(`[talabat] ${created ? "saved" : "replaced"} deductions ${day}: ${s.orders} orders, ${s.refunded} refunded, ${s.pending} pending`);
+      await syncTalabatRefundsForDay(day);
       return res.json({ ok: true, day, kind, created, orders: s.orders, refunded: s.refunded, pending: s.pending, compensated: s.compensated, refund_fils: s.refund_fils });
     }
     let report;
@@ -3381,8 +3406,53 @@ app.post("/api/talabat-reports/upload",
       summary: report.summary, columns: report.columns, exportId: String(req.query.export_id || "").slice(0, 80) || null,
     });
     console.log(`[talabat] ${created ? "saved" : "replaced"} ${day}: ${report.summary.orders} orders, ${csv.length} bytes`);
+    await DB.replacePlatformOrders("talabat", day, readTalabatFacts(csv, day));
+    await syncTalabatRefundsForDay(day);
     res.json({ ok: true, day, created, orders: report.summary.orders, stores: report.summary.stores });
   }));
+
+// Talabat orders and refunds, restated into the shared platform tables (see platform_orders in db.ts).
+async function syncTalabatRefundsForDay(day: string) {
+  const rows = (await DB.talabatDeductionRows(day)).filter((r: any) => r.state === "refunded");
+  await DB.upsertPlatformRefunds("talabat", rows.map((r: any) => ({
+    order_id: r.id, original: r.original_fils, item_after: r.after_fils, refund_money: r.refund_fils, partial: true,
+    reason: r.reason, store: r.store, brand: r.brand,
+  })), day);
+}
+/** Rebuilds the platform tables from what Talabat uploads are already stored: new days only, refunds for every day. */
+async function syncTalabatPlatformData() {
+  for (const d of await DB.talabatReportDays()) {
+    if (d.has_facts) continue;
+    const gz = await DB.getTalabatReportCsvGz(d.report_day);
+    if (gz) await DB.replacePlatformOrders("talabat", d.report_day, readTalabatFacts(gunzip(gz), d.report_day));
+    console.log(`[platforms] Talabat ${d.report_day} rebuilt from the stored report`);
+  }
+  for (const d of await DB.listTalabatDeductions()) await syncTalabatRefundsForDay(d.report_day);
+}
+
+// Keeta days and their reports, the refund list, and the all-platform daily numbers (admin only).
+app.get("/api/keeta/reports", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
+  res.json(await DB.listKeetaReports());
+}));
+app.get("/api/keeta/reports/:day/download", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const day = String(req.params.day);
+  if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
+  const f = await DB.getKeetaReportFile(day);
+  if (!f) return res.status(404).json({ error: "No Keeta report for that day." });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${f.file_name}"`);
+  res.setHeader("Vary", "Accept-Encoding");
+  if (req.acceptsEncodings("gzip")) { res.setHeader("Content-Encoding", "gzip"); return res.send(f.csv_gz); }
+  res.send(gunzip(f.csv_gz));
+}));
+app.get("/api/keeta/refunds", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
+  res.json(await DB.platformRefunds("keeta"));
+}));
+app.get("/api/platforms/daily", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const from = String(req.query.from || "2000-01-01"), to = String(req.query.to || "2999-12-31");
+  if (!TALABAT_DAY.test(from) || !TALABAT_DAY.test(to)) return res.status(400).json({ error: "from / to must be YYYY-MM-DD." });
+  res.json(await DB.platformDaily(from, to));
+}));
 
 app.get("/api/talabat-reports", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await DB.listTalabatReports());
@@ -4011,6 +4081,8 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[CRM Server] Running successfully on http://localhost:${PORT}`);
   });
+  // Fill the platform tables from Talabat reports stored before they existed (runs once per new day, in the background).
+  syncTalabatPlatformData().catch((e) => console.error("[platforms] Talabat sync failed:", e));
 }
 
 startServer().catch((err) => {
