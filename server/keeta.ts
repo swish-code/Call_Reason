@@ -17,6 +17,8 @@ export interface PlatformFact {
   store: string;
   valid: boolean;      // counts as a sale (not cancelled)
   cancelled: boolean;
+  reversal?: boolean;  // Keeta only: a later-day restatement row (negative money, not an order) — see readKeetaOrders
+  after_refund?: boolean; // Keeta only: the report row already shows the value AFTER a same-day partial refund
   base_item: number;   // item value as the report shows it
   base_promo: number;  // promotion cost funded by us
   base_payout: number | null; // what the platform pays us for the order; null = not known yet
@@ -67,7 +69,15 @@ export function readKeetaOrders(file: Buffer, day: string): { facts: PlatformFac
     if (c.c > maxC) maxC = c.c;
   }
   ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+  // Formatted text for ids / dates / status (what the portal shows), but money straight from the cell: Keeta formats
+  // amounts with two decimals while the stored values have three, and 6,000 roundings a day add up to several KWD.
   const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, raw: false, defval: "" });
+  for (let k = 1; k < rows.length; k++) {
+    for (let i = 0; i < rows[k].length; i++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: k, c: i })];
+      if (cell && cell.t === "n" && typeof cell.v === "number") rows[k][i] = String(cell.v);
+    }
+  }
   if (rows.length < 1) throw new KeetaReportError("The file is empty.");
   const columns = rows[0].map((h) => String(h).trim());
   const idx = new Map(columns.map((h, i) => [h.toLowerCase(), i]));
@@ -103,7 +113,12 @@ export function readKeetaOrders(file: Buffer, day: string): { facts: PlatformFac
     lines.push(columns.map((_, i) => csvCell(String(r[i] ?? ""))).join(","));
 
     const status = g(r, c.status) || "Unknown";
-    const cancelled = /^cancel/i.test(status);
+    const earn = fils(g(r, c.earn)), item = fils(g(r, c.item)), promo = fils(g(r, c.promo));
+    // A status ending in "*" is a restatement: an order refunded or cancelled AFTER the day it was completed is written
+    // again on the later day with NEGATIVE amounts (the refunded part; the whole order for "Cancelled*"). It is not an
+    // order — it carries only money, which is how the portal's own totals come out net of those refunds.
+    const reversal = /\*$/.test(status) && item <= 0;
+    const cancelled = /^cancel/i.test(status) && !reversal;
     const store = g(r, c.store);
     const brand = keetaBrand(store);
     stores.add(store);
@@ -112,13 +127,11 @@ export function readKeetaOrders(file: Buffer, day: string): { facts: PlatformFac
     if (!b) { b = { brand, orders: 0, cancelled: 0, storeSet: new Set() }; brands.set(brand, b); }
     b.storeSet.add(store);
 
-    const earn = fils(g(r, c.earn)), item = fils(g(r, c.item)), promo = fils(g(r, c.promo));
-    // "Cancelled*": an order cancelled AFTER it was completed is written again with NEGATIVE amounts (a reversal of
-    // the day it was counted). That order is in the refund list, which restates its original day — counting the
-    // reversal here too would take it off twice, so it carries no money.
-    const reversal = cancelled && item < 0;
-    const adjust = cancelled && !reversal ? earn : 0;
-    if (cancelled) {
+    const adjust = cancelled ? earn : 0;
+    if (reversal) {
+      s.item_sales_fils += item; s.promo_fils += promo; s.subsidy_fils += fils(g(r, c.sub)); s.commission_fils += fils(g(r, c.comm));
+      s.other_fils += fils(g(r, c.other)); s.delivery_fee_fils += fils(g(r, c.fee)); s.earnings_fils += earn;
+    } else if (cancelled) {
       s.cancelled++; b.cancelled++;
       const t = g(r, c.type) || "Unknown";
       s.cancel_types[t] = (s.cancel_types[t] || 0) + 1;
@@ -133,7 +146,7 @@ export function readKeetaOrders(file: Buffer, day: string): { facts: PlatformFac
       if (Number.isFinite(prep) && prep >= 0 && prep < 300) { prepSum += prep; prepN++; }
     }
     facts.push({
-      order_id: id, day, brand, store, valid: !cancelled, cancelled,
+      order_id: id, day, brand, store, valid: !cancelled && !reversal, cancelled, reversal, after_refund: status === "Partial refund",
       base_item: cancelled ? 0 : item, base_promo: cancelled ? 0 : promo, base_payout: cancelled ? null : earn, adjust,
     });
   }

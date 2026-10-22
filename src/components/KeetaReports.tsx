@@ -256,7 +256,7 @@ export default function KeetaReports() {
                   </div>
                 )}
               </div>
-              <p className="text-[11px] text-[var(--muted)]">Exact amounts from Keeta's Refund orders list, pulled every 6 hours. Keeta only keeps that list for 48 hours, so refunds are on the system from 20 Oct on; for earlier days a partly refunded order already shows in the Orders tab at its value after the refund. "On a cancelled order" refunds are not in the totals: a cancelled order was never counted as a sale.</p>
+              <p className="text-[11px] text-[var(--muted)]">Exact amounts from Keeta's Refund orders list, pulled every 6 hours (Keeta keeps it for a limited time, so it is accumulated here). Keeta's own report already carries every refund: a same-day partial refund shows the order at its value after the refund, and a refund made on a later day is a negative row on that day — so the totals tie out with Keeta's Store data report whether or not the list has the order; the list only adds the original value and the reason. "On a cancelled order" refunds are not in the totals: a cancelled order was never counted as a sale.</p>
             </>
           )}
 
@@ -267,7 +267,7 @@ export default function KeetaReports() {
                 <div className="lg:col-span-2 grid grid-cols-2 gap-3 content-start">
                   <Kpi i={0} label="Cancelled" color="var(--t-rose)" value={s.cancelled} format={num} sub={`${fmtPct(pct(s.cancelled, s.orders + s.cancelled))} of the day's orders`} delta={null} />
                   <Kpi i={1} label="Keeta compensation (KWD)" color="var(--t-aqua)" value={s.compensation_fils} format={(f) => kwd(f)} sub="paid to us on cancelled orders" delta={null} />
-                  <div className="col-span-2 text-[11px] text-[var(--muted)] flex items-start gap-1.5 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]"><Ban className="w-4 h-4 shrink-0 mt-0.5" /> Orders cancelled by Keeta or by the customer after the store accepted them are compensated; the amount is each order's earnings below. Orders cancelled after they were completed show up here as "Cancelled*" with no money — their refund is on the Partial refunds tab.</div>
+                  <div className="col-span-2 text-[11px] text-[var(--muted)] flex items-start gap-1.5 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]"><Ban className="w-4 h-4 shrink-0 mt-0.5" /> Orders cancelled by Keeta or by the customer after the store accepted them are compensated; the amount is each order's earnings below. An order cancelled after the day it was completed is not here: Keeta writes it as a negative "Cancelled*" row on the later day, which the totals count as a refund.</div>
                 </div>
               </div>
               <KeetaOrders day={cur.report_day} version={cur.uploaded_at} preset={{ status: "cancelled", nonce: 1 }} refunds={refundMap} />

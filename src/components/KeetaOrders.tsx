@@ -46,11 +46,13 @@ function build(rows: string[][]): Parsed {
     const id = g(r, "Order ID");
     if (!id) continue;
     const store = g(r, "Store name"), status = g(r, "Order status") || "Unknown";
-    const cancelled = /^cancel/i.test(status), item = fils(g(r, "Item sales"));
+    const item = fils(g(r, "Item sales"));
+    // Same rule as server/keeta.ts: a "*" status is Keeta restating an earlier order on a later day (negative money, not an order).
+    const reversal = /\*$/.test(status) && item <= 0, cancelled = /^cancel/i.test(status) && !reversal;
     const oMin = toMin(g(r, "Order time")), fMin = toMin(g(r, "Completion time"));
     const prep = parseFloat(g(r, "Meal ready time (min)"));
     orders.push({
-      row: r, id, store, brand: brandName(store), branch: branchName(store) || store, status, cancelled, reversal: cancelled && item < 0,
+      row: r, id, store, brand: brandName(store), branch: branchName(store) || store, status, cancelled, reversal,
       finish: g(r, "Completion time"), orderTime: g(r, "Order time"), finishMin: fMin !== null && oMin !== null ? fMin - oMin : null, prep: Number.isFinite(prep) ? prep : null,
       item, promo: fils(g(r, "Promotion expense")), comm: fils(g(r, "Commission")), other: fils(g(r, "Other expenses")), earn: fils(g(r, "Earnings")), rev: fils(g(r, "Other revenue")),
       delivery: fils(g(r, "Delivery fee")), subsidy: fils(g(r, "Keeta promotion subsidies")), cancelType: g(r, "Cancellation type"),
@@ -288,7 +290,7 @@ function OrderPanel({ o, data, refund, onClose, onPrev, onNext, position }: { o:
             <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs">
               <div className="font-bold text-rose-500 flex items-center gap-1.5"><Ban className="w-4 h-4" /> {o.status}</div>
               <div className="mt-1 text-[var(--heading)]">{o.cancelType || "No cancellation type"}</div>
-              {o.reversal && <div className="text-[10px] text-[var(--muted)] mt-1">Cancelled after it was completed: Keeta writes a reversal of the day it was counted; its refund is in the refund list.</div>}
+              {o.reversal && <div className="text-[10px] text-[var(--muted)] mt-1">Refunded or cancelled after the day it was completed: Keeta writes the amount taken back as a negative row on this day. It is counted as a refund here, not as an order.</div>}
               {o.earn > 0 && <div className="text-[10px] text-[var(--muted)] mt-1">Keeta compensated the store <b className="font-mono text-emerald-500">+{kwd(o.earn)}</b> KWD for this order.</div>}
             </div>
           )}

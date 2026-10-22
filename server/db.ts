@@ -755,6 +755,9 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_platform_orders_day ON platform_orders(platform, day, brand);
       CREATE INDEX IF NOT EXISTS idx_platform_orders_order ON platform_orders(platform, order_id);
+      -- reversal = a Keeta row that restates an earlier order on a later day (negative money, not an order)
+      ALTER TABLE platform_orders ADD COLUMN IF NOT EXISTS reversal BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE platform_orders ADD COLUMN IF NOT EXISTS after_refund BOOLEAN NOT NULL DEFAULT false;
       CREATE TABLE IF NOT EXISTS platform_refunds (
         platform TEXT NOT NULL,
         order_id TEXT NOT NULL,
@@ -2597,12 +2600,12 @@ export class DB {
         const chunk = facts.slice(i, i + 500);
         const params: any[] = [];
         const values = chunk.map((f, k) => {
-          const b = k * 11;
-          params.push(platform, f.order_id, day, f.brand, f.store, f.valid, f.cancelled, f.base_item, f.base_promo, f.base_payout, f.adjust);
-          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9},$${b + 10},$${b + 11})`;
+          const b = k * 13;
+          params.push(platform, f.order_id, day, f.brand, f.store, f.valid, f.cancelled, f.base_item, f.base_promo, f.base_payout, f.adjust, !!f.reversal, !!f.after_refund);
+          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9},$${b + 10},$${b + 11},$${b + 12},$${b + 13})`;
         });
         await client.query(
-          `INSERT INTO platform_orders (platform, order_id, day, brand, store, valid, cancelled, base_item, base_promo, base_payout, adjust)
+          `INSERT INTO platform_orders (platform, order_id, day, brand, store, valid, cancelled, base_item, base_promo, base_payout, adjust, reversal, after_refund)
            VALUES ${values.join(",")} ON CONFLICT (platform, order_id, day) DO NOTHING`, params);
       }
       await client.query("COMMIT");
@@ -2651,16 +2654,30 @@ export class DB {
               COUNT(*) FILTER (WHERE o.valid)::int AS orders,
               COUNT(*) FILTER (WHERE o.cancelled)::int AS cancelled,
               COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.original, o.base_item) END), 0)::bigint AS gross,
-              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.promo_after, o.base_promo) END), 0)::bigint AS promo,
-              COALESCE(SUM(CASE WHEN o.valid AND r.order_id IS NOT NULL THEN r.original - r.item_after END), 0)::bigint AS refund,
-              COUNT(*) FILTER (WHERE o.valid AND r.order_id IS NOT NULL)::int AS refunded_orders,
-              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.payout_after, o.base_payout) END), 0)::bigint AS payout,
+              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.promo_after, o.base_promo) WHEN o.reversal THEN o.base_promo END), 0)::bigint AS promo,
+              COALESCE(SUM(CASE WHEN o.valid AND r.order_id IS NOT NULL THEN r.original - r.item_after WHEN o.reversal THEN -o.base_item END), 0)::bigint AS refund,
+              (COUNT(*) FILTER (WHERE o.valid AND r.order_id IS NOT NULL) + COUNT(*) FILTER (WHERE o.reversal))::int AS refunded_orders,
+              COALESCE(SUM(CASE WHEN o.valid THEN COALESCE(r.payout_after, o.base_payout) WHEN o.reversal THEN o.base_payout END), 0)::bigint AS payout,
               COUNT(*) FILTER (WHERE o.valid AND COALESCE(r.payout_after, o.base_payout) IS NOT NULL)::int AS payout_orders,
               COALESCE(SUM(CASE WHEN o.valid AND COALESCE(r.payout_after, o.base_payout) IS NOT NULL
-                                THEN COALESCE(r.original, o.base_item) - COALESCE(r.promo_after, o.base_promo) - CASE WHEN r.order_id IS NOT NULL THEN r.original - r.item_after ELSE 0 END END), 0)::bigint AS net_known,
+                                THEN COALESCE(r.original, o.base_item) - COALESCE(r.promo_after, o.base_promo) - CASE WHEN r.order_id IS NOT NULL THEN r.original - r.item_after ELSE 0 END
+                                WHEN o.reversal THEN o.base_item - o.base_promo END), 0)::bigint AS net_known,
               COALESCE(SUM(o.adjust) FILTER (WHERE o.cancelled), 0)::bigint AS adjust
          FROM platform_orders o
-         LEFT JOIN platform_refunds r ON r.platform = o.platform AND r.order_id = o.order_id
+         -- Keeta: the report's own money is the truth (it ties out with the portal's totals), so the refund list only
+         -- restores the ORIGINAL price of rows that already show the after-refund value (net stays what the report says).
+         -- Talabat: the list restates the order (original / after / payout). A Keeta order with a later restatement row
+         -- (reversal) is already taken off by that row, so the list is not applied to it again.
+         LEFT JOIN LATERAL (
+           SELECT pr.order_id, pr.original,
+                  CASE WHEN o.platform = 'keeta' THEN o.base_item ELSE pr.item_after END AS item_after,
+                  CASE WHEN o.platform = 'keeta' THEN NULL ELSE pr.promo_after END AS promo_after,
+                  CASE WHEN o.platform = 'keeta' THEN NULL ELSE pr.payout_after END AS payout_after
+             FROM platform_refunds pr
+            WHERE pr.platform = o.platform AND pr.order_id = o.order_id AND NOT o.reversal
+              AND (o.platform <> 'keeta' OR (o.after_refund AND pr.original >= o.base_item))
+              AND NOT EXISTS (SELECT 1 FROM platform_orders x WHERE x.platform = o.platform AND x.order_id = o.order_id AND x.reversal)
+         ) r ON TRUE
         WHERE o.day >= $1 AND o.day <= $2
         GROUP BY o.platform, o.day, COALESCE(o.brand, 'Unknown')
         ORDER BY o.day, o.platform, brand`, [from, to]);
