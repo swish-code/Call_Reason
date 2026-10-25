@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import { timingSafeEqual } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
@@ -3357,9 +3357,20 @@ app.post("/api/talabat-reports/upload",
     if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
     if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Send the CSV as the request body (text/csv or application/gzip)." });
     const kind = String(req.query.kind || "orders");
-    if (!["orders", "deductions", "keeta-orders", "keeta-refunds"].includes(kind)) return res.status(400).json({ error: "kind must be orders, deductions, keeta-orders or keeta-refunds." });
+    if (!["orders", "deductions", "keeta-orders", "keeta-refunds", "foodics"].includes(kind)) return res.status(400).json({ error: "kind must be orders, deductions, keeta-orders, keeta-refunds or foodics." });
     let csv: Buffer;
     try { csv = plainCsv(req.body); } catch { return res.status(400).json({ error: "The gzip body could not be read." }); }
+    if (kind === "foodics") {
+      // One brand's Foodics orders for a range of business days: { brand, from, to, branches, rows: [[tag, extId, day, opened, subtotal, discount, total, status, branch, type, source], ...] }
+      let j: any;
+      try { j = JSON.parse(csv.toString("utf8")); } catch { return res.status(422).json({ error: "The Foodics file is not valid JSON." }); }
+      const brand = String(j?.brand || "").trim().slice(0, 80), from = String(j?.from || ""), to = String(j?.to || "");
+      if (!brand || !TALABAT_DAY.test(from) || !TALABAT_DAY.test(to) || from > to || !Array.isArray(j?.rows)) return res.status(422).json({ error: "Expected { brand, from, to, rows } with YYYY-MM-DD days." });
+      if (j.rows.length && !j.rows.every((r: any) => Array.isArray(r) && r.length >= 9)) return res.status(422).json({ error: "Every Foodics row must be an array with at least 9 fields." });
+      const out = await DB.replaceFoodics(brand, from, to, j.rows, Number(j.branches) || 0);
+      console.log(`[foodics] ${brand} ${from}..${to}: ${out.orders} orders (${out.platformOrders} with a platform id)`);
+      return res.json({ ok: true, kind, brand, from, to, orders: out.orders, platformOrders: out.platformOrders });
+    }
     if (kind === "keeta-orders") {
       // The day's Download-center workbook (.xlsx, by completion date), sent as it came from Keeta.
       let k;
@@ -3447,6 +3458,71 @@ app.get("/api/keeta/reports/:day/download", authenticateJWT, requireAdmin, async
 }));
 app.get("/api/keeta/refunds", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await DB.platformRefunds("keeta"));
+}));
+// Foodics drop: the Foodics Console page (the only place the POS orders can be read until the official API token
+// exists) cannot call out, but it can submit a form. A short-lived token — HMAC of the upload key and a half-hour
+// bucket, valid ~2 hours, good for this one route only — is minted locally (talabat-export/foodics-token.js), so the
+// upload key itself never goes into that page. Body: urlencoded t, data = base64 of the gzipped pull JSON.
+const dropTokenFor = (bucket: number) => createHmac("sha256", process.env.TALABAT_UPLOAD_KEY || "").update(`foodics-drop|${bucket}`).digest("hex");
+const dropTokenOk = (given: unknown): boolean => {
+  if (!process.env.TALABAT_UPLOAD_KEY || process.env.TALABAT_UPLOAD_KEY.length < 24) return false;
+  const a = Buffer.from(String(given || ""));
+  const now = Math.floor(Date.now() / 1_800_000);
+  return [0, 1, 2, 3].some((back) => { const b = Buffer.from(dropTokenFor(now - back)); return a.length === b.length && timingSafeEqual(a, b); });
+};
+app.post("/api/foodics/drop", express.urlencoded({ extended: false, limit: "40mb", parameterLimit: 10 }), asyncHandler(async (req: any, res) => {
+  const page = (status: number, msg: string) => res.status(status).type("html").send(`<!doctype html><meta charset="utf-8"><title>Foodics drop</title><body style="font:16px system-ui;padding:24px"><b>${status === 200 ? "OK" : "Error"}</b> — ${msg.replace(/[<>&]/g, "")}</body>`);
+  if (!dropTokenOk(req.body?.t)) return page(401, "the drop token is wrong or expired");
+  let j: any;
+  try { j = JSON.parse(gunzip(Buffer.from(String(req.body?.data || ""), "base64")).toString("utf8")); } catch { return page(422, "the data could not be read"); }
+  const brand = String(j?.brand || "").trim().slice(0, 80), from = String(j?.from || ""), to = String(j?.to || "");
+  if (!brand || !TALABAT_DAY.test(from) || !TALABAT_DAY.test(to) || from > to || !Array.isArray(j?.rows)) return page(422, "expected { brand, from, to, rows }");
+  if (j.rows.length && !j.rows.every((r: any) => Array.isArray(r) && r.length >= 9)) return page(422, "every row needs at least 9 fields");
+  const out = await DB.replaceFoodics(brand, from, to, j.rows, Number(j.branches) || 0);
+  console.log(`[foodics] drop ${brand} ${from}..${to}: ${out.orders} orders (${out.platformOrders} with a platform id)`);
+  page(200, `${brand} ${from} → ${to}: ${out.orders} orders saved (${out.platformOrders} with a platform order id)`);
+}));
+
+// Platforms vs POS (Foodics): what was pulled, and the order-by-order match per platform.
+app.get("/api/foodics/pulls", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
+  res.json(await DB.foodicsPulls());
+}));
+app.get("/api/foodics/compare", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const from = String(req.query.from || ""), to = String(req.query.to || "");
+  if (!TALABAT_DAY.test(from) || !TALABAT_DAY.test(to)) return res.status(400).json({ error: "from / to must be YYYY-MM-DD." });
+  const key = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/)[0] || "unknown";
+  const out: any = { from, to, platforms: {} as Record<string, any>, daily: await DB.foodicsDaily(from, to) };
+  for (const platform of ["talabat", "keeta"]) {
+    const rows = await DB.foodicsMatch(platform, from, to);
+    const groups = new Map<string, any>();
+    const lists: Record<string, any[]> = { only_platform: [], only_foodics: [], price: [] };
+    const empty = () => ({ brand: "", platform_orders: 0, platform_gross: 0, foodics_orders: 0, foodics_subtotal: 0, foodics_discount: 0, matched: 0, matched_platform_gross: 0, matched_foodics_subtotal: 0, matched_payout: 0, only_platform: 0, only_platform_gross: 0, only_foodics: 0, only_foodics_subtotal: 0, price_diff_orders: 0, price_diff_total: 0 });
+    for (const r of rows) {
+      // An unmatched edge order is not judged: platform orders of the first day have their 00:00-06:00 hours in the
+      // Foodics day before the range, Foodics orders of the last day have their late hours in the platform day after it.
+      if (r.state === "only_platform" && r.platform_day === from) continue;
+      if (r.state === "only_foodics" && r.foodics_day === to) continue;
+      const k = key(r.platform_brand || r.foodics_brand);
+      const g = groups.get(k) || { ...empty(), key: k };
+      if (!g.brand) g.brand = r.foodics_brand || r.platform_brand;
+      if (r.state !== "only_foodics") { g.platform_orders++; g.platform_gross += r.gross || 0; }
+      if (r.state !== "only_platform") { g.foodics_orders++; g.foodics_subtotal += r.subtotal || 0; g.foodics_discount += r.discount || 0; }
+      if (r.state === "matched") {
+        g.matched++; g.matched_platform_gross += r.gross || 0; g.matched_foodics_subtotal += r.subtotal || 0; g.matched_payout += r.payout || 0;
+        const diff = (r.gross || 0) - (r.subtotal || 0);
+        if (Math.abs(diff) > 1) { g.price_diff_orders++; g.price_diff_total += diff; if (lists.price.length < 300) lists.price.push({ id: r.order_id, brand: r.foodics_brand, branch: r.branch, day: r.platform_day, platform: r.gross, foodics: r.subtotal, diff }); }
+      } else if (r.state === "only_platform") {
+        g.only_platform++; g.only_platform_gross += r.gross || 0;
+        if (lists.only_platform.length < 300) lists.only_platform.push({ id: r.order_id, brand: r.platform_brand, store: r.store, day: r.platform_day, platform: r.gross });
+      } else {
+        g.only_foodics++; g.only_foodics_subtotal += r.subtotal || 0;
+        if (lists.only_foodics.length < 300) lists.only_foodics.push({ id: r.order_id, brand: r.foodics_brand, branch: r.branch, day: r.foodics_day, opened: r.opened, foodics: r.subtotal });
+      }
+      groups.set(k, g);
+    }
+    out.platforms[platform] = { brands: [...groups.values()].sort((a, b) => b.platform_orders - a.platform_orders), lists };
+  }
+  res.json(out);
 }));
 app.get("/api/platforms/daily", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
   const from = String(req.query.from || "2000-01-01"), to = String(req.query.to || "2999-12-31");

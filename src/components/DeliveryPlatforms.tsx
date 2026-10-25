@@ -3,19 +3,21 @@ import { User } from "../types.js";
 import NetSales from "./NetSales.tsx";
 import TalabatReports, { STYLE } from "./TalabatReports.tsx";
 import KeetaReports from "./KeetaReports.tsx";
-import { BarChart3, ShoppingBag, Store } from "lucide-react";
+import FoodicsCompare from "./FoodicsCompare.tsx";
+import { BarChart3, GitCompareArrows, ShoppingBag, Store } from "lucide-react";
 
 // One admin-only page for the delivery platforms: the company-wide Net sales dashboard (Talabat + Keeta) and each
 // platform's own reports (orders, partial refunds, cancellations).
-type View = "all" | "talabat" | "keeta";
+type View = "all" | "talabat" | "keeta" | "foodics";
 const VIEWS: { key: View; label: string; icon: any; color: string }[] = [
   { key: "all", label: "Net sales · all platforms", icon: BarChart3, color: "var(--t-aqua)" },
   { key: "talabat", label: "Talabat", icon: ShoppingBag, color: "var(--t-orange)" },
   { key: "keeta", label: "Keeta", icon: Store, color: "var(--t-violet)" },
+  { key: "foodics", label: "Foodics (POS)", icon: GitCompareArrows, color: "var(--t-rose)" },
 ];
 
 export default function DeliveryPlatforms({ currentUser }: { currentUser: User }) {
-  const [view, setView] = useState<View>(() => { try { const v = localStorage.getItem("delivery-platforms-view"); return v === "talabat" || v === "keeta" ? v : "all"; } catch { return "all"; } });
+  const [view, setView] = useState<View>(() => { try { const v = localStorage.getItem("delivery-platforms-view"); return v === "talabat" || v === "keeta" || v === "foodics" ? v : "all"; } catch { return "all"; } });
   const pick = (v: View) => { setView(v); try { localStorage.setItem("delivery-platforms-view", v); } catch { /* storage blocked */ } };
   return (
     <div className="tlb space-y-5 text-[var(--text)]">
@@ -39,6 +41,7 @@ export default function DeliveryPlatforms({ currentUser }: { currentUser: User }
       {view === "all" && <NetSales />}
       {view === "talabat" && <TalabatReports currentUser={currentUser} />}
       {view === "keeta" && <KeetaReports />}
+      {view === "foodics" && <FoodicsCompare />}
     </div>
   );
 }

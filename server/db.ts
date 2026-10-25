@@ -755,6 +755,43 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_platform_orders_day ON platform_orders(platform, day, brand);
       CREATE INDEX IF NOT EXISTS idx_platform_orders_order ON platform_orders(platform, order_id);
+      -- Foodics (the POS): every delivery-platform order that reached the POS (tag = platform, ext_id = the platform's
+      -- own order id, read from the order notes), plus per-day totals of everything incl. cashier orders. Money in fils.
+      CREATE TABLE IF NOT EXISTS foodics_orders (
+        brand TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        ext_id TEXT NOT NULL,
+        day TEXT NOT NULL,
+        opened TEXT,
+        branch TEXT,
+        status INTEGER,
+        subtotal BIGINT NOT NULL DEFAULT 0,
+        discount BIGINT NOT NULL DEFAULT 0,
+        total BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (brand, tag, ext_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_foodics_orders_tag_ext ON foodics_orders(tag, ext_id);
+      CREATE INDEX IF NOT EXISTS idx_foodics_orders_day ON foodics_orders(day);
+      CREATE TABLE IF NOT EXISTS foodics_daily (
+        brand TEXT NOT NULL,
+        day TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        orders INTEGER NOT NULL DEFAULT 0,
+        closed INTEGER NOT NULL DEFAULT 0,
+        voided INTEGER NOT NULL DEFAULT 0,
+        subtotal BIGINT NOT NULL DEFAULT 0,
+        discount BIGINT NOT NULL DEFAULT 0,
+        total BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (brand, day, tag)
+      );
+      CREATE TABLE IF NOT EXISTS foodics_pulls (
+        brand TEXT PRIMARY KEY,
+        from_day TEXT NOT NULL,
+        to_day TEXT NOT NULL,
+        rows INTEGER NOT NULL DEFAULT 0,
+        branches INTEGER NOT NULL DEFAULT 0,
+        pulled_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
       -- reversal = a Keeta row that restates an earlier order on a later day (negative money, not an order)
       ALTER TABLE platform_orders ADD COLUMN IF NOT EXISTS reversal BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE platform_orders ADD COLUMN IF NOT EXISTS after_refund BOOLEAN NOT NULL DEFAULT false;
@@ -2694,6 +2731,86 @@ export class DB {
          LEFT JOIN LATERAL (SELECT day, store, brand, cancelled, base_payout FROM platform_orders p WHERE p.platform = r.platform AND p.order_id = r.order_id ORDER BY day DESC LIMIT 1) o ON TRUE
         WHERE r.platform = $1 ORDER BY r.refunded_at DESC NULLS LAST, r.order_id LIMIT $2`, [platform, limit]);
     return rows;
+  }
+
+  // ---- Foodics (POS) orders, pulled by hand from the console until the official API token exists ----
+  /** Replaces one brand's Foodics orders for the days [from, to]. Rows: [tag, extId, businessDate, openedAt, subtotal, discount, total, status, branch, type, source] (money in KWD). */
+  static async replaceFoodics(brand: string, from: string, to: string, rows: any[][], branches: number): Promise<{ orders: number; platformOrders: number }> {
+    const fils = (v: unknown) => Math.round((Number(v) || 0) * 1000);
+    const orders = new Map<string, any>();
+    const daily = new Map<string, { brand: string; day: string; tag: string; orders: number; closed: number; voided: number; subtotal: number; discount: number; total: number }>();
+    for (const r of rows) {
+      const [tag, ext, day, opened, sub, disc, tot, status, branch] = r;
+      if (typeof tag !== "string" || typeof day !== "string" || day < from || day > to) continue;
+      const k = `${day}|${tag}`;
+      const d = daily.get(k) || { brand, day, tag, orders: 0, closed: 0, voided: 0, subtotal: 0, discount: 0, total: 0 };
+      d.orders++;
+      if (status === 4) { d.closed++; d.subtotal += fils(sub); d.discount += fils(disc); d.total += fils(tot); } else if (status === 7) d.voided++;
+      daily.set(k, d);
+      if (ext) orders.set(`${tag}|${ext}`, { tag, ext: String(ext), day, opened: String(opened || ""), branch: String(branch || ""), status: Number(status) || 0, subtotal: fils(sub), discount: fils(disc), total: fils(tot) });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM foodics_orders WHERE brand = $1 AND day >= $2 AND day <= $3", [brand, from, to]);
+      await client.query("DELETE FROM foodics_daily WHERE brand = $1 AND day >= $2 AND day <= $3", [brand, from, to]);
+      const list = [...orders.values()];
+      for (let i = 0; i < list.length; i += 500) {
+        const chunk = list.slice(i, i + 500);
+        const params: any[] = [];
+        const values = chunk.map((o, k) => { const b = k * 10; params.push(brand, o.tag, o.ext, o.day, o.opened, o.branch, o.status, o.subtotal, o.discount, o.total); return `(${Array.from({ length: 10 }, (_, j) => `$${b + j + 1}`).join(",")})`; });
+        await client.query(
+          `INSERT INTO foodics_orders (brand, tag, ext_id, day, opened, branch, status, subtotal, discount, total) VALUES ${values.join(",")}
+           ON CONFLICT (brand, tag, ext_id) DO UPDATE SET day = EXCLUDED.day, opened = EXCLUDED.opened, branch = EXCLUDED.branch, status = EXCLUDED.status,
+             subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount, total = EXCLUDED.total`, params);
+      }
+      for (const d of daily.values()) {
+        await client.query(
+          `INSERT INTO foodics_daily (brand, day, tag, orders, closed, voided, subtotal, discount, total) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (brand, day, tag) DO UPDATE SET orders = EXCLUDED.orders, closed = EXCLUDED.closed, voided = EXCLUDED.voided, subtotal = EXCLUDED.subtotal, discount = EXCLUDED.discount, total = EXCLUDED.total`,
+          [d.brand, d.day, d.tag, d.orders, d.closed, d.voided, d.subtotal, d.discount, d.total]);
+      }
+      await client.query(
+        `INSERT INTO foodics_pulls (brand, from_day, to_day, rows, branches, pulled_at) VALUES ($1,$2,$3,$4,$5, now())
+         ON CONFLICT (brand) DO UPDATE SET from_day = LEAST(foodics_pulls.from_day, EXCLUDED.from_day), to_day = GREATEST(foodics_pulls.to_day, EXCLUDED.to_day), rows = EXCLUDED.rows, branches = EXCLUDED.branches, pulled_at = now()`,
+        [brand, from, to, rows.length, branches]);
+      await client.query("COMMIT");
+      return { orders: rows.length, platformOrders: list.length };
+    } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; } finally { client.release(); }
+  }
+
+  static async foodicsPulls(): Promise<any[]> {
+    const { rows } = await pool.query(`SELECT brand, from_day, to_day, rows, branches, pulled_at FROM foodics_pulls ORDER BY brand`);
+    return rows;
+  }
+
+  static async foodicsDaily(from: string, to: string): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT brand, day, tag, orders, closed, voided, subtotal::bigint, discount::bigint, total::bigint FROM foodics_daily WHERE day >= $1 AND day <= $2 ORDER BY day, brand, tag`, [from, to]);
+    return rows.map((r) => ({ ...r, subtotal: Number(r.subtotal), discount: Number(r.discount), total: Number(r.total) }));
+  }
+
+  /**
+   * Order-by-order match of a platform (talabat -> Foodics tag "Talabat", keeta -> "Keeta") with the POS, joined on the
+   * platform's own order id. Platform side = valid orders (not cancelled, not a Keeta restatement row), gross = the
+   * original basket. Foodics side = closed orders. Platform orders of the first day are not judged (their early hours
+   * belong to the Foodics business day before the range) and neither are Foodics orders of the last day.
+   */
+  static async foodicsMatch(platform: string, from: string, to: string): Promise<any[]> {
+    const tag = platform === "keeta" ? "Keeta" : "Talabat";
+    const { rows } = await pool.query(
+      `WITH p AS (
+         SELECT o.order_id, o.day, COALESCE(o.brand, 'Unknown') AS brand, o.store, COALESCE(r.original, o.base_item) AS gross, o.base_promo AS promo, o.base_payout AS payout
+           FROM platform_orders o LEFT JOIN platform_refunds r ON r.platform = o.platform AND r.order_id = o.order_id
+          WHERE o.platform = $1 AND o.valid AND NOT o.reversal AND o.day >= $2 AND o.day <= $3),
+       f AS (SELECT brand, ext_id, day, opened, branch, subtotal, discount, total FROM foodics_orders WHERE tag = $4 AND status = 4 AND day >= $2 AND day <= $3)
+       SELECT COALESCE(p.order_id, f.ext_id) AS order_id,
+              CASE WHEN p.order_id IS NULL THEN 'only_foodics' WHEN f.ext_id IS NULL THEN 'only_platform' ELSE 'matched' END AS state,
+              p.day AS platform_day, p.brand AS platform_brand, p.store, p.gross, p.promo, p.payout,
+              f.brand AS foodics_brand, f.day AS foodics_day, f.opened, f.branch, f.subtotal, f.discount, f.total
+         FROM p FULL OUTER JOIN f ON f.ext_id = p.order_id`, [platform, from, to, tag]);
+    return rows.map((r) => ({ ...r, gross: r.gross === null ? null : Number(r.gross), promo: r.promo === null ? null : Number(r.promo), payout: r.payout === null ? null : Number(r.payout),
+      subtotal: r.subtotal === null ? null : Number(r.subtotal), discount: r.discount === null ? null : Number(r.discount), total: r.total === null ? null : Number(r.total) }));
   }
 
   static async saveKeetaReport(r: { day: string; fileName: string; csvGz: Buffer; csvBytes: number; orderCount: number; summary: any; columns: string[] }): Promise<boolean> {
