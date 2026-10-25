@@ -3483,6 +3483,40 @@ app.post("/api/foodics/drop", express.urlencoded({ extended: false, limit: "40mb
   page(200, `${brand} ${from} → ${to}: ${out.orders} orders saved (${out.platformOrders} with a platform order id)`);
 }));
 
+// The Foodics Console page blocks form posts and fetches to other sites but allows image requests (img-src https:), so the
+// pull can also arrive as a run of tiny GETs: /api/foodics/px?t=token&u=uploadId&i=index&n=count&d=base64url chunk of the
+// gzipped pull JSON. When all n chunks are in, the upload is assembled and saved exactly like a drop. Always answers
+// with a 1x1 gif (an <img> needs an image) — the result shows in /api/foodics/drop-status.
+const pxUploads = new Map<string, { n: number; parts: Map<number, string>; at: number; done: boolean }>();
+const PX_GIF = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+app.get("/api/foodics/px", asyncHandler(async (req: any, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.type("gif");
+  const gif = () => res.send(PX_GIF);
+  if (!dropTokenOk(req.query.t)) return res.status(401).send(PX_GIF);
+  const u = String(req.query.u || "").replace(/[^\w-]/g, "").slice(0, 40), i = Number(req.query.i), n = Number(req.query.n), d = String(req.query.d || "");
+  if (!u || !Number.isInteger(i) || !Number.isInteger(n) || n < 1 || n > 600 || i < 0 || i >= n || d.length > 12000) return res.status(400).send(PX_GIF);
+  const now = Date.now();
+  for (const [k, v] of pxUploads) if (now - v.at > 30 * 60_000) pxUploads.delete(k);
+  if (!pxUploads.has(u) && pxUploads.size >= 20) return res.status(429).send(PX_GIF);
+  const up = pxUploads.get(u) || { n, parts: new Map<number, string>(), at: now, done: false };
+  pxUploads.set(u, up);
+  up.at = now; up.parts.set(i, d);
+  if (!up.done && up.parts.size === up.n) {
+    up.done = true;
+    try {
+      let b64 = ""; for (let k = 0; k < up.n; k++) b64 += up.parts.get(k) || "";
+      const j = JSON.parse(gunzip(Buffer.from(b64.replace(/-/g, "+").replace(/_/g, "/"), "base64")).toString("utf8"));
+      const brand = String(j?.brand || "").trim().slice(0, 80), from = String(j?.from || ""), to = String(j?.to || "");
+      if (!brand || !TALABAT_DAY.test(from) || !TALABAT_DAY.test(to) || from > to || !Array.isArray(j?.rows) || (j.rows.length && !j.rows.every((r: any) => Array.isArray(r) && r.length >= 9))) throw new Error("bad shape");
+      const out = await DB.replaceFoodics(brand, from, to, j.rows, Number(j.branches) || 0);
+      console.log(`[foodics] px ${brand} ${from}..${to}: ${out.orders} orders (${out.platformOrders} with a platform id) from ${up.n} chunks`);
+    } catch (e: any) { console.log(`[foodics] px upload ${u} could not be saved: ${e.message}`); }
+    pxUploads.delete(u);
+  }
+  gif();
+}));
+
 // What the drops saved (same short-lived token as the drop itself) — lets the person who minted it confirm a drop landed.
 app.get("/api/foodics/drop-status", asyncHandler(async (req: any, res) => {
   if (!dropTokenOk(req.query.t)) return res.status(401).json({ error: "the drop token is wrong or expired" });
