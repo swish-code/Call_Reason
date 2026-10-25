@@ -15,7 +15,7 @@ interface DayRow extends Counts { day: string }
 interface BrandDay { day: string; brand_id: string | null; n: number }
 interface BrandInfo { id: string; name: string; total: number }
 interface AnswerRow { qid: string; text: string; answer_type: string; q_order: number; template: string | null; value: string; n: number }
-interface Analytics { from: string; to: string; month: string; kpi: Counts; months: MonthRow[]; days: DayRow[]; brandDays: BrandDay[]; brands: BrandInfo[]; answers: AnswerRow[] }
+interface Analytics { from: string; to: string; month: string; dayFrom?: string; dayTo?: string; kpi: Counts; months: MonthRow[]; days: DayRow[]; brandDays: BrandDay[]; brands: BrandInfo[]; answers: AnswerRow[] }
 
 const EMPTY: Counts = { uploaded: 0, reached: 0, refused: 0, not_reached: 0, waiting: 0, normal: 0, new_item: 0, other: 0 };
 const KW_MS = 3 * 3600_000;
@@ -234,13 +234,14 @@ function StackedColumns({ cats, series, value, setTip }: { cats: Cat[]; series: 
 }
 
 // ---------------------------------------------------------------- the section
-type Kind = "today" | "yesterday" | "this_month" | "month" | "day";
+type Kind = "today" | "yesterday" | "this_month" | "month" | "range";
 const RATING_SCALE: Record<string, number> = { rating_1_5: 5, rating_1_10: 10 };
 
 export default function SurveyCharts() {
   const [kind, setKind] = useState<Kind>("today");
   const [month, setMonth] = useState(kwToday().slice(0, 7));
-  const [day, setDay] = useState(kwToday());
+  const [rFrom, setRFrom] = useState(kwToday());
+  const [rTo, setRTo] = useState(kwToday());
   const [brandId, setBrandId] = useState("");
   const [data, setData] = useState<Analytics | null>(null);
   const [brands, setBrands] = useState<BrandInfo[]>([]);
@@ -255,8 +256,8 @@ export default function SurveyCharts() {
     if (kind === "yesterday") { const y = addDays(t, -1); return { from: y, to: y }; }
     if (kind === "this_month") return { from: t.slice(0, 7) + "-01", to: t };
     if (kind === "month") return { from: month + "-01", to: lastDayOf(month) };
-    return { from: day, to: day };
-  }, [kind, month, day]);
+    return rFrom <= rTo ? { from: rFrom, to: rTo } : { from: rTo, to: rFrom };
+  }, [kind, month, rFrom, rTo]);
 
   const reqId = useRef(0);
   const load = useCallback(async () => {
@@ -286,12 +287,16 @@ export default function SurveyCharts() {
     return out;
   }, [data, selMonth]);
   const monthMap = useMemo(() => new Map((data?.months || []).map((m) => [m.month, m])), [data]);
+  // Daily charts: the days the server sent (the picked days + the rest of that month), never past today.
+  const dayFrom = data?.dayFrom || selMonth + "-01";
+  const dayTo = data?.dayTo || lastDayOf(selMonth);
   const dayCats = useMemo(() => {
     const out: Cat[] = [];
-    const end = selMonth === today.slice(0, 7) ? today : lastDayOf(selMonth);
-    for (let d = selMonth + "-01"; d <= end; d = addDays(d, 1)) out.push({ key: d, label: String(Number(d.slice(8, 10))) });
+    const end = dayTo < today ? dayTo : today;
+    for (let d = dayFrom; d <= end; d = addDays(d, 1)) out.push({ key: d, label: d === dayFrom || d.endsWith("-01") ? dayLabel(d) : String(Number(d.slice(8, 10))) });
     return out;
-  }, [selMonth, today]);
+  }, [dayFrom, dayTo, today]);
+  const daysLabel = dayFrom.endsWith("-01") && dayFrom.slice(0, 7) === dayTo.slice(0, 7) ? monthLong(selMonth) : `${dayLabel(dayFrom)} – ${dayLabel(dayTo < today ? dayTo : today)}`;
   const dayMap = useMemo(() => new Map((data?.days || []).map((d) => [d.day, d])), [data]);
   const mc = (m: string): Counts => monthMap.get(m) || EMPTY;
   const dc = (d: string): Counts => dayMap.get(d) || EMPTY;
@@ -358,8 +363,11 @@ export default function SurveyCharts() {
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Month
           <input type="month" value={month} max={today.slice(0, 7)} onChange={(e) => { if (e.target.value) { setMonth(e.target.value); setKind("month"); } }} className={inputCls + (kind === "month" ? " ring-2 ring-violet-500" : "")} />
         </label>
-        <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Day
-          <input type="date" value={day} max={today} onChange={(e) => { if (e.target.value) { setDay(e.target.value); setKind("day"); } }} className={inputCls + (kind === "day" ? " ring-2 ring-violet-500" : "")} />
+        <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">From
+          <input type="date" value={rFrom} max={today} onChange={(e) => { if (e.target.value) { setRFrom(e.target.value); if (e.target.value > rTo) setRTo(e.target.value); setKind("range"); } }} className={inputCls + (kind === "range" ? " ring-2 ring-violet-500" : "")} />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">To
+          <input type="date" value={rTo} min={rFrom} max={today} onChange={(e) => { if (e.target.value) { setRTo(e.target.value); if (e.target.value < rFrom) setRFrom(e.target.value); setKind("range"); } }} className={inputCls + (kind === "range" ? " ring-2 ring-violet-500" : "")} />
         </label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Brand
           <select value={brandId} onChange={(e) => setBrandId(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)] min-w-[10rem]"}>
@@ -406,18 +414,18 @@ export default function SurveyCharts() {
           </Card>
 
           {/* Graph 3 */}
-          <Card reset={data} title={`3a · Daily — surveys uploaded (${monthLong(selMonth)})`} sub="One column per day"
+          <Card reset={data} title={`3a · Daily — surveys uploaded (${daysLabel})`} sub="One column per day"
             table={{ head: ["Day", "Uploaded"], rows: dayCats.map((c) => [dayLabel(c.key), String(dc(c.key).uploaded)]) }}>
             {(setTip) => <GroupedColumns cats={dayCats} series={[S_COUNTS[0]]} value={(c) => dc(c).uploaded} selected={inRange} setTip={setTip} />}
           </Card>
-          <Card reset={data} title={`3b · Daily — reached % and not reached % (${monthLong(selMonth)})`} legend={[{ key: "r", label: "Reached %", color: C.aqua }, { key: "n", label: "Not reached %", color: C.violet }]}
+          <Card reset={data} title={`3b · Daily — reached % and not reached % (${daysLabel})`} legend={[{ key: "r", label: "Reached %", color: C.aqua }, { key: "n", label: "Not reached %", color: C.violet }]}
             table={{ head: ["Day", "Uploaded", "Reached %", "Not reached %"], rows: dayCats.map((c) => [dayLabel(c.key), String(dc(c.key).uploaded), fmtPct(reachedPct(dc(c.key))), fmtPct(notReachedPct(dc(c.key)))]) }}>
             {(setTip) => <PercentLines cats={dayCats} selected={inRange} setTip={setTip}
               series={[{ key: "r", label: "Reached %", color: C.aqua, values: dayCats.map((c) => reachedPct(dc(c.key))) }, { key: "n", label: "Not reached %", color: C.violet, values: dayCats.map((c) => notReachedPct(dc(c.key))) }]} />}
           </Card>
 
           {/* Graph 4 */}
-          <Card reset={data} title={`4 · New item vs normal orders — ${g4 === "daily" ? `daily (${monthLong(selMonth)})` : "monthly"}`}
+          <Card reset={data} title={`4 · New item vs normal orders — ${g4 === "daily" ? `daily (${daysLabel})` : "monthly"}`}
             sub="Normal orders = daily campaigns · New item = item surveys" legend={kindSeries}
             right={<div className="flex rounded-lg overflow-hidden border border-[var(--border)]">{(["daily", "monthly"] as const).map((m) => <button key={m} onClick={() => setG4(m)} className={`px-2.5 py-1.5 text-[10px] font-bold ${g4 === m ? "bg-violet-600 text-white" : "bg-[var(--bg)] text-[var(--muted)]"}`}>{m === "daily" ? "Daily" : "Monthly"}</button>)}</div>}
             table={{ head: [g4 === "daily" ? "Day" : "Month", ...kindSeries.map((s) => s.label)], rows: (g4 === "daily" ? dayCats : monthCats).map((c) => [g4 === "daily" ? dayLabel(c.key) : monthLabel(c.key), ...kindSeries.map((s) => String(((g4 === "daily" ? dc(c.key) : mc(c.key)) as any)[s.key]))]) }}>
@@ -427,7 +435,7 @@ export default function SurveyCharts() {
           </Card>
 
           {/* Graph 5 */}
-          <Card reset={data} title={`5 · Daily surveys per brand (${monthLong(selMonth)})`} sub={brandName ? `Only ${brandName}` : "Stacked by brand; pick a brand above to see one"} legend={brandSeries}
+          <Card reset={data} title={`5 · Daily surveys per brand (${daysLabel})`} sub={brandName ? `Only ${brandName}` : "Stacked by brand; pick a brand above to see one"} legend={brandSeries}
             table={{ head: ["Day", ...brandSeries.map((s) => s.label)], rows: dayCats.map((c) => [dayLabel(c.key), ...brandSeries.map((s) => String(brandVal(c.key, s.key)))]) }}>
             {(setTip) => <StackedColumns cats={dayCats} series={brandSeries} value={brandVal} setTip={setTip} />}
           </Card>

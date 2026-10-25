@@ -3865,11 +3865,16 @@ app.get("/api/surveys/analytics", authenticateJWT, asyncHandler(async (req: any,
   const from = isDay(req.query.from) ? String(req.query.from) : kwToday;
   const to = isDay(req.query.to) ? String(req.query.to) : from;
   if (from > to) return res.status(400).json({ error: "From is after To." });
-  // The monthly charts end at the month of "to" and look back 11 months; the daily ones show that month.
+  // The monthly charts end at the month of "to" and look back 11 months. The daily ones cover the picked days and
+  // the rest of the month of "to" (a range inside one month shows that whole month), at most 93 days.
   const monthTo = to.slice(0, 7) + "-01";
   const monthsFrom = new Date(Date.UTC(Number(monthTo.slice(0, 4)), Number(monthTo.slice(5, 7)) - 1 - 11, 1)).toISOString().slice(0, 10);
+  const dayTo = new Date(Date.UTC(Number(monthTo.slice(0, 4)), Number(monthTo.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  let dayFrom = from < monthTo ? from : monthTo;
+  const earliest = new Date(Date.parse(dayTo + "T00:00:00Z") - 92 * 86400_000).toISOString().slice(0, 10);
+  if (dayFrom < earliest) dayFrom = earliest;
   const brandId = typeof req.query.brand_id === "string" && req.query.brand_id ? req.query.brand_id : null;
-  res.json({ from, to, month: monthTo.slice(0, 7), ...(await DB.getSurveyAnalytics({ from, to, brandId, monthsFrom, monthFrom: monthTo, monthTo })) });
+  res.json({ from, to, month: monthTo.slice(0, 7), dayFrom, dayTo, ...(await DB.getSurveyAnalytics({ from, to, brandId, monthsFrom, monthTo, dayFrom, dayTo })) });
 }));
 
 // ---- Call verification (XonTel) — admin, supervisor and team leader ONLY ----

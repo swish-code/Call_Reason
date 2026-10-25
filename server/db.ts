@@ -3306,7 +3306,7 @@ export class DB {
    * from/to are Kuwait days (YYYY-MM-DD) for the totals, per-brand days and answers; monthsFrom..monthTo (first days of
    * months) is the window of the monthly series.
    */
-  static async getSurveyAnalytics(f: { from: string; to: string; brandId: string | null; monthsFrom: string; monthFrom: string; monthTo: string }): Promise<any> {
+  static async getSurveyAnalytics(f: { from: string; to: string; brandId: string | null; monthsFrom: string; monthTo: string; dayFrom: string; dayTo: string }): Promise<any> {
     const DAY = `(a.created_at AT TIME ZONE 'Asia/Kuwait')::date`;
     const COUNTS = `
       count(*)::int AS uploaded,
@@ -3322,8 +3322,8 @@ export class DB {
     const [kpi, months, days, brandDays, brands, answers] = await Promise.all([
       pool.query(`SELECT ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} BETWEEN $2::date AND $3::date`, [f.brandId, f.from, f.to]),
       pool.query(`SELECT to_char(${DAY}, 'YYYY-MM') AS month, ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} >= $2::date AND ${DAY} < ($3::date + interval '1 month') GROUP BY 1 ORDER BY 1`, [f.brandId, f.monthsFrom, f.monthTo]),
-      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} >= $2::date AND ${DAY} < ($2::date + interval '1 month') GROUP BY 1 ORDER BY 1`, [f.brandId, f.monthFrom]),
-      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, a.brand_id, count(*)::int AS n ${FROM} WHERE ${brand} AND ${DAY} >= $2::date AND ${DAY} < ($2::date + interval '1 month') GROUP BY 1, 2 ORDER BY 1`, [f.brandId, f.monthFrom]),
+      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, ${COUNTS} ${FROM} WHERE ${brand} AND ${DAY} BETWEEN $2::date AND $3::date GROUP BY 1 ORDER BY 1`, [f.brandId, f.dayFrom, f.dayTo]),
+      pool.query(`SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, a.brand_id, count(*)::int AS n ${FROM} WHERE ${brand} AND ${DAY} BETWEEN $2::date AND $3::date GROUP BY 1, 2 ORDER BY 1`, [f.brandId, f.dayFrom, f.dayTo]),
       pool.query(`SELECT b.id, b.brand_name AS name, count(a.id)::int AS total FROM brands b LEFT JOIN survey_assignments a ON a.brand_id = b.id GROUP BY b.id, b.brand_name HAVING count(a.id) > 0 ORDER BY total DESC, b.brand_name`),
       // Latest saved response of each finished survey in the period, answer by answer.
       pool.query(`
