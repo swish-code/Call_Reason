@@ -3,20 +3,21 @@
 //
 //  Leaders upload customers (Excel) and assign them to agents. The agent makes the first call with the
 //  campaign script and records the outcome. When a customer calls back, any agent looks the number up,
-//  sees whether the offer is still valid and which discount is next, and logs the order. A leader reviews
-//  and approves each customer's record. Every step is an offer_events row (the customer's history) and an
-//  audit_logs row (the universal action log, with the value before and after).
+//  sees whether the offer is still valid and which discount is next, and logs the order. Every step is an
+//  offer_events row (the customer's history) and an audit_logs row (the universal action log, with the value
+//  before and after). No approval step (the business said it is not needed, 2026-10-25).
 //
 //  The offer: steps[0] % off the 1st order, steps[1] % the 2nd, steps[2] % the 3rd, in that order, once
-//  each, within validity_days of the first call in which it was presented (or of the first order, for a
-//  customer who calls us first). Days are Kuwait days.
+//  each, within validity_days of the day the offer was first recorded for the customer — the call where they
+//  accepted it (or ordered), or their first order if they called us first. A customer who said "not
+//  interested" has no running offer until then. Days are Kuwait days.
 // ---------------------------------------------------------------------------
 import { DB } from "./db.js";
 
 export const OPEN_STATUSES = ["not_called", "no_answer", "busy", "call_back"];           // still to be called
 export const CALL_STATUSES = ["not_called", "no_answer", "busy", "call_back", "wrong_number", "not_interested", "accepted", "ordered"];
 export const REACHED_STATUSES = ["call_back", "not_interested", "accepted", "ordered"];
-const OFFER_PRESENTED = ["not_interested", "accepted", "ordered"];                       // the offer was told in this call
+const OFFER_STARTS = ["accepted", "ordered"];                                            // the customer took the offer in this call
 
 const KW_MS = 3 * 3600_000;
 const kwDay = (ms: number) => new Date(ms + KW_MS).toISOString().slice(0, 10);
@@ -225,14 +226,13 @@ export function registerOfferRoutes(app: any, d: Deps) {
     else if (q("status")) add("oc.call_status = $?", q("status"));
     if (q("agent") === "unassigned") where.push("oc.assigned_agent_id IS NULL");
     else if (q("agent")) add("oc.assigned_agent_id = $?", q("agent"));
-    if (q("approval")) add("oc.approval_status = $?", q("approval"));
     if (isDay(q("from"))) add("(oc.uploaded_at AT TIME ZONE 'Asia/Kuwait')::date >= $?::date", q("from"));
     if (isDay(q("to"))) add("(oc.uploaded_at AT TIME ZONE 'Asia/Kuwait')::date <= $?::date", q("to"));
     if (q("search")) add("(oc.phone ILIKE '%' || $? || '%' OR oc.customer_name ILIKE '%' || $? || '%')", q("search"));
     const rows = await DB.query(`
       SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
              oc.contact_date, oc.call_status, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
-             oc.offer_started_at, oc.offer_expires_at, oc.approval_status, oc.approved_by_name, oc.approved_at, oc.approval_note,
+             oc.offer_started_at, oc.offer_expires_at,
              COALESCE((SELECT json_agg(json_build_object('step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number) ORDER BY o.step)
                          FROM offer_orders o WHERE o.customer_id = oc.id), '[]'::json) AS orders
         FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id
@@ -337,7 +337,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const comment = typeof b.comment === "string" && b.comment.trim() ? b.comment.trim().slice(0, 2000) : null;
     const today = kwToday();
     const contactDate = status === "call_back" && isDay(b.call_back_date) && b.call_back_date >= today ? b.call_back_date : today;
-    const startsOffer = OFFER_PRESENTED.includes(status);
+    const startsOffer = OFFER_STARTS.includes(status);
     const updated = (await DB.query(`
       UPDATE offer_customers SET
         call_status = $2,
@@ -347,8 +347,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
         last_call_at = now(), contact_date = $5::date,
         churn_reason = COALESCE($6, churn_reason), comment = COALESCE($7, comment),
         offer_started_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() ELSE offer_started_at END,
-        offer_expires_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() + ($9 || ' days')::interval ELSE offer_expires_at END,
-        approval_status = 'pending', approved_by = NULL, approved_by_name = NULL, approved_at = NULL, approval_note = NULL
+        offer_expires_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() + ($9 || ' days')::interval ELSE offer_expires_at END
       WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days)]))[0];
     await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "call", user: req.user, direction, call_status: status, prev_status: c.call_status, churn_reason: churn, comment,
       details: { ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
@@ -386,8 +385,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     await DB.query(`
       UPDATE offer_customers SET call_status = 'ordered', comment = COALESCE($3, comment),
         offer_started_at = COALESCE(offer_started_at, now()),
-        offer_expires_at = COALESCE(offer_expires_at, now() + ($2 || ' days')::interval),
-        approval_status = 'pending', approved_by = NULL, approved_by_name = NULL, approved_at = NULL, approval_note = NULL
+        offer_expires_at = COALESCE(offer_expires_at, now() + ($2 || ' days')::interval)
       WHERE id = $1`, [c.id, String(camp.validity_days), comment]);
     await addEvent({ customerId: c.id, campaignId: camp.id, kind: "order", user: req.user, call_status: "ordered", prev_status: c.call_status, comment,
       details: { step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, ...(!c.offer_started_at ? { offer_started: true } : {}) } });
@@ -404,26 +402,9 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const reason = String(req.body?.reason || "").trim().slice(0, 300);
     if (!reason) return res.status(400).json({ error: "Write why this order is being removed." });
     await DB.query(`DELETE FROM offer_orders WHERE id = $1`, [o.id]);
-    await DB.query(`UPDATE offer_customers SET approval_status = 'pending', approved_by = NULL, approved_by_name = NULL, approved_at = NULL, approval_note = NULL WHERE id = $1`, [o.customer_id]);
     await addEvent({ customerId: o.customer_id, campaignId: o.campaign_id, kind: "order_removed", user: req.user, comment: reason, details: { step: o.step, discount: o.discount, order_number: o.order_number, order_date: o.order_date, logged_by: o.logged_by_name } });
     req.auditExtra = { details: `Removed order ${o.order_number} (${o.discount}%, logged by ${o.logged_by_name || "?"}) — ${reason}`, previous_value: `${o.discount}%` };
     res.json(await loadCustomer(o.customer_id));
-  }));
-
-  // A leader reviews the customer's record (call outcome + orders) and approves or rejects it.
-  app.post(`${B}/customers/:id/approve`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
-    const c = (await DB.query(`SELECT * FROM offer_customers WHERE id = $1`, [req.params.id]))[0];
-    if (!c) return res.status(404).json({ error: "Customer not found." });
-    const decision = req.body?.decision === "rejected" ? "rejected" : req.body?.decision === "approved" ? "approved" : "";
-    if (!decision) return res.status(400).json({ error: "Approve or reject." });
-    if (c.approval_status === "none") return res.status(409).json({ error: "Nothing to review yet — no call or order was recorded." });
-    const note = String(req.body?.note || "").trim().slice(0, 500) || null;
-    if (decision === "rejected" && !note) return res.status(400).json({ error: "Write why the record is rejected." });
-    await DB.query(`UPDATE offer_customers SET approval_status = $2, approved_by = $3, approved_by_name = $4, approved_at = now(), approval_note = $5 WHERE id = $1`,
-      [c.id, decision, req.user.id, req.user.full_name, note]);
-    await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "approval", user: req.user, comment: note, details: { decision, from: c.approval_status } });
-    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone}${note ? ` — ${note}` : ""}`.trim(), previous_value: c.approval_status, new_value: decision };
-    res.json(await loadCustomer(c.id));
   }));
 
   // ---- dashboard ----
@@ -465,7 +446,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
       DB.query(`SELECT churn_reason AS reason, count(*)::int AS n FROM offer_events
                  WHERE campaign_id = $1 AND kind = 'call' AND churn_reason IS NOT NULL AND ${DAY("created_at")} BETWEEN $2::date AND $3::date
                  GROUP BY 1 ORDER BY 2 DESC`, [camp.id, from, to]),
-      DB.query(`SELECT oc.call_status, oc.assigned_agent_id IS NOT NULL AS assigned, oc.approval_status, oc.offer_started_at, oc.offer_expires_at,
+      DB.query(`SELECT oc.call_status, oc.assigned_agent_id IS NOT NULL AS assigned, oc.offer_started_at, oc.offer_expires_at,
                        (SELECT count(*)::int FROM offer_orders o WHERE o.customer_id = oc.id) AS orders
                   FROM offer_customers oc WHERE oc.campaign_id = $1`, [camp.id]),
     ]);
@@ -478,7 +459,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
       days.push(row);
     }
     const now = Date.now();
-    const totals = { customers: customers.length, unassigned: 0, open: 0, reached: 0, offer_active: 0, expiring_3d: 0, expired_unused: 0, completed: 0, redeemed: 0, pending_approval: 0, approved: 0 };
+    const totals = { customers: customers.length, unassigned: 0, open: 0, reached: 0, offer_active: 0, expiring_3d: 0, expired_unused: 0, completed: 0, redeemed: 0 };
     for (const c of customers) {
       const el = eligibility(c, camp.steps, c.orders, now);
       if (!c.assigned && c.call_status === "not_called") totals.unassigned++;
@@ -488,8 +469,6 @@ export function registerOfferRoutes(app: any, d: Deps) {
       if (el.state === "expired" && c.orders === 0) totals.expired_unused++;
       if (el.state === "completed") totals.completed++;
       if (c.orders > 0) totals.redeemed++;
-      if (c.approval_status === "pending") totals.pending_approval++;
-      if (c.approval_status === "approved") totals.approved++;
     }
     res.json({ campaign: { id: camp.id, name: camp.name, steps: camp.steps, validity_days: camp.validity_days }, range: { from, to }, window: { from: wFrom, to }, days, agents: byAgent, churn, totals });
   }));

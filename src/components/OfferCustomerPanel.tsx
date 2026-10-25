@@ -3,13 +3,13 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import {
-  OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, RESULT_STATUSES, OFFER_STATE, APPROVAL,
+  OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, RESULT_STATUSES, OFFER_STATE,
   kwToday, fmtDT, fmtDay, fillScript, stepLabel,
 } from "../lib/offers.ts";
-import { X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, ShieldCheck, History, FileText, Trash2, RefreshCw } from "lucide-react";
+import { X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
 
 // One customer of an offer campaign: the script, the offer (what is used, what is next, until when), logging a
-// call or an order, the leader's approval, and the full history. Opened from My calls (to make the call) and
+// call or an order, and the full history. Opened from My calls (to make the call) and
 // from Find customer (when the customer calls us).
 
 interface Data { customer: OfferCustomer; campaign: OfferCampaign; orders: OfferOrder[]; events: OfferEvent[]; eligibility: Eligibility; dnc: { reason: string | null; added_by_name: string | null; added_at: string } | null }
@@ -38,8 +38,6 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   const [orderDate, setOrderDate] = useState(kwToday());
   const [orderValue, setOrderValue] = useState("");
   const [orderNote, setOrderNote] = useState("");
-  // approval
-  const [approvalNote, setApprovalNote] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -79,11 +77,6 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
     const reason = window.prompt(`Remove order ${o.order_number} (${o.discount}%)?\nWrite why (kept in the history):`);
     if (!reason || !reason.trim()) return;
     await post(`/api/offer-campaigns/orders/${o.id}/remove`, { reason: reason.trim() }, "Order removed.", "remove");
-  };
-  const approve = async (decision: "approved" | "rejected") => {
-    if (decision === "rejected" && !approvalNote.trim()) { setError("Write why the record is rejected."); return; }
-    const ok = await post(`/api/offer-campaigns/customers/${id}/approve`, { decision, note: approvalNote || undefined }, decision === "approved" ? "Record approved." : "Record rejected.", "approve");
-    if (ok) setApprovalNote("");
   };
 
   const c = data?.customer;
@@ -174,7 +167,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                   <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Comment (what the customer said, complaint, …)
                     <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className={inputCls + " resize-y"} />
                   </label>
-                  {(status === "not_interested" || status === "accepted" || status === "ordered") && !c?.offer_started_at && (
+                  {(status === "accepted" || status === "ordered") && !c?.offer_started_at && (
                     <p className="text-[11px] text-emerald-500">Saving this starts the offer: valid {camp?.validity_days} days, until {fmtDay(new Date(Date.now() + (camp?.validity_days || 30) * 86400_000).toISOString())}.</p>
                   )}
                   <button onClick={saveCall} disabled={!!busy} className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{busy === "call" ? "Saving…" : "Save the call"}</button>
@@ -211,64 +204,8 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                 </div>
               </div>
 
-              {/* right: offer, details, approval, history */}
+              {/* right: offer, details, history */}
               <div className="lg:col-span-2 space-y-4">
-                <div className="rounded-2xl border border-[var(--border)] p-4 space-y-2">
-                  <p className="text-xs font-extrabold text-[var(--heading)]">The offer</p>
-                  <div className="text-[11px] text-[var(--muted)]">
-                    {el?.starts ? <>Started <b className="text-[var(--heading)]">{el.starts}</b> · ends <b className="text-[var(--heading)]">{el.expires}</b>{el.state === "active" && <> · <b className="text-emerald-500">{el.daysLeft} day{el.daysLeft === 1 ? "" : "s"} left</b></>}</> : "Not given yet — it starts on the call where it is told to the customer, or with the first order."}
-                  </div>
-                  <div className="space-y-1.5 pt-1">
-                    {(camp?.steps || []).map((d, i) => {
-                      const o = data.orders.find((x) => x.step === i + 1);
-                      const isLast = o && o.step === Math.max(...data.orders.map((x) => x.step));
-                      return (
-                        <div key={i} className={`flex items-center justify-between gap-2 p-2 rounded-xl border text-[11px] ${o ? "border-emerald-500/30 bg-emerald-500/5" : el?.next?.step === i + 1 ? "border-violet-500/40 bg-violet-500/5" : "border-[var(--border)]"}`}>
-                          <span className="font-bold text-[var(--heading)]">{stepLabel(i + 1)} order · {d}%</span>
-                          {o ? (
-                            <span className="flex items-center gap-1.5 text-[var(--text)]">#{o.order_number} · {fmtDay(o.order_date)}{o.order_value ? ` · ${money(o.order_value)}` : ""}<span className="text-[var(--muted)]"> · {o.logged_by_name}</span>
-                              {canManage && isLast && <button onClick={() => removeOrder(o)} title="Remove this order" className="p-1 rounded text-[var(--muted)] hover:text-rose-400"><Trash2 className="w-3 h-3" /></button>}
-                            </span>
-                          ) : <span className="text-[var(--muted)]">{el?.next?.step === i + 1 ? "next" : "—"}</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[var(--border)] p-4">
-                  <p className="text-xs font-extrabold text-[var(--heading)] mb-2">Customer</p>
-                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
-                    <dt className="text-[var(--muted)]">Uploaded</dt><dd>{fmtDay(c!.uploaded_at)}{c!.uploaded_by_name ? ` by ${c!.uploaded_by_name}` : ""}</dd>
-                    <dt className="text-[var(--muted)]">Agent</dt><dd>{c!.agent_name || "—"}</dd>
-                    <dt className="text-[var(--muted)]">Contact date</dt><dd>{fmtDay(c!.contact_date) || "—"}</dd>
-                    <dt className="text-[var(--muted)]">1st call</dt><dd>{c!.first_call_at ? `${fmtDT(c!.first_call_at)}${c!.first_call_agent_name ? ` · ${c!.first_call_agent_name}` : ""}` : "—"}</dd>
-                    <dt className="text-[var(--muted)]">Attempts</dt><dd>{c!.attempts}</dd>
-                    <dt className="text-[var(--muted)]">Churn reason</dt><dd>{c!.churn_reason || "—"}</dd>
-                    <dt className="text-[var(--muted)]">Comment</dt><dd className="whitespace-pre-wrap">{c!.comment || "—"}</dd>
-                    {Object.entries(c!.extra || {}).map(([k, v]) => <Fragment key={k}><dt className="text-[var(--muted)]">{k}</dt><dd>{v}</dd></Fragment>)}
-                  </dl>
-                </div>
-
-                <div className="rounded-2xl border border-[var(--border)] p-4 space-y-2">
-                  <p className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-violet-400" /> Team leader approval</p>
-                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                    <Badge cls={APPROVAL[c!.approval_status]?.cls || ""}>{APPROVAL[c!.approval_status]?.label || c!.approval_status}</Badge>
-                    {c!.approved_by_name && <span className="text-[var(--muted)]">by <b className="text-[var(--heading)]">{c!.approved_by_name}</b> · {fmtDT(c!.approved_at)}</span>}
-                  </div>
-                  {c!.approval_note && <p className="text-[11px] text-[var(--text)]">“{c!.approval_note}”</p>}
-                  {canManage && c!.approval_status !== "none" && (
-                    <div className="space-y-2 pt-1">
-                      <input value={approvalNote} onChange={(e) => setApprovalNote(e.target.value)} placeholder="Note (required to reject)" className={inputCls} />
-                      <div className="flex gap-2">
-                        <button onClick={() => approve("approved")} disabled={!!busy} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50">Approve</button>
-                        <button onClick={() => approve("rejected")} disabled={!!busy} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-rose-600/15 text-rose-400 border border-rose-500/30 hover:bg-rose-600/25 disabled:opacity-50">Reject</button>
-                      </div>
-                      <p className="text-[10px] text-[var(--muted)]">Any new call or order puts the record back to "Waiting approval".</p>
-                    </div>
-                  )}
-                </div>
-
                 <div className="rounded-2xl border border-[var(--border)] p-4">
                   <p className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-2 mb-2"><History className="w-4 h-4 text-violet-400" /> History</p>
                   <ol className="space-y-2 max-h-[360px] overflow-y-auto">
@@ -293,7 +230,6 @@ function EventRow({ e }: { e: OfferEvent }) {
   else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${st(e.prev_status)} → ${st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}`;
   else if (e.kind === "order") text = `Order #${d.order_number} on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
   else if (e.kind === "order_removed") text = `Removed order #${d.order_number} (${d.discount}%, logged by ${d.logged_by || "?"})`;
-  else if (e.kind === "approval") text = d.decision === "approved" ? "Record approved" : "Record rejected";
   else text = e.kind;
   return (
     <li className="text-[11px] border-l-2 border-[var(--border)] pl-3">

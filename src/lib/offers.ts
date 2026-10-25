@@ -19,7 +19,6 @@ export interface OfferCustomer {
   uploaded_at: string; uploaded_by_name: string | null; assigned_agent_id: string | null; agent_name?: string | null;
   contact_date: string | null; call_status: string; attempts: number; first_call_at: string | null; first_call_agent_name?: string | null;
   last_call_at: string | null; churn_reason: string | null; comment: string | null; offer_started_at: string | null; offer_expires_at: string | null;
-  approval_status: string; approved_by_name: string | null; approved_at: string | null; approval_note: string | null;
 }
 
 export const CALL_STATUS: Record<string, { label: string; cls: string; open?: boolean; reached?: boolean }> = {
@@ -40,13 +39,6 @@ export const OFFER_STATE: Record<Eligibility["state"], { label: string; cls: str
   active: { label: "Offer active", cls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/25" },
   expired: { label: "Offer expired", cls: "bg-rose-500/10 text-rose-500 border-rose-500/25" },
   completed: { label: "All discounts used", cls: "bg-violet-500/10 text-violet-500 border-violet-500/25" },
-};
-
-export const APPROVAL: Record<string, { label: string; cls: string }> = {
-  none: { label: "Nothing to review", cls: "bg-zinc-500/10 text-zinc-500 border-zinc-500/25" },
-  pending: { label: "Waiting approval", cls: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
-  approved: { label: "Approved", cls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/25" },
-  rejected: { label: "Rejected", cls: "bg-rose-500/10 text-rose-500 border-rose-500/25" },
 };
 
 export const MANAGER_ROLES = ["admin", "owner", "manager", "supervisor", "leader"];

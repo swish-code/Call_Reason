@@ -61,7 +61,6 @@ const LABELS: [RegExp, string][] = [
   [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/call$/, "Recorded a call"],
   [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/orders$/, "Logged an offer order"],
   [/^POST \/api\/offer-campaigns\/orders\/[^/]+\/remove$/, "Removed an offer order"],
-  [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/approve$/, "Approved / rejected a record"],
   [/^PUT \/api\/offer-campaigns\/[^/]+$/, "Changed the campaign settings"],
 ];
 const label = (action: string) => LABELS.find(([re]) => re.test(action))?.[1] || action;
@@ -183,7 +182,7 @@ export function describe(r: Row, names: Record<string, string>): string {
   if (/^POST \/api\/ratings\/bulk-status$/.test(act)) return `Set ${reviews()} to "${pretty(kv(d, "action_status") || "a new status")}".`;
   if (/^POST \/api\/ratings\/delete$/.test(act)) return "Deleted reviews.";
   if (/backfill/.test(act)) return "Filled in missing customer phones from the order data.";
-  // Offer campaign actions: the server writes a readable line, and the status before/after for calls and approvals.
+  // Offer campaign actions: the server writes a readable line, and the status before/after for calls.
   if (/\/api\/offer-campaigns/.test(act)) {
     const ch = r.previous_value || r.new_value ? ` (${(r.previous_value || "—").replace(/_/g, " ")} → ${(r.new_value || "—").replace(/_/g, " ")})` : "";
     return d ? `${d}${ch}.` : ch ? `Changed${ch}.` : "";

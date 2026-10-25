@@ -7,12 +7,12 @@ import OfferCustomerPanel from "./OfferCustomerPanel.tsx";
 import { Card as ChartCard, GroupedColumns, STYLE as CHART_STYLE, C as CC, type Series } from "./SurveyCharts.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
-  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, APPROVAL, MANAGER_ROLES, kwToday, fmtDT, fmtDay, stepLabel,
+  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel,
 } from "../lib/offers.ts";
 import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X } from "lucide-react";
 
 // Offer campaigns page (first campaign: Shakir). Agents: My calls + Find customer. Team leaders and above also:
-// Customers (assign, approve, export), Upload, Dashboard, Script & settings.
+// Customers (assign, export), Upload, Dashboard, Script & settings.
 
 type Tab = "calls" | "find" | "customers" | "upload" | "dashboard" | "settings";
 const inputCls = "px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-violet-500 focus:outline-none";
@@ -58,7 +58,7 @@ export default function OfferCampaignPage({ currentUser }: { currentUser: User }
         <div>
           <span className="bg-violet-950/45 text-violet-400 text-xs font-bold px-3 py-1 rounded-full border border-violet-500/30">Offer campaign</span>
           <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2 flex items-center gap-2"><Gift className="w-7 h-7 text-violet-400" /> {camp?.name || "Campaign"}</h1>
-          {camp && <p className="text-[var(--muted)] text-sm mt-1 font-light">{camp.steps.map((s, i) => `${stepLabel(i + 1)} order ${s}% off`).join(" · ")} — valid {camp.validity_days} days from the call, only through the call center.</p>}
+          {camp && <p className="text-[var(--muted)] text-sm mt-1 font-light">{camp.steps.map((s, i) => `${stepLabel(i + 1)} order ${s}% off`).join(" · ")} — valid {camp.validity_days} days from the day the customer accepts the offer, only through the call center.</p>}
         </div>
         {campaigns.length > 1 && (
           <select value={campId} onChange={(e) => setCampId(e.target.value)} className={selCls}>
@@ -211,7 +211,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [f, setF] = useState({ status: "", agent: "", approval: "", offer: "", from: "", to: "", search: "" });
+  const [f, setF] = useState({ status: "", agent: "", offer: "", from: "", to: "", search: "" });
   const [giveAgent, setGiveAgent] = useState("");
   const [giveCount, setGiveCount] = useState("20");
   const [searchText, setSearchText] = useState("");
@@ -245,13 +245,12 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
   };
 
   const unassigned = rows.filter((r) => !r.assigned_agent_id && r.call_status === "not_called").length;
-  const pending = rows.filter((r) => r.approval_status === "pending").length;
   const orderDate = (r: any, step: number) => fmtDay(r.orders.find((o: any) => o.step === step)?.order_date) || "";
   const exportCsv = () => downloadCSV(
-    ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Churn Reason", "Comment", "Approved By", "Approval", "Offer", "Offer ends"],
+    ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends"],
     rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, CALL_STATUS[r.call_status]?.label || r.call_status, fmtDay(r.first_call_at),
-      ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "", r.churn_reason || "", r.comment || "", r.approval_status === "approved" ? r.approved_by_name || "" : "",
-      APPROVAL[r.approval_status]?.label || r.approval_status, OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.expires || ""]),
+      ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "", r.churn_reason || "", r.comment || "",
+      OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.starts || "", r.eligibility.expires || ""]),
     `${camp.name.replace(/\s+/g, "_")}_customers_${kwToday()}`,
   );
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
@@ -279,10 +278,6 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
           <option value="">All agents</option><option value="unassigned">No agent</option>
           {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
         </select>
-        <select value={f.approval} onChange={(e) => set("approval", e.target.value)} className={selCls}>
-          <option value="">Any approval</option>
-          {Object.entries(APPROVAL).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
         <select value={f.offer} onChange={(e) => set("offer", e.target.value)} className={selCls}>
           <option value="">Any offer state</option>
           {Object.entries(OFFER_STATE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -290,8 +285,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Uploaded from<input type="date" value={f.from} max={f.to || undefined} onChange={(e) => set("from", e.target.value)} className={inputCls} /></label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">to<input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set("to", e.target.value)} className={inputCls} /></label>
         <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Name or phone…" className={inputCls + " w-44"} />
-        {pending > 0 && f.approval !== "pending" && <button onClick={() => set("approval", "pending")} className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-500/15 text-amber-600 border border-amber-500/30">{pending} waiting approval</button>}
-        {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", approval: "", offer: "", from: "", to: "", search: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
+        {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", offer: "", from: "", to: "", search: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
         <button onClick={exportCsv} disabled={!rows.length} className="ml-auto flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600/20 text-emerald-500 border border-emerald-500/30 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Excel (CSV)</button>
       </div>
 
@@ -304,7 +298,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
               <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)] bg-[var(--surface-2)]/40">
                 <th className="text-left py-3 px-3">Uploaded</th><th className="text-left py-3 px-3">Customer</th><th className="text-left py-3 px-3">Agent</th><th className="text-left py-3 px-3">Status</th>
                 <th className="text-left py-3 px-3">1st call</th>{camp.steps.map((s) => <th key={s} className="text-left py-3 px-3">{s}% order</th>)}
-                <th className="text-left py-3 px-3">Offer</th><th className="text-left py-3 px-3">Churn reason</th><th className="text-left py-3 px-3">Approval</th><th />
+                <th className="text-left py-3 px-3">Offer</th><th className="text-left py-3 px-3">Churn reason</th><th />
               </tr></thead>
               <tbody>
                 {rows.map((r) => {
@@ -327,7 +321,6 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
                       {camp.steps.map((_s, i) => <td key={i} className="py-2.5 px-3 font-mono whitespace-nowrap">{orderDate(r, i + 1) || "—"}</td>)}
                       <td className="py-2.5 px-3"><Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>{el.expires && <div className="text-[10px] text-[var(--muted)] mt-0.5">until {el.expires}</div>}</td>
                       <td className="py-2.5 px-3 max-w-[10rem]">{r.churn_reason || <span className="text-[var(--muted)]">—</span>}</td>
-                      <td className="py-2.5 px-3"><Badge cls={APPROVAL[r.approval_status]?.cls || ""} title={r.approval_note || undefined}>{APPROVAL[r.approval_status]?.label || r.approval_status}</Badge>{r.approved_by_name && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.approved_by_name}</div>}</td>
                       <td className="py-2.5 px-3 text-right"><button onClick={() => onOpen(r.id)} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-[var(--bg)] border border-[var(--border)] hover:text-[var(--heading)]">Open</button></td>
                     </tr>
                   );
@@ -481,7 +474,7 @@ function Dashboard({ camp, tick }: { camp: Campaign; tick: number }) {
           {tile("Ending in ≤ 3 days", t.expiring_3d)}
           {tile("Redeemed (≥1 order)", t.redeemed, t.customers ? pct(t.redeemed, t.customers) + " of customers" : undefined)}
           {tile("All discounts used", t.completed)}
-          {tile("Waiting approval", t.pending_approval)}
+          {tile("Expired, never used", t.expired_unused)}
         </div>
       </div>
 
