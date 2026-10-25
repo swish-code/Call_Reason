@@ -3483,6 +3483,12 @@ app.post("/api/foodics/drop", express.urlencoded({ extended: false, limit: "40mb
   page(200, `${brand} ${from} → ${to}: ${out.orders} orders saved (${out.platformOrders} with a platform order id)`);
 }));
 
+// What the drops saved (same short-lived token as the drop itself) — lets the person who minted it confirm a drop landed.
+app.get("/api/foodics/drop-status", asyncHandler(async (req: any, res) => {
+  if (!dropTokenOk(req.query.t)) return res.status(401).json({ error: "the drop token is wrong or expired" });
+  res.json(await DB.foodicsPulls());
+}));
+
 // Platforms vs POS (Foodics): what was pulled, and the order-by-order match per platform.
 app.get("/api/foodics/pulls", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await DB.foodicsPulls());
