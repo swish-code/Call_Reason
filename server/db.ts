@@ -1,6 +1,7 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
 import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog, AssignedTask, OpsTask } from "../src/types.js";
+import { SHAKIR_CAMPAIGN_ID, DEFAULT_STEPS, DEFAULT_VALIDITY_DAYS, DEFAULT_CHURN_REASONS, SHAKIR_SCRIPT_AR, SHAKIR_SCRIPT_EN } from "./offerDefaults.js";
 
 const { Pool } = pkg;
 
@@ -555,6 +556,8 @@ export class DB {
 
     // Seed the Do Not Call list once, when the table is first created (see do_not_call below).
     const dncExisted = (await pool.query("SELECT to_regclass('public.do_not_call') AS t")).rows[0].t !== null;
+    // Same for the first offer campaign (Shakir), seeded once when its table is first created.
+    const offersExisted = (await pool.query("SELECT to_regclass('public.offer_campaigns') AS t")).rows[0].t !== null;
 
     // Migrations for databases created before newer features
     await pool.query(`
@@ -699,6 +702,90 @@ export class DB {
         added_by_name TEXT,
         added_at TIMESTAMPTZ DEFAULT now()
       );
+      -- Offer campaigns (first: the Shakir win-back campaign). Leaders upload customers and assign them, an
+      -- agent makes the first call with the campaign script, and any agent looks a customer up when they call
+      -- back and logs orders that use the offer. steps = the discount of the 1st, 2nd, 3rd order. The offer runs
+      -- validity_days from the first call in which it was presented (or from the first order, for a customer
+      -- who calls us first).
+      CREATE TABLE IF NOT EXISTS offer_campaigns (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        brand_id TEXT,
+        steps JSONB NOT NULL,
+        validity_days INTEGER NOT NULL DEFAULT 30,
+        script_ar TEXT,
+        script_en TEXT,
+        churn_reasons JSONB,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      -- One row per customer per campaign, matched on the last 8 digits of the number.
+      CREATE TABLE IF NOT EXISTS offer_customers (
+        id TEXT PRIMARY KEY,
+        campaign_id TEXT NOT NULL REFERENCES offer_campaigns(id) ON DELETE CASCADE,
+        phone TEXT NOT NULL,
+        phone_key TEXT NOT NULL,
+        customer_name TEXT,
+        extra JSONB,
+        upload_batch_id TEXT,
+        uploaded_at TIMESTAMPTZ DEFAULT now(),
+        uploaded_by TEXT,
+        uploaded_by_name TEXT,
+        assigned_agent_id TEXT,
+        assigned_at TIMESTAMPTZ,
+        contact_date DATE,
+        call_status TEXT NOT NULL DEFAULT 'not_called',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        first_call_at TIMESTAMPTZ,
+        first_call_agent_id TEXT,
+        last_call_at TIMESTAMPTZ,
+        churn_reason TEXT,
+        comment TEXT,
+        offer_started_at TIMESTAMPTZ,
+        offer_expires_at TIMESTAMPTZ,
+        approval_status TEXT NOT NULL DEFAULT 'none',
+        approved_by TEXT,
+        approved_by_name TEXT,
+        approved_at TIMESTAMPTZ,
+        approval_note TEXT,
+        UNIQUE (campaign_id, phone_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_offer_customers_agent ON offer_customers(assigned_agent_id, call_status);
+      CREATE INDEX IF NOT EXISTS idx_offer_customers_phone ON offer_customers(phone_key);
+      -- Orders that used the offer. step 1, 2, 3 in order, once each per customer (the UNIQUE enforces it).
+      CREATE TABLE IF NOT EXISTS offer_orders (
+        id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL REFERENCES offer_customers(id) ON DELETE CASCADE,
+        campaign_id TEXT NOT NULL,
+        step INTEGER NOT NULL,
+        discount INTEGER NOT NULL,
+        order_number TEXT NOT NULL,
+        order_date DATE NOT NULL,
+        order_value NUMERIC(12,3),
+        logged_by TEXT,
+        logged_by_name TEXT,
+        logged_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (customer_id, step)
+      );
+      -- Everything that happened to a customer, newest last: upload, assignment, calls (with the status before
+      -- and after), orders, approvals. This is what an agent reads when the customer calls back.
+      CREATE TABLE IF NOT EXISTS offer_events (
+        id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL REFERENCES offer_customers(id) ON DELETE CASCADE,
+        campaign_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        direction TEXT,
+        call_status TEXT,
+        prev_status TEXT,
+        churn_reason TEXT,
+        comment TEXT,
+        details JSONB,
+        user_id TEXT,
+        user_name TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_offer_events_customer ON offer_events(customer_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_offer_events_campaign ON offer_events(campaign_id, kind, created_at);
       -- Talabat partner-portal Order report, one row per Kuwait day (YYYY-MM-DD), uploaded each morning by
       -- the talabat-export tool. The CSV is kept gzipped, and its summary (see server/talabat.ts) beside it.
       -- A re-upload of the same day replaces it. Admin only.
@@ -813,6 +900,13 @@ export class DB {
         PRIMARY KEY (platform, order_id)
       );
     `);
+    if (!offersExisted) {
+      const shakir = (await pool.query("SELECT id FROM brands WHERE brand_name ILIKE '%shakir%' OR brand_name ILIKE '%shaker%' ORDER BY id LIMIT 1")).rows[0];
+      await pool.query(
+        `INSERT INTO offer_campaigns (id, name, brand_id, steps, validity_days, script_ar, script_en, churn_reasons)
+         VALUES ($1, 'Shakir Campaign', $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+        [SHAKIR_CAMPAIGN_ID, shakir?.id || null, JSON.stringify(DEFAULT_STEPS), DEFAULT_VALIDITY_DAYS, SHAKIR_SCRIPT_AR, SHAKIR_SCRIPT_EN, JSON.stringify(DEFAULT_CHURN_REASONS)]);
+    }
     if (!dncExisted) {
       await pool.query(
         `INSERT INTO do_not_call (phone_key, phone, reason, source, added_by_name) VALUES ('94449544', '94449544', 'Customer called and asked not to be contacted for surveys again (2026-10-19)', 'manual', 'System') ON CONFLICT DO NOTHING`
@@ -1159,7 +1253,7 @@ export class DB {
     if (!batches.length) return [];
 
     const ids = batches.map((b) => b.id);
-    const [rat, sa, sr] = await Promise.all([
+    const [rat, sa, sr, oc] = await Promise.all([
       pool.query(`
         SELECT upload_batch_id AS id,
                count(*) FILTER (WHERE requires_action)::int AS denominator,
@@ -1176,9 +1270,15 @@ export class DB {
                count(*)::int AS denominator,
                count(*) FILTER (WHERE answered)::int AS completed
         FROM survey_records WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
+      pool.query(`
+        SELECT upload_batch_id AS id,
+               count(*)::int AS denominator,
+               count(*) FILTER (WHERE call_status NOT IN ('not_called','no_answer','busy','call_back'))::int AS completed,
+               count(*) FILTER (WHERE EXISTS (SELECT 1 FROM offer_orders o WHERE o.customer_id = offer_customers.id))::int AS successful
+        FROM offer_customers WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
     ]);
     const stats = new Map<string, any>();
-    [...rat.rows, ...sa.rows, ...sr.rows].forEach((r) => stats.set(r.id, r));
+    [...rat.rows, ...sa.rows, ...sr.rows, ...oc.rows].forEach((r) => stats.set(r.id, r));
     return batches.map((b) => {
       const s = stats.get(b.id) || {};
       return { ...b, completed: s.completed ?? 0, denominator: s.denominator ?? 0, successful: s.successful ?? null };

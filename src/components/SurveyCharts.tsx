@@ -34,19 +34,20 @@ const reachedPct = (c: Counts) => pct(c.reached + c.refused, c.uploaded);
 const notReachedPct = (c: Counts) => pct(c.not_reached, c.uploaded);
 
 // Series colors: the validated categorical order (blue, aqua, orange, violet, ...) — light and dark steps.
-const STYLE = `
+// Shared with other dashboards (e.g. the offer campaign page): wrap the section in className="svc" and render <style>{STYLE}</style>.
+export const STYLE = `
 .svc { --c-blue:#2a78d6; --c-aqua:#1baf7a; --c-orange:#eb6834; --c-violet:#6250d6; --c-yellow:#eda100; --c-magenta:#e87ba4; --c-green:#008300; --c-other:#9ca3af; }
 .dark .svc { --c-blue:#3987e5; --c-aqua:#199e70; --c-orange:#d95926; --c-violet:#9085e9; --c-yellow:#c98500; --c-magenta:#d55181; --c-green:#008300; --c-other:#71717a; }
 `;
-const C = { blue: "var(--c-blue)", aqua: "var(--c-aqua)", orange: "var(--c-orange)", violet: "var(--c-violet)", yellow: "var(--c-yellow)", magenta: "var(--c-magenta)", green: "var(--c-green)", other: "var(--c-other)" };
+export const C = { blue: "var(--c-blue)", aqua: "var(--c-aqua)", orange: "var(--c-orange)", violet: "var(--c-violet)", yellow: "var(--c-yellow)", magenta: "var(--c-magenta)", green: "var(--c-green)", other: "var(--c-other)" };
 const BRAND_COLORS = [C.blue, C.orange, C.aqua, C.yellow, C.magenta, C.green, C.violet];
 
-type Series = { key: string; label: string; color: string };
-type Cat = { key: string; label: string };
-interface Tip { x: number; y: number; title: string; rows: { color?: string; label: string; value: string }[] }
+export type Series = { key: string; label: string; color: string };
+export type Cat = { key: string; label: string };
+export interface Tip { x: number; y: number; title: string; rows: { color?: string; label: string; value: string }[] }
 
 // ---------------------------------------------------------------- chart frame (title, legend, table view, tooltip)
-function Card({ title, sub, legend, table, children, right, reset }: { reset?: unknown; title: string; sub?: string; legend?: Series[]; table?: { head: string[]; rows: string[][] }; children: (setTip: (t: Tip | null) => void) => ReactNode; right?: ReactNode }) {
+export function Card({ title, sub, legend, table, children, right, reset }: { reset?: unknown; title: string; sub?: string; legend?: Series[]; table?: { head: string[]; rows: string[][] }; children: (setTip: (t: Tip | null) => void) => ReactNode; right?: ReactNode }) {
   const [tip, setTip] = useState<Tip | null>(null);
   const [asTable, setAsTable] = useState(false);
   // new data under the mouse: drop the old tooltip instead of showing stale numbers
@@ -127,7 +128,7 @@ const colPath = (x: number, y: number, w: number, h: number) => {
 const labelEvery = (n: number) => (n <= 12 ? 1 : n <= 24 ? 2 : 3);
 
 /** Grouped columns: one group per category, one column per series. */
-function GroupedColumns({ cats, series, value, selected, setTip, labelBars }: { cats: Cat[]; series: Series[]; value: (cat: string, s: string) => number; selected?: (cat: string) => boolean; setTip: (t: Tip | null) => void; labelBars?: boolean }) {
+export function GroupedColumns({ cats, series, value, selected, setTip, labelBars }: { cats: Cat[]; series: Series[]; value: (cat: string, s: string) => number; selected?: (cat: string) => boolean; setTip: (t: Tip | null) => void; labelBars?: boolean }) {
   const max = Math.max(0, ...cats.flatMap((c) => series.map((s) => value(c.key, s.key))));
   const { top, ticks } = niceMax(max);
   const band = PW / Math.max(cats.length, 1);

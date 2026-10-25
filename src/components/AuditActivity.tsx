@@ -6,7 +6,7 @@ import { Filter, X, Download, RefreshCw, AlertCircle } from "lucide-react";
 // Full action log of one area (surveys / ratings & reviews): every click that saved or opened something,
 // who did it, when, on which record, and — for assignments — from whom to whom.
 
-type Area = "surveys" | "ratings";
+type Area = "surveys" | "ratings" | "offers";
 
 interface Row {
   id: string; timestamp: string; operator_id: string | null; operator_name: string | null; operator_role: string | null;
@@ -15,6 +15,7 @@ interface Row {
   rating_order: string | null; rating_phone: string | null; rating: number | null; rating_brand: string | null;
   survey_customer: string | null; survey_branch: string | null; survey_order_date: string | null; survey_item: string | null; survey_platform: string | null;
   rating_customer: string | null; rating_branch: string | null; rating_order_date: string | null; rating_text: string | null;
+  offer_customer?: string | null; offer_phone?: string | null; offer_status?: string | null;
 }
 
 const KW_MS = 3 * 3600_000;
@@ -54,12 +55,23 @@ const LABELS: [RegExp, string][] = [
   [/^POST \/api\/ratings\/bulk-status$/, "Changed status of several reviews"],
   [/^POST \/api\/ratings\/delete$/, "Deleted reviews"],
   [/backfill/, "Filled missing phones"],
+  [/^POST \/api\/offer-campaigns\/[^/]+\/upload$/, "Uploaded customers"],
+  [/^POST \/api\/offer-campaigns\/[^/]+\/assign$/, "Gave customers to an agent"],
+  [/^PATCH \/api\/offer-campaigns\/customers\/[^/]+\/assign$/, "Moved a customer to another agent"],
+  [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/call$/, "Recorded a call"],
+  [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/orders$/, "Logged an offer order"],
+  [/^POST \/api\/offer-campaigns\/orders\/[^/]+\/remove$/, "Removed an offer order"],
+  [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/approve$/, "Approved / rejected a record"],
+  [/^PUT \/api\/offer-campaigns\/[^/]+$/, "Changed the campaign settings"],
 ];
 const label = (action: string) => LABELS.find(([re]) => re.test(action))?.[1] || action;
 
 // Which order / customer a row is about, as labelled lines (so "Order", "Customer", "Task" are never guessed).
 const recordLines = (r: Row): string[] => {
-  const kind = r.task_no != null || r.survey_phone || r.survey_order ? "survey" : r.rating_order || r.rating_phone ? "rating" : "";
+  const kind = r.task_no != null || r.survey_phone || r.survey_order ? "survey" : r.rating_order || r.rating_phone ? "rating" : r.offer_phone ? "offer" : "";
+  if (kind === "offer") {
+    return [[r.offer_customer ? `Customer: ${r.offer_customer}` : "Customer", r.offer_phone].filter(Boolean).join(" · "), r.offer_status ? `status now: ${r.offer_status.replace(/_/g, " ")}` : ""].filter(Boolean);
+  }
   if (kind === "survey") {
     return [
       [r.survey_order ? `Order ${r.survey_order}` : "", r.survey_brand, r.survey_platform].filter(Boolean).join(" · "),
@@ -171,6 +183,11 @@ export function describe(r: Row, names: Record<string, string>): string {
   if (/^POST \/api\/ratings\/bulk-status$/.test(act)) return `Set ${reviews()} to "${pretty(kv(d, "action_status") || "a new status")}".`;
   if (/^POST \/api\/ratings\/delete$/.test(act)) return "Deleted reviews.";
   if (/backfill/.test(act)) return "Filled in missing customer phones from the order data.";
+  // Offer campaign actions: the server writes a readable line, and the status before/after for calls and approvals.
+  if (/\/api\/offer-campaigns/.test(act)) {
+    const ch = r.previous_value || r.new_value ? ` (${(r.previous_value || "—").replace(/_/g, " ")} → ${(r.new_value || "—").replace(/_/g, " ")})` : "";
+    return d ? `${d}${ch}.` : ch ? `Changed${ch}.` : "";
+  }
   return "";
 }
 
@@ -236,7 +253,7 @@ export default function AuditActivity({ area }: { area: Area }) {
   const clear = () => { setFrom(""); setTo(""); setOperator(""); setSearch(""); setHeartbeats(false); };
   const inputCls = "px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none";
   const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
-  const what = area === "surveys" ? "survey" : "review";
+  const what = area === "surveys" ? "survey" : area === "offers" ? "customer" : "review";
 
   return (
     <div className="space-y-6 text-[var(--text)]">

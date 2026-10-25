@@ -10,6 +10,7 @@ import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./serv
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
+import { registerOfferRoutes } from "./server/offers.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -2851,6 +2852,7 @@ app.get("/api/audit/uploads/:id/issues", authenticateJWT, requireAdminOrSupervis
 const AUDIT_AREAS: Record<string, { where: string }> = {
   surveys: { where: `(l.category IN ('Surveys','Survey Campaigns','Survey Templates','Survey Records','Do Not Call') OR l.action ILIKE '%/api/survey%' OR l.action ILIKE '%/api/do-not-call%')` },
   ratings: { where: `(l.category = 'Ratings' OR l.action ILIKE '%/api/ratings%' OR l.action ILIKE 'ratings.%')` },
+  offers: { where: `(l.category = 'Offer Campaigns' OR l.action ILIKE '%/api/offer-campaigns%')` },
 };
 app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
   const area = AUDIT_AREAS[String(req.query.area || "")];
@@ -2861,12 +2863,12 @@ app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncH
     return new Date(Date.UTC(y, mo - 1, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0) - KW_OFFSET_MS).toISOString();
   };
   const where: string[] = [area.where], vals: any[] = [];
-  if (q("from")) { vals.push(kwToUtc(q("from"), false)); where.push(`l.timestamp::timestamptz >= ${vals.length}`); }
-  if (q("to")) { vals.push(kwToUtc(q("to"), true)); where.push(`l.timestamp::timestamptz <= ${vals.length}`); }
-  if (q("operator")) { vals.push(q("operator")); where.push(`l.operator_id = ${vals.length}`); }
+  if (q("from")) { vals.push(kwToUtc(q("from"), false)); where.push(`l.timestamp::timestamptz >= $${vals.length}`); }
+  if (q("to")) { vals.push(kwToUtc(q("to"), true)); where.push(`l.timestamp::timestamptz <= $${vals.length}`); }
+  if (q("operator")) { vals.push(q("operator")); where.push(`l.operator_id = $${vals.length}`); }
   if (q("search")) {
     vals.push("%" + q("search") + "%");
-    where.push(`(l.details ILIKE ${vals.length} OR l.related_ref ILIKE ${vals.length} OR l.action ILIKE ${vals.length} OR sa.customer_phone ILIKE ${vals.length} OR sa.order_id ILIKE ${vals.length} OR r.order_id ILIKE ${vals.length} OR r.customer_phone ILIKE ${vals.length} OR sa.task_no::text ILIKE ${vals.length})`);
+    where.push(`(l.details ILIKE $${vals.length} OR l.related_ref ILIKE $${vals.length} OR l.action ILIKE $${vals.length} OR sa.customer_phone ILIKE $${vals.length} OR sa.order_id ILIKE $${vals.length} OR r.order_id ILIKE $${vals.length} OR r.customer_phone ILIKE $${vals.length} OR sa.task_no::text ILIKE $${vals.length} OR oc.phone ILIKE $${vals.length} OR oc.customer_name ILIKE $${vals.length})`);
   }
   // The timer's heartbeat (every 20 s while a survey is open) is not a click — hidden unless asked for.
   if (q("heartbeats") !== "1") where.push(`l.action NOT ILIKE '%/beat'`);
@@ -2875,6 +2877,7 @@ app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncH
       LEFT JOIN brands sb ON sb.id = sa.brand_id
       LEFT JOIN ratings r ON r.id = l.related_ref
       LEFT JOIN brands rb ON rb.id = r.brand_id
+      LEFT JOIN offer_customers oc ON oc.id = l.related_ref
      WHERE ${where.join(" AND ")}`;
   const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -2882,7 +2885,7 @@ app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncH
     DB.query(`SELECT l.id, l.timestamp, l.operator_id, l.operator_name, l.operator_role, l.action, l.details, l.related_ref, l.previous_value, l.new_value, l.ip_address,
              sa.task_no, sa.customer_phone AS survey_phone, sa.order_id AS survey_order, sa.status AS survey_status, sb.brand_name AS survey_brand,
              sa.customer_name AS survey_customer, sa.branch AS survey_branch, sa.order_date AS survey_order_date, sa.item_name AS survey_item, sa.platform_label AS survey_platform,
-             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand, r.customer_name AS rating_customer, r.branch AS rating_branch, r.order_date AS rating_order_date, r.review_text AS rating_text
+             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand, oc.customer_name AS offer_customer, oc.phone AS offer_phone, oc.call_status AS offer_status, r.customer_name AS rating_customer, r.branch AS rating_branch, r.order_date AS rating_order_date, r.review_text AS rating_text
         ${from} ORDER BY l.timestamp::timestamptz DESC LIMIT ${limit} OFFSET ${offset}`, vals),
     DB.query(`SELECT count(*)::int AS n ${from}`, vals),
     DB.query(`SELECT DISTINCT l.operator_id, l.operator_name FROM audit_logs l WHERE ${area.where} AND l.operator_name IS NOT NULL ORDER BY 2`, []),
@@ -3613,6 +3616,9 @@ app.get("/api/talabat-reports/:day/download", authenticateJWT, requireAdmin, asy
   }
   res.send(gunzip(f.csv_gz));
 }));
+
+// ---- Offer campaigns (Shakir win-back and later ones) — see server/offers.ts ----
+registerOfferRoutes(app, { authenticateJWT, asyncHandler, XLSX, pick, normalisePhone, isLeaderLevel, OPS_ROLES });
 
 // Daily capacity for the next 7 days
 app.get("/api/surveys/capacity", authenticateJWT, asyncHandler(async (_req, res) => {

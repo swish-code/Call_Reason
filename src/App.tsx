@@ -15,6 +15,7 @@ import RecurringTasks from "./components/RecurringTasks.tsx";
 import TaskPool from "./components/TaskPool.tsx";
 import Reviews from "./components/Reviews.tsx";
 import Surveys from "./components/Surveys.tsx";
+import OfferCampaignPage from "./components/OfferCampaign.tsx";
 import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
 import ChangePassword from "./components/ChangePassword.tsx";
 import OpsTasks from "./components/OpsTasks.tsx";
@@ -22,6 +23,7 @@ import OpsTaskTypes from "./components/OpsTaskTypes.tsx";
 import DeliveryPlatforms from "./components/DeliveryPlatforms.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
+  Gift,
   Phone,
   PhoneCall,
   ClipboardList,
@@ -65,14 +67,14 @@ import {
   ShoppingBag
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "talabat" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "feedbackdash" | "opstasks" | "opstasktypes";
+type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "talabat" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "offers" | "feedbackdash" | "opstasks" | "opstasktypes";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
   newlog: "logs", logs: "logs", history: "logs",
   mytasks: "tasks", tasks: "tasks", pool: "tasks", tracker: "tasks", recurring: "tasks",
   reports: "insights", performance: "insights", talabat: "insights",
-  reviews: "feedback", surveys: "feedback", feedbackdash: "feedback",
+  reviews: "feedback", surveys: "feedback", offers: "feedback", feedbackdash: "feedback",
   users: "admin", configuration: "admin", audit: "admin",
 };
 
@@ -435,6 +437,7 @@ export default function App() {
       { page: "feedbackdash", label: "Feedback Dashboard", icon: BarChart2, visible: notAgent },
       { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: !isOpsRole },
       { page: "surveys", label: "Surveys", icon: MessageSquare, visible: !isOpsRole },
+      { page: "offers", label: "Shakir Campaign", icon: Gift, visible: !isOpsRole && !isMarketing },
     ] },
     { type: "group", key: "operations", label: "Operations", icon: Building2, items: [
       { page: "opstasks", label: "Tasks", icon: Building2, visible: isOpsRole || isAdmin },
@@ -617,6 +620,7 @@ export default function App() {
               {activePage === "pool" && "Available Tasks"}
               {activePage === "reviews" && "Ratings & Reviews"}
               {activePage === "surveys" && "Surveys"}
+              {activePage === "offers" && "Shakir Campaign"}
               {activePage === "feedbackdash" && "Feedback Dashboard"}
             </h1>
           </div>
@@ -737,6 +741,9 @@ export default function App() {
           )}
           {activePage === "surveys" && !isOpsRole && (
             <Surveys currentUser={currentUser} />
+          )}
+          {activePage === "offers" && !isOpsRole && !isMarketing && (
+            <OfferCampaignPage currentUser={currentUser} />
           )}
           {activePage === "feedbackdash" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
             <FeedbackDashboard currentUser={currentUser} />

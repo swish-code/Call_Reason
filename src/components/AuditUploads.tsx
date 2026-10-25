@@ -8,7 +8,7 @@ interface Props { currentUser: User; }
 
 interface Batch {
   id: string;
-  upload_type: "ratings" | "survey_numbers" | "survey_records";
+  upload_type: "ratings" | "survey_numbers" | "survey_records" | "offer_customers";
   sub_type: string | null;
   ref_id: string | null;
   ref_label: string | null;
@@ -32,6 +32,8 @@ const SKIP_LABEL: Record<string, string> = {
   do_not_call: "do not call",
   already_uploaded: "already uploaded",
   empty_row: "empty row",
+  already_in_campaign: "already in campaign",
+  agent_not_found: "agent not found",
 };
 const SKIP_HELP: Record<string, string> = {
   dup_file: "The same number (for the same brand) appears more than once in this file — only the first one was added.",
@@ -40,6 +42,8 @@ const SKIP_HELP: Record<string, string> = {
   do_not_call: "This customer asked us not to call them again (Surveys → Do Not Call), so they are not queued.",
   already_uploaded: "This order's review was uploaded before; in \"skip duplicates\" mode the existing review is kept.",
   empty_row: "The row had no order ID, phone, item, brand or rate.",
+  already_in_campaign: "This customer is already in the offer campaign from an earlier upload.",
+  agent_not_found: "The Agent column named someone who is not an active user — the customer was added without an agent.",
 };
 const skipParts = (b: Record<string, number> | null) =>
   b ? Object.entries(b).filter(([k, n]) => k !== "error" && Number(n) > 0).map(([k, n]) => ({ key: k, n: Number(n) })) : [];
@@ -54,16 +58,17 @@ const downloadBase64 = (b64: string, filename: string) => {
 const KW_MS = 3 * 60 * 60 * 1000;
 const fmt = (iso: string) => new Date(new Date(iso).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16);
 
-const TYPE_LABEL: Record<Batch["upload_type"], string> = { ratings: "Reviews", survey_numbers: "Survey Numbers", survey_records: "Survey Data" };
+const TYPE_LABEL: Record<Batch["upload_type"], string> = { ratings: "Reviews", survey_numbers: "Survey Numbers", survey_records: "Survey Data", offer_customers: "Offer Campaign" };
 const SUB_LABEL: Record<string, string> = { new_items: "New Items", complaints: "Complaints", survey_history: "Survey History", skip: "skip duplicates", overwrite: "overwrite" };
-const typeIcon = (t: Batch["upload_type"]) => t === "ratings" ? Star : t === "survey_numbers" ? PhoneCall : ClipboardList;
-const typeTone = (t: Batch["upload_type"]) => t === "ratings" ? "text-amber-400" : t === "survey_numbers" ? "text-blue-400" : "text-sky-400";
+const typeIcon = (t: Batch["upload_type"]) => t === "ratings" ? Star : t === "survey_numbers" || t === "offer_customers" ? PhoneCall : ClipboardList;
+const typeTone = (t: Batch["upload_type"]) => t === "ratings" ? "text-amber-400" : t === "survey_numbers" ? "text-blue-400" : t === "offer_customers" ? "text-violet-400" : "text-sky-400";
 
 // What "completed" means per type — shown as a legend so the numbers aren't a mystery.
 const COMPLETED_MEANING: Record<Batch["upload_type"], string> = {
   ratings: "actionable reviews that were closed (auto-closed rows were never open, so they don't count)",
   survey_numbers: "numbers with a final call outcome (surveyed, unreachable, declined, refused or not interested)",
   survey_records: "records marked answered at upload (this type has no follow-up work)",
+  offer_customers: "customers with a final call result (not \"still to call\")",
 };
 
 export default function AuditUploads({ currentUser }: Props) {
@@ -195,6 +200,7 @@ export default function AuditUploads({ currentUser }: Props) {
           <option value="ratings">Reviews</option>
           <option value="survey_numbers">Survey Numbers</option>
           <option value="survey_records">Survey Data</option>
+          <option value="offer_customers">Offer Campaign</option>
         </select>
         <select value={uploader} onChange={(e) => setUploader(e.target.value)} className={selCls}>
           <option value="">All uploaders</option>
