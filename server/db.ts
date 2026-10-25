@@ -1195,6 +1195,14 @@ export class DB {
         untouched: `status = 'pending' AND attempt_count = 0 AND completed_at IS NULL`,
       },
       survey_records: { table: "survey_records", untouched: `record_type <> 'survey_live'` },
+      // Offer campaign customers nobody has called or ordered for (being assigned to an agent is not work).
+      // Their upload/assign history rows go with them (ON DELETE CASCADE).
+      offer_customers: {
+        table: "offer_customers",
+        untouched: `call_status = 'not_called' AND attempts = 0 AND first_call_at IS NULL AND offer_started_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM offer_orders o WHERE o.customer_id = offer_customers.id)
+          AND NOT EXISTS (SELECT 1 FROM offer_events e WHERE e.customer_id = offer_customers.id AND e.kind NOT IN ('upload','assign'))`,
+      },
     };
     const client = await pool.connect();
     try {
