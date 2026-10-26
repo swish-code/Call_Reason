@@ -9,7 +9,7 @@ export interface Eligibility {
   next: { step: number; discount: number } | null; used: number; total: number;
   starts: string | null; expires: string | null; daysLeft: number | null;
 }
-export interface OfferOrder { id: string; step: number; discount: number; order_number: string; order_date: string; order_value: string | null; logged_by_name: string | null; logged_at: string }
+export interface OfferOrder { id: string; step: number; discount: number; order_number: string | null; order_date: string; order_value: string | null; logged_by_name: string | null; logged_at: string }
 export interface OfferEvent {
   id: string; kind: string; direction: string | null; call_status: string | null; prev_status: string | null; churn_reason: string | null;
   comment: string | null; details: any; user_name: string | null; created_at: string;
@@ -55,5 +55,15 @@ export const fillScript = (text: string | null | undefined, customer: string | n
     .split("[Customer Name]").join(customer || "[Customer Name]")
     .split("[اسم الموظف]").join(agent || "[اسم الموظف]")
     .split("[Agent Name]").join(agent || "[Agent Name]");
+
+/** Uploaded extra columns: an Excel date that arrived as a day number (e.g. 46119) is shown as YYYY-MM-DD. */
+export const fmtExtra = (key: string, v: any): string => {
+  const s = String(v ?? "");
+  if (/date/i.test(key) && /^\d{5}(\.\d+)?$/.test(s)) {
+    const n = Math.floor(Number(s));
+    if (n > 20000 && n < 80000) return new Date(Date.UTC(1899, 11, 30) + n * 86400_000).toISOString().slice(0, 10);
+  }
+  return s;
+};
 
 export const stepLabel = (n: number) => (n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`);

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
-import { downloadCSV } from "../utils.js";
+import { downloadXlsx } from "../lib/xlsx.ts";
 import DncBadge from "./DncBadge.tsx";
 import OfferCustomerPanel from "./OfferCustomerPanel.tsx";
 import { Card as ChartCard, GroupedColumns, STYLE as CHART_STYLE, C as CC, type Series } from "./SurveyCharts.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
-  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel,
+  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel, fmtExtra,
 } from "../lib/offers.ts";
 import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X } from "lucide-react";
 
@@ -246,13 +246,18 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
 
   const unassigned = rows.filter((r) => !r.assigned_agent_id && r.call_status === "not_called").length;
   const orderDate = (r: any, step: number) => fmtDay(r.orders.find((o: any) => o.step === step)?.order_date) || "";
-  const exportCsv = () => downloadCSV(
-    ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends"],
-    rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, CALL_STATUS[r.call_status]?.label || r.call_status, fmtDay(r.first_call_at),
-      ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "", r.churn_reason || "", r.comment || "",
-      OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.starts || "", r.eligibility.expires || ""]),
-    `${camp.name.replace(/\s+/g, "_")}_customers_${kwToday()}`,
-  );
+  // The requested fields, then whatever extra columns the uploaded files had (lifetime orders, last order date…).
+  const exportXlsx = () => {
+    const extraKeys: string[] = [...new Set<string>(rows.flatMap((r: any) => Object.keys(r.extra || {})))];
+    return downloadXlsx(
+      ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
+      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, CALL_STATUS[r.call_status]?.label || r.call_status, fmtDay(r.first_call_at),
+        ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "", r.churn_reason || "", r.comment || "",
+        OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.starts || "", r.eligibility.expires || "",
+        ...extraKeys.map((k) => fmtExtra(k, r.extra?.[k]))]),
+      `${camp.name.replace(/\s+/g, "_")}_customers_${kwToday()}`, "Customers",
+    );
+  };
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
 
   return (
@@ -286,7 +291,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">to<input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set("to", e.target.value)} className={inputCls} /></label>
         <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Name or phone…" className={inputCls + " w-44"} />
         {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", offer: "", from: "", to: "", search: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
-        <button onClick={exportCsv} disabled={!rows.length} className="ml-auto flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600/20 text-emerald-500 border border-emerald-500/30 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Excel (CSV)</button>
+        <button onClick={exportXlsx} disabled={!rows.length} className="ml-auto flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600/20 text-emerald-500 border border-emerald-500/30 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Excel</button>
       </div>
 
       <Err text={error} /><Ok text={msg} />

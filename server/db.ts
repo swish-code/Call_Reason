@@ -786,6 +786,8 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_offer_events_customer ON offer_events(customer_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_offer_events_campaign ON offer_events(campaign_id, kind, created_at);
+      -- The order number became optional (2026-10-26).
+      ALTER TABLE offer_orders ALTER COLUMN order_number DROP NOT NULL;
       -- Talabat partner-portal Order report, one row per Kuwait day (YYYY-MM-DD), uploaded each morning by
       -- the talabat-export tool. The CSV is kept gzipped, and its summary (see server/talabat.ts) beside it.
       -- A re-upload of the same day replaces it. Admin only.

@@ -4,7 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, RESULT_STATUSES, OFFER_STATE,
-  kwToday, fmtDT, fmtDay, fillScript, stepLabel,
+  kwToday, fmtDT, fmtDay, fillScript, stepLabel, fmtExtra,
 } from "../lib/offers.ts";
 import { X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
 
@@ -67,14 +67,15 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
     if (ok) { setStatus(""); setComment(""); setCallBack(""); }
   };
   const saveOrder = async () => {
-    if (!orderNo.trim()) { setError("Type the order number."); return; }
+    const digits = orderNo.replace(/\D/g, "");
+    if (digits.length >= 8 && digits.slice(-8) === String(data?.customer.phone || "").replace(/\D/g, "").slice(-8)) { setError("That is the customer's phone number, not an order number. Type the order number, or leave it empty if there is none."); return; }
     const next = data?.eligibility.next;
-    if (!next || !window.confirm(`Log order ${orderNo.trim()} with ${next.discount}% off (${stepLabel(next.step)} order of the offer)?`)) return;
+    if (!next || !window.confirm(`Log ${orderNo.trim() ? `order ${orderNo.trim()}` : "this order"} with ${next.discount}% off (${stepLabel(next.step)} order of the offer)?`)) return;
     const ok = await post(`/api/offer-campaigns/customers/${id}/orders`, { order_number: orderNo.trim(), order_date: orderDate, order_value: orderValue === "" ? undefined : orderValue, comment: orderNote || undefined }, "Order logged.", "order");
     if (ok) { setOrderNo(""); setOrderValue(""); setOrderNote(""); setOrderDate(kwToday()); }
   };
   const removeOrder = async (o: OfferOrder) => {
-    const reason = window.prompt(`Remove order ${o.order_number} (${o.discount}%)?\nWrite why (kept in the history):`);
+    const reason = window.prompt(`Remove the ${stepLabel(o.step)} order${o.order_number ? ` ${o.order_number}` : ""} (${o.discount}%)?\nWrite why (kept in the history):`);
     if (!reason || !reason.trim()) return;
     await post(`/api/offer-campaigns/orders/${o.id}/remove`, { reason: reason.trim() }, "Order removed.", "remove");
   };
@@ -183,8 +184,8 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                         {el.expires ? <> · valid until <b>{el.expires}</b> ({el.daysLeft} day{el.daysLeft === 1 ? "" : "s"} left)</> : <> · the offer starts with this order ({camp?.validity_days} days)</>}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order number
-                          <input value={orderNo} onChange={(e) => setOrderNo(e.target.value)} dir="ltr" className={inputCls + " font-mono"} placeholder="e.g. 123456" />
+                        <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order number (optional — not the phone)
+                          <input value={orderNo} onChange={(e) => setOrderNo(e.target.value)} dir="ltr" className={inputCls + " font-mono"} placeholder="from the POS / app" />
                         </label>
                         <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order date
                           <input type="date" value={orderDate} max={kwToday()} onChange={(e) => setOrderDate(e.target.value)} className={inputCls} />
@@ -206,6 +207,43 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
 
               {/* right: offer, details, history */}
               <div className="lg:col-span-2 space-y-4">
+                <div className="rounded-2xl border border-[var(--border)] p-4 space-y-2">
+                  <p className="text-xs font-extrabold text-[var(--heading)]">The offer</p>
+                  <div className="text-[11px] text-[var(--muted)]">
+                    {el?.starts ? <>Started <b className="text-[var(--heading)]">{el.starts}</b> · ends <b className="text-[var(--heading)]">{el.expires}</b>{el.state === "active" && <> · <b className="text-emerald-500">{el.daysLeft} day{el.daysLeft === 1 ? "" : "s"} left</b></>}</> : "Not started yet — it starts on the day the customer accepts the offer (or with their first order if they call us first)."}
+                  </div>
+                  <div className="space-y-1.5 pt-1">
+                    {(camp?.steps || []).map((d, i) => {
+                      const o = data.orders.find((x) => x.step === i + 1);
+                      const isLast = o && o.step === Math.max(...data.orders.map((x) => x.step));
+                      return (
+                        <div key={i} className={`flex items-center justify-between gap-2 p-2 rounded-xl border text-[11px] ${o ? "border-emerald-500/30 bg-emerald-500/5" : el?.next?.step === i + 1 ? "border-violet-500/40 bg-violet-500/5" : "border-[var(--border)]"}`}>
+                          <span className="font-bold text-[var(--heading)]">{stepLabel(i + 1)} order · {d}%</span>
+                          {o ? (
+                            <span className="flex items-center gap-1.5 text-[var(--text)]">{o.order_number ? `#${o.order_number} · ` : ""}{fmtDay(o.order_date)}{o.order_value ? ` · ${money(o.order_value)}` : ""}<span className="text-[var(--muted)]"> · {o.logged_by_name}</span>
+                              {canManage && isLast && <button onClick={() => removeOrder(o)} title="Remove this order" className="p-1 rounded text-[var(--muted)] hover:text-rose-400"><Trash2 className="w-3 h-3" /></button>}
+                            </span>
+                          ) : <span className="text-[var(--muted)]">{el?.next?.step === i + 1 ? "next" : "—"}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--border)] p-4">
+                  <p className="text-xs font-extrabold text-[var(--heading)] mb-2">Customer</p>
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+                    <dt className="text-[var(--muted)]">Uploaded</dt><dd>{fmtDay(c!.uploaded_at)}{c!.uploaded_by_name ? ` by ${c!.uploaded_by_name}` : ""}</dd>
+                    <dt className="text-[var(--muted)]">Agent</dt><dd>{c!.agent_name || "—"}</dd>
+                    <dt className="text-[var(--muted)]">Contact date</dt><dd>{fmtDay(c!.contact_date) || "—"}</dd>
+                    <dt className="text-[var(--muted)]">1st call</dt><dd>{c!.first_call_at ? `${fmtDT(c!.first_call_at)}${c!.first_call_agent_name ? ` · ${c!.first_call_agent_name}` : ""}` : "—"}</dd>
+                    <dt className="text-[var(--muted)]">Attempts</dt><dd>{c!.attempts}</dd>
+                    <dt className="text-[var(--muted)]">Churn reason</dt><dd>{c!.churn_reason || "—"}</dd>
+                    <dt className="text-[var(--muted)]">Comment</dt><dd className="whitespace-pre-wrap">{c!.comment || "—"}</dd>
+                    {Object.entries(c!.extra || {}).map(([k, v]) => <Fragment key={k}><dt className="text-[var(--muted)]">{k}</dt><dd>{fmtExtra(k, v)}</dd></Fragment>)}
+                  </dl>
+                </div>
+
                 <div className="rounded-2xl border border-[var(--border)] p-4">
                   <p className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-2 mb-2"><History className="w-4 h-4 text-violet-400" /> History</p>
                   <ol className="space-y-2 max-h-[360px] overflow-y-auto">
@@ -228,8 +266,8 @@ function EventRow({ e }: { e: OfferEvent }) {
   if (e.kind === "upload") text = "Uploaded to the campaign";
   else if (e.kind === "assign") text = d.from !== undefined ? `Moved from ${d.from || "nobody"} to ${d.to || "nobody"}` : `Assigned to ${d.to}${d.from_file ? " (from the file)" : ""}`;
   else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${st(e.prev_status)} → ${st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}`;
-  else if (e.kind === "order") text = `Order #${d.order_number} on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
-  else if (e.kind === "order_removed") text = `Removed order #${d.order_number} (${d.discount}%, logged by ${d.logged_by || "?"})`;
+  else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
+  else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})`;
   else text = e.kind;
   return (
     <li className="text-[11px] border-l-2 border-[var(--border)] pl-3">

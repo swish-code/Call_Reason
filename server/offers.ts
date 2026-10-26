@@ -157,7 +157,12 @@ export function registerOfferRoutes(app: any, d: Deps) {
       const name = d.pick(row, ...NAME_COLS) || null;
       const rawPhone = d.pick(row, ...PHONE_COLS);
       const extra: Record<string, string> = {};
-      for (const [k, v] of Object.entries(row)) if (!known.has(k.toLowerCase().trim()) && String(v ?? "").trim()) extra[k.trim()] = String(v).trim().slice(0, 300);
+      for (const [k, v] of Object.entries(row)) {
+        if (known.has(k.toLowerCase().trim()) || !String(v ?? "").trim()) continue;
+        // An Excel date cell arrives as a day number (46119) — keep it as a readable YYYY-MM-DD.
+        const isSerialDate = /date/i.test(k) && typeof v === "number" && v > 20000 && v < 80000;
+        extra[k.trim()] = isSerialDate ? new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 86400_000).toISOString().slice(0, 10) : String(v).trim().slice(0, 300);
+      }
       if (!name && !rawPhone && !Object.keys(extra).length) { counts.empty_row++; return; }
       const key = DB.dncKey(rawPhone);
       if (!key) { counts.error++; issues.push({ row: rowNo, reason: "error", phone: rawPhone || null, customer_name: name, detail: "Missing or invalid phone number (needs at least 8 digits)" }); return; }
@@ -361,17 +366,19 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (!data) return res.status(404).json({ error: "Customer not found." });
     const { customer: c, campaign: camp, eligibility: el } = data;
     const b = req.body || {};
-    const orderNumber = String(b.order_number || "").trim().slice(0, 40);
+    // The order number is optional (agents don't always have it), but it is never the customer's phone — agents typed the
+    // phone there at first, which then blocked the next discount as a "duplicate order".
+    const orderNumber = String(b.order_number || "").trim().slice(0, 40) || null;
     const orderDate = String(b.order_date || "");
     const today = kwToday();
-    if (!orderNumber) return res.status(400).json({ error: "Type the order number." });
+    if (orderNumber && DB.dncKey(orderNumber) && DB.dncKey(orderNumber) === c.phone_key) return res.status(400).json({ error: "That is the customer's phone number, not an order number. Type the order number, or leave it empty if there is none." });
     if (!isDay(orderDate) || orderDate > today) return res.status(400).json({ error: "Pick the order date (today or earlier)." });
     const value = b.order_value === undefined || b.order_value === "" || b.order_value === null ? null : Number(b.order_value);
     if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100000)) return res.status(400).json({ error: "The order value looks wrong." });
     if (el.state === "completed" || !el.next) return res.status(409).json({ error: `All ${el.total} discounts were already used.` });
     if (el.state === "expired") return res.status(409).json({ error: `The offer expired on ${el.expires} — the discount can't be applied.` });
     if (el.starts && orderDate < el.starts) return res.status(409).json({ error: `The offer started on ${el.starts}; this order is older.` });
-    const dup = (await DB.query(`SELECT 1 FROM offer_orders WHERE campaign_id = $1 AND lower(order_number) = lower($2)`, [camp.id, orderNumber]))[0];
+    const dup = orderNumber ? (await DB.query(`SELECT 1 FROM offer_orders WHERE campaign_id = $1 AND lower(order_number) = lower($2)`, [camp.id, orderNumber]))[0] : null;
     if (dup) return res.status(409).json({ error: `Order ${orderNumber} was already logged in this campaign.` });
     const step = el.next.step, discount = el.next.discount;
     try {
@@ -389,7 +396,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
       WHERE id = $1`, [c.id, String(camp.validity_days), comment]);
     await addEvent({ customerId: c.id, campaignId: camp.id, kind: "order", user: req.user, call_status: "ordered", prev_status: c.call_status, comment,
       details: { step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, ...(!c.offer_started_at ? { offer_started: true } : {}) } });
-    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — order ${orderNumber} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}`.trim(), new_value: `${discount}%` };
+    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — order ${orderNumber || "(no number)"} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}`.trim(), new_value: `${discount}%` };
     res.json(await loadCustomer(c.id));
   }));
 
@@ -403,7 +410,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (!reason) return res.status(400).json({ error: "Write why this order is being removed." });
     await DB.query(`DELETE FROM offer_orders WHERE id = $1`, [o.id]);
     await addEvent({ customerId: o.customer_id, campaignId: o.campaign_id, kind: "order_removed", user: req.user, comment: reason, details: { step: o.step, discount: o.discount, order_number: o.order_number, order_date: o.order_date, logged_by: o.logged_by_name } });
-    req.auditExtra = { details: `Removed order ${o.order_number} (${o.discount}%, logged by ${o.logged_by_name || "?"}) — ${reason}`, previous_value: `${o.discount}%` };
+    req.auditExtra = { details: `Removed order ${o.order_number || "(no number)"} (${o.discount}%, logged by ${o.logged_by_name || "?"}) — ${reason}`, previous_value: `${o.discount}%` };
     res.json(await loadCustomer(o.customer_id));
   }));
 
