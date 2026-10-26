@@ -309,22 +309,24 @@ const Fact = ({ n, label, sub }: { n: number; label: string; sub?: string }) => 
 );
 
 // ---------------------------------------------------------------- agents and churn
+const AGENT_COLS = "grid grid-cols-[minmax(10rem,1.3fr)_2fr_repeat(3,4.2rem)_8rem_4.2rem] gap-3";
 function Agents({ agents, grown, periodText }: { agents: any[]; grown: boolean; periodText: string }) {
   const max = Math.max(1, ...agents.map((a) => a.calls));
   return (
     <div className="xl:col-span-2 rounded-3xl p-6 bg-[var(--surface)] border border-[var(--border)] shadow-lg">
       <h3 className="text-sm font-extrabold text-[var(--heading)]">Agents</h3>
-      <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}. "Still to call" is everything on their list now.</p>
+      <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}. Calls are the ones each person made. Accepted and orders count for the customer's agent, even when a colleague recorded them. "To call" is everything on their list now.</p>
       {!agents.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No calls or orders in this period yet.</div> : (
         <div className="overflow-x-auto">
-          <div className="min-w-[560px]">
-            <div className="grid grid-cols-[minmax(10rem,1.3fr)_2fr_repeat(4,4.2rem)] gap-3 px-2 pb-2 text-[10px] font-bold text-[var(--muted)] border-b border-[var(--border)]">
-              <span>Agent</span><span>Calls</span><span className="text-center">Reached</span><span className="text-center">Accepted</span><span className="text-center">Orders</span><span className="text-center">To call</span>
+          <div className="min-w-[680px]">
+            <div className={`${AGENT_COLS} px-2 pb-2 text-[10px] font-bold text-[var(--muted)] border-b border-[var(--border)]`}>
+              <span>Agent</span><span>Calls</span><span className="text-center">Reached</span><span className="text-center">Accepted</span><span className="text-center">Orders</span>
+              <span title="Done by a colleague on this agent's customers / done by this person on colleagues' customers">Colleagues</span><span className="text-center">To call</span>
             </div>
             {agents.map((a, i) => {
               const name = a.name || "—";
               return (
-                <div key={a.user_id || i} className="grid grid-cols-[minmax(10rem,1.3fr)_2fr_repeat(4,4.2rem)] gap-3 items-center px-2 py-2.5 rounded-xl hover:bg-[var(--surface-2)]/60 transition-colors">
+                <div key={a.user_id || i} className={`${AGENT_COLS} items-center px-2 py-2.5 rounded-xl hover:bg-[var(--surface-2)]/60 transition-colors`}>
                   <span className="flex items-center gap-2.5 min-w-0">
                     <span className="w-8 h-8 rounded-full grid place-items-center text-[11px] font-extrabold text-white shrink-0 shadow-sm" style={{ background: avatarColor(name) }}>{initials(name)}</span>
                     <span className="text-xs font-bold text-[var(--heading)] truncate">{name}</span>
@@ -338,6 +340,11 @@ function Agents({ agents, grown, periodText }: { agents: any[]; grown: boolean; 
                   <span className="text-center text-xs tabular-nums">{a.reached}</span>
                   <span className="text-center text-xs tabular-nums font-bold text-emerald-600">{a.accepted || <span className="text-[var(--muted)] font-normal">0</span>}</span>
                   <span className="text-center text-xs tabular-nums font-bold text-orange-500">{a.orders || <span className="text-[var(--muted)] font-normal">0</span>}</span>
+                  <span className="flex flex-col items-start gap-1">
+                    {a.by_colleagues > 0 && <span title="Accepted or orders on this agent's customers that a colleague recorded" className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-600 whitespace-nowrap">{a.by_colleagues} by a colleague</span>}
+                    {a.helped > 0 && <span title="Calls and orders this person did on colleagues' customers" className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/10 border border-sky-500/30 text-sky-600 whitespace-nowrap">helped on {a.helped}</span>}
+                    {!a.by_colleagues && !a.helped && <span className="text-xs text-[var(--muted)]">—</span>}
+                  </span>
                   <span className="text-center text-xs tabular-nums text-[var(--muted)]">{a.open}</span>
                 </div>
               );

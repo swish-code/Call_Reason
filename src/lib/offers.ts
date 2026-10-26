@@ -14,7 +14,7 @@ export interface Eligibility {
 export interface OfferOrder { id: string; step: number; discount: number; order_number: string | null; order_date: string; order_value: string | null; logged_by_name: string | null; logged_at: string }
 export interface OfferEvent {
   id: string; kind: string; direction: string | null; call_status: string | null; prev_status: string | null; churn_reason: string | null;
-  comment: string | null; details: any; user_name: string | null; created_at: string;
+  comment: string | null; details: any; user_id?: string | null; user_name: string | null; created_at: string;
 }
 export interface OfferCustomer {
   id: string; campaign_id: string; phone: string; customer_name: string | null; extra: Record<string, string> | null;
@@ -35,6 +35,29 @@ export const CALL_STATUS: Record<string, { label: string; cls: string; open?: bo
 };
 /** What an agent can record as the result of a call (everything except "not called yet"). */
 export const RESULT_STATUSES = Object.keys(CALL_STATUS).filter((k) => k !== "not_called");
+
+/** A call or order on a customer, as the list (work) and the customer screen (events) carry it. */
+export interface WorkEvent { kind: string; call_status?: string | null; user_id?: string | null; user_name?: string | null; created_at: string; details?: any }
+/** One person who worked on a customer, with what they did in order (a repeat of the same thing is shown once). */
+export interface Handler { user_id: string | null; name: string; last_at: string; actions: string[] }
+export const workLabel = (e: WorkEvent) =>
+  e.kind === "order" ? `${e.details?.discount}% order` : e.details?.result || CALL_STATUS[e.call_status || ""]?.label || e.call_status || "Call";
+/** Who worked on a customer (calls and orders), in the order they first did. */
+export function handlersFrom(events: WorkEvent[]): Handler[] {
+  const byPerson = new Map<string, Handler>();
+  const work = events.filter((e) => e.kind === "call" || e.kind === "order").sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+  for (const e of work) {
+    const key = e.user_id || e.user_name || "?";
+    let h = byPerson.get(key);
+    if (!h) byPerson.set(key, (h = { user_id: e.user_id ?? null, name: e.user_name || "—", last_at: e.created_at, actions: [] }));
+    const label = workLabel(e);
+    if (h.actions[h.actions.length - 1] !== label) h.actions.push(label);
+    h.last_at = e.created_at;
+  }
+  return [...byPerson.values()];
+}
+/** True when someone other than the customer's agent recorded a call or an order. */
+export const colleagueWorked = (hs: Handler[], owner: string | null | undefined) => !!owner && hs.some((h) => h.user_id !== owner);
 
 /** The status shown for a customer: the result the agent picked, else the built-in status's name. */
 export const statusText = (r: { call_status: string; call_result?: string | null }) => r.call_result || CALL_STATUS[r.call_status]?.label || r.call_status;

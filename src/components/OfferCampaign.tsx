@@ -3,11 +3,12 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { downloadXlsx } from "../lib/xlsx.ts";
 import DncBadge from "./DncBadge.tsx";
-import OfferCustomerPanel from "./OfferCustomerPanel.tsx";
+import OfferCustomerPanel, { WorkedBy } from "./OfferCustomerPanel.tsx";
 import OfferDashboard from "./OfferDashboard.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
-  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel, fmtExtra, statusText,
+  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, fmtDT, stepLabel, fmtExtra, statusText,
+  handlersFrom, colleagueWorked, workLabel,
 } from "../lib/offers.ts";
 import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X } from "lucide-react";
 
@@ -128,7 +129,9 @@ function MyCalls({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpen:
                 {d.rows.map((r) => (
                   <tr key={r.id} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30">
                     <td className="py-2.5 px-4"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px]" dir="ltr">{r.phone}</div></td>
-                    <td className="py-2.5 px-4"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge></td>
+                    <td className="py-2.5 px-4"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>
+                      {r.colleague && <div className="text-[10px] text-amber-600 mt-1">{r.colleague.user_name || "A colleague"}: {workLabel(r.colleague)} ({fmtDT(r.colleague.created_at).slice(5)})</div>}
+                    </td>
                     <td className="py-2.5 px-4 text-center font-mono">{r.attempts}</td>
                     <td className="py-2.5 px-4 font-mono">{fmtDay(r.contact_date)}</td>
                     <td className="py-2.5 px-4 max-w-[22rem] truncate" title={r.comment || ""}>{r.comment || <span className="text-[var(--muted)]">—</span>}</td>
@@ -211,7 +214,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [f, setF] = useState({ status: "", agent: "", offer: "", from: "", to: "", search: "" });
+  const [f, setF] = useState({ status: "", agent: "", offer: "", from: "", to: "", search: "", helped: "" });
   const [giveAgent, setGiveAgent] = useState("");
   const [giveCount, setGiveCount] = useState("20");
   const [searchText, setSearchText] = useState("");
@@ -250,9 +253,11 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
   const exportXlsx = () => {
     const extraKeys: string[] = [...new Set<string>(rows.flatMap((r: any) => Object.keys(r.extra || {})))];
     return downloadXlsx(
-      ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
+      ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
       rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, statusText(r), fmtDay(r.first_call_at),
-        ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "", r.churn_reason || "", r.comment || "",
+        ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "",
+        handlersFrom(r.work || []).map((h) => `${h.name}: ${h.actions.join(", ")}`).join(" | "), colleagueWorked(handlersFrom(r.work || []), r.assigned_agent_id) ? "Yes" : "",
+        r.churn_reason || "", r.comment || "",
         OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.starts || "", r.eligibility.expires || "",
         ...extraKeys.map((k) => fmtExtra(k, r.extra?.[k]))]),
       `${camp.name.replace(/\s+/g, "_")}_customers_${kwToday()}`, "Customers",
@@ -290,7 +295,11 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Uploaded from<input type="date" value={f.from} max={f.to || undefined} onChange={(e) => set("from", e.target.value)} className={inputCls} /></label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">to<input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set("to", e.target.value)} className={inputCls} /></label>
         <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Name or phone…" className={inputCls + " w-44"} />
-        {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", offer: "", from: "", to: "", search: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
+        <button onClick={() => set("helped", f.helped ? "" : "1")} aria-pressed={!!f.helped} title="Customers where someone other than their agent recorded a call or an order"
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border ${f.helped ? "bg-amber-500/15 border-amber-500/40 text-amber-600" : "bg-[var(--bg)] border-[var(--border)] text-[var(--muted)] hover:text-[var(--heading)]"}`}>
+          <Users className="w-3.5 h-3.5" /> A colleague worked on it
+        </button>
+        {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", offer: "", from: "", to: "", search: "", helped: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
         <button onClick={exportXlsx} disabled={!rows.length} className="ml-auto flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600/20 text-emerald-500 border border-emerald-500/30 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Excel</button>
       </div>
 
@@ -320,6 +329,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
                             {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
                           </select>
                         ) : <span title="Only customers still to be called can change hands">{r.agent_name || "—"}</span>}
+                        {(() => { const hs = handlersFrom(r.work || []); return colleagueWorked(hs, r.assigned_agent_id) && <div className="mt-1.5 max-w-[17rem]"><WorkedBy hs={hs} owner={r.assigned_agent_id} /></div>; })()}
                       </td>
                       <td className="py-2.5 px-3"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>{r.attempts > 0 && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.attempts} attempt(s)</div>}</td>
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">{fmtDay(r.first_call_at) || "—"}</td>

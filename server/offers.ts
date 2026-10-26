@@ -24,6 +24,12 @@ const OFFER_STARTS = ["accepted", "ordered"];                                   
 export const RESULT_KINDS = CALL_STATUSES.filter((s) => s !== "not_called");
 export const OFFER_RESULT_LIST = "offer_call_result";
 
+// Every call and order on a customer, oldest first, with who did it — the list shows from it who worked on the
+// customer and what each person did (the customer stays with their agent whoever records the call).
+const WORK_SQL = `COALESCE((SELECT json_agg(json_build_object('kind', e.kind, 'call_status', e.call_status, 'user_id', e.user_id, 'user_name', e.user_name,
+    'created_at', e.created_at, 'details', json_build_object('result', e.details->>'result', 'discount', e.details->>'discount')) ORDER BY e.created_at)
+  FROM offer_events e WHERE e.customer_id = oc.id AND e.kind IN ('call','order')), '[]'::json)`;
+
 const KW_MS = 3 * 3600_000;
 const kwDay = (ms: number) => new Date(ms + KW_MS).toISOString().slice(0, 10);
 const kwToday = () => kwDay(Date.now());
@@ -248,12 +254,15 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (isDay(q("from"))) add("(oc.uploaded_at AT TIME ZONE 'Asia/Kuwait')::date >= $?::date", q("from"));
     if (isDay(q("to"))) add("(oc.uploaded_at AT TIME ZONE 'Asia/Kuwait')::date <= $?::date", q("to"));
     if (q("search")) add("(oc.phone ILIKE '%' || $? || '%' OR oc.customer_name ILIKE '%' || $? || '%')", q("search"));
+    // A colleague (not the customer's agent) recorded a call or an order on the customer.
+    if (q("helped") === "1") where.push(`oc.assigned_agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM offer_events e WHERE e.customer_id = oc.id AND e.kind IN ('call','order') AND e.user_id <> oc.assigned_agent_id)`);
     const rows = await DB.query(`
       SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
              oc.contact_date, oc.call_status, oc.call_result, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
              oc.offer_started_at, oc.offer_expires_at,
              COALESCE((SELECT json_agg(json_build_object('step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number) ORDER BY o.step)
-                         FROM offer_orders o WHERE o.customer_id = oc.id), '[]'::json) AS orders
+                         FROM offer_orders o WHERE o.customer_id = oc.id), '[]'::json) AS orders,
+             ${WORK_SQL} AS work
         FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id
        WHERE ${where.join(" AND ")}
        ORDER BY oc.uploaded_at DESC, oc.id LIMIT 5000`, vals);
@@ -312,7 +321,11 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const today = kwToday();
     const [rows, later, done] = await Promise.all([
       DB.query(`
-        SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.call_status, oc.call_result, oc.attempts, oc.contact_date, oc.last_call_at, oc.comment, oc.uploaded_at
+        SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.call_status, oc.call_result, oc.attempts, oc.contact_date, oc.last_call_at, oc.comment, oc.uploaded_at,
+               (SELECT json_build_object('user_name', e.user_name, 'kind', e.kind, 'call_status', e.call_status, 'created_at', e.created_at,
+                                         'details', json_build_object('result', e.details->>'result', 'discount', e.details->>'discount'))
+                  FROM offer_events e WHERE e.customer_id = oc.id AND e.kind IN ('call','order') AND e.user_id IS DISTINCT FROM $2
+                 ORDER BY e.created_at DESC LIMIT 1) AS colleague          -- the latest thing someone else did on my customer
           FROM offer_customers oc
          WHERE oc.campaign_id = $1 AND oc.assigned_agent_id = $2 AND oc.call_status IN ('not_called','no_answer','busy','call_back')
            AND (oc.contact_date IS NULL OR oc.contact_date <= $3::date)
@@ -365,9 +378,11 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const today = kwToday();
     const contactDate = status === "call_back" && isDay(b.call_back_date) && b.call_back_date >= today ? b.call_back_date : today;
     const startsOffer = OFFER_STARTS.includes(status);
+    // A customer who already ordered stays "Ordered" — a later call (e.g. "accepted" again) goes in the history only.
+    const keepOrdered = data.orders.length > 0 || c.call_status === "ordered";
     const updated = (await DB.query(`
       UPDATE offer_customers SET
-        call_status = $2, call_result = $10,
+        call_status = CASE WHEN $11 THEN 'ordered' ELSE $2 END, call_result = CASE WHEN $11 THEN NULL ELSE $10 END,
         attempts = attempts + CASE WHEN $3 = 'outbound' THEN 1 ELSE 0 END,
         first_call_at = COALESCE(first_call_at, CASE WHEN $3 = 'outbound' THEN now() END),
         first_call_agent_id = COALESCE(first_call_agent_id, CASE WHEN $3 = 'outbound' THEN $4 END),
@@ -375,12 +390,12 @@ export function registerOfferRoutes(app: any, d: Deps) {
         churn_reason = COALESCE($6, churn_reason), comment = COALESCE($7, comment),
         offer_started_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() ELSE offer_started_at END,
         offer_expires_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() + ($9 || ' days')::interval ELSE offer_expires_at END
-      WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days), result]))[0];
+      WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days), result, keepOrdered]))[0];
     await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "call", user: req.user, direction, call_status: status, prev_status: c.call_status, churn_reason: churn, comment,
-      details: { ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}),
+      details: { ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}), ...(keepOrdered && status !== "ordered" ? { stays_ordered: true } : {}),
         ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
     const named = await setName(c, b.customer_name, req.user);
-    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
+    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
     res.json(await loadCustomer(c.id));
   }));
 
@@ -471,18 +486,36 @@ export function registerOfferRoutes(app: any, d: Deps) {
                   FROM offer_events WHERE campaign_id = $1 AND kind = 'call' AND ${DAY("created_at")} BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, wFrom, to, REACHED_STATUSES]),
       DB.query(`SELECT to_char(order_date, 'YYYY-MM-DD') AS day, step, count(*)::int AS n, COALESCE(sum(order_value), 0)::float AS value
                   FROM offer_orders WHERE campaign_id = $1 AND order_date BETWEEN $2::date AND $3::date GROUP BY 1, 2`, [camp.id, wFrom, to]),
+      // Per person: the calls they made themselves; "accepted" and "orders" go to the customer's agent even when a
+      // colleague recorded them (the business, 2026-10-26), with how many of those a colleague did (by_colleagues)
+      // and, for the colleague, how many calls/orders they did on others' customers (helped).
       DB.query(`
-        WITH c AS (SELECT user_id, user_name, count(*)::int AS calls, count(*) FILTER (WHERE call_status = ANY($4))::int AS reached,
-                          count(*) FILTER (WHERE call_status IN ('accepted','ordered'))::int AS accepted
-                     FROM offer_events WHERE campaign_id = $1 AND kind = 'call' AND ${DAY("created_at")} BETWEEN $2::date AND $3::date GROUP BY 1, 2),
-             o AS (SELECT logged_by AS user_id, logged_by_name AS user_name, count(*)::int AS orders FROM offer_orders
-                     WHERE campaign_id = $1 AND order_date BETWEEN $2::date AND $3::date GROUP BY 1, 2),
+        WITH ev AS (SELECT e.user_id, e.user_name, e.call_status, oc.assigned_agent_id AS owner
+                      FROM offer_events e JOIN offer_customers oc ON oc.id = e.customer_id
+                     WHERE e.campaign_id = $1 AND e.kind = 'call' AND ${DAY("e.created_at")} BETWEEN $2::date AND $3::date),
+             od AS (SELECT o.logged_by AS user_id, o.logged_by_name AS user_name, oc.assigned_agent_id AS owner
+                      FROM offer_orders o JOIN offer_customers oc ON oc.id = o.customer_id
+                     WHERE o.campaign_id = $1 AND o.order_date BETWEEN $2::date AND $3::date),
+             c AS (SELECT user_id, max(user_name) AS user_name, count(*)::int AS calls, count(*) FILTER (WHERE call_status = ANY($4))::int AS reached,
+                          count(*) FILTER (WHERE owner IS NOT NULL AND owner <> user_id)::int AS helped_calls
+                     FROM ev GROUP BY 1),
+             acc AS (SELECT COALESCE(owner, user_id) AS user_id, count(*)::int AS accepted,
+                            count(*) FILTER (WHERE owner IS NOT NULL AND owner <> user_id)::int AS by_others
+                       FROM ev WHERE call_status IN ('accepted','ordered') GROUP BY 1),
+             o AS (SELECT COALESCE(owner, user_id) AS user_id, count(*)::int AS orders,
+                          count(*) FILTER (WHERE owner IS NOT NULL AND owner <> user_id)::int AS by_others
+                     FROM od GROUP BY 1),
+             oh AS (SELECT user_id, max(user_name) AS user_name, count(*)::int AS helped_orders FROM od WHERE owner IS NOT NULL AND owner <> user_id GROUP BY 1),
              a AS (SELECT assigned_agent_id AS user_id, count(*) FILTER (WHERE call_status IN ('not_called','no_answer','busy','call_back'))::int AS open
-                     FROM offer_customers WHERE campaign_id = $1 AND assigned_agent_id IS NOT NULL GROUP BY 1)
-        SELECT COALESCE(c.user_id, o.user_id, a.user_id) AS user_id, COALESCE(c.user_name, o.user_name, u.full_name) AS name,
-               COALESCE(c.calls, 0) AS calls, COALESCE(c.reached, 0) AS reached, COALESCE(c.accepted, 0) AS accepted, COALESCE(o.orders, 0) AS orders, COALESCE(a.open, 0) AS open
-          FROM c FULL JOIN o ON o.user_id = c.user_id FULL JOIN a ON a.user_id = COALESCE(c.user_id, o.user_id)
-          LEFT JOIN users u ON u.id = COALESCE(c.user_id, o.user_id, a.user_id)
+                     FROM offer_customers WHERE campaign_id = $1 AND assigned_agent_id IS NOT NULL GROUP BY 1),
+             ids AS (SELECT user_id FROM c UNION SELECT user_id FROM acc UNION SELECT user_id FROM o UNION SELECT user_id FROM oh UNION SELECT user_id FROM a)
+        SELECT ids.user_id, COALESCE(u.full_name, c.user_name, oh.user_name) AS name,
+               COALESCE(c.calls, 0) AS calls, COALESCE(c.reached, 0) AS reached, COALESCE(acc.accepted, 0) AS accepted, COALESCE(o.orders, 0) AS orders,
+               COALESCE(acc.by_others, 0) + COALESCE(o.by_others, 0) AS by_colleagues,
+               COALESCE(c.helped_calls, 0) + COALESCE(oh.helped_orders, 0) AS helped, COALESCE(a.open, 0) AS open
+          FROM ids LEFT JOIN c USING (user_id) LEFT JOIN acc USING (user_id) LEFT JOIN o USING (user_id) LEFT JOIN oh USING (user_id) LEFT JOIN a USING (user_id)
+          LEFT JOIN users u ON u.id = ids.user_id
+         WHERE ids.user_id IS NOT NULL
          ORDER BY calls DESC, orders DESC, name`, [camp.id, from, to, REACHED_STATUSES]),
       DB.query(`SELECT churn_reason AS reason, count(*)::int AS n FROM offer_events
                  WHERE campaign_id = $1 AND kind = 'call' AND churn_reason IS NOT NULL AND ${DAY("created_at")} BETWEEN $2::date AND $3::date

@@ -4,7 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
-  kwToday, fmtDT, fmtDay, fillScript, stepLabel, fmtExtra, statusText, useOfferLists,
+  kwToday, fmtDT, fmtDay, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler,
 } from "../lib/offers.ts";
 import { X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
 
@@ -258,6 +258,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
                     <dt className="text-[var(--muted)]">Uploaded</dt><dd>{fmtDay(c!.uploaded_at)}{c!.uploaded_by_name ? ` by ${c!.uploaded_by_name}` : ""}</dd>
                     <dt className="text-[var(--muted)]">Agent</dt><dd>{c!.agent_name || "—"}</dd>
+                    {(() => { const hs = handlersFrom(data.events); return hs.length > 0 && <><dt className="text-[var(--muted)]">Worked on by</dt><dd><WorkedBy hs={hs} owner={c!.assigned_agent_id} /></dd></>; })()}
                     <dt className="text-[var(--muted)]">Contact date</dt><dd>{fmtDay(c!.contact_date) || "—"}</dd>
                     <dt className="text-[var(--muted)]">1st call</dt><dd>{c!.first_call_at ? `${fmtDT(c!.first_call_at)}${c!.first_call_agent_name ? ` · ${c!.first_call_agent_name}` : ""}` : "—"}</dd>
                     <dt className="text-[var(--muted)]">Attempts</dt><dd>{c!.attempts}</dd>
@@ -282,13 +283,32 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   );
 }
 
+/** Everyone who recorded a call or an order on the customer, and what they did. A colleague (not the customer's agent) is marked. */
+export function WorkedBy({ hs, owner }: { hs: Handler[]; owner: string | null }) {
+  return (
+    <ul className="space-y-1">
+      {hs.map((h) => {
+        const colleague = !!owner && h.user_id !== owner;
+        return (
+          <li key={h.user_id || h.name} className="text-[11px] leading-snug">
+            <span className={`font-bold ${colleague ? "text-amber-600" : "text-[var(--heading)]"}`}>{h.name}</span>
+            {colleague && <span className="ml-1 px-1.5 py-px rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 text-[9px] font-bold">colleague</span>}
+            <span className="text-[var(--text)]">: {h.actions.join(", ")}</span>
+            <span className="text-[var(--muted)] whitespace-nowrap"> ({fmtDT(h.last_at).slice(5)})</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function EventRow({ e }: { e: OfferEvent }) {
   const d = e.details || {};
   const st = (s: string | null) => (s ? CALL_STATUS[s]?.label || s : "—");
   let text: string;
   if (e.kind === "upload") text = "Uploaded to the campaign";
   else if (e.kind === "assign") text = d.from !== undefined ? `Moved from ${d.from || "nobody"} to ${d.to || "nobody"}` : `Assigned to ${d.to}${d.from_file ? " (from the file)" : ""}`;
-  else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${d.prev_result || st(e.prev_status)} → ${d.result || st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}`;
+  else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${d.prev_result || st(e.prev_status)} → ${d.result || st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}${d.stays_ordered ? " (the customer stays Ordered)" : ""}`;
   else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
   else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})`;
   else if (e.kind === "name") text = d.from ? `Name changed: ${d.from} → ${d.to}` : `Name added: ${d.to}`;
