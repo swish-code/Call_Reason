@@ -4,7 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import { downloadXlsx } from "../lib/xlsx.ts";
 import DncBadge from "./DncBadge.tsx";
 import OfferCustomerPanel from "./OfferCustomerPanel.tsx";
-import { Card as ChartCard, GroupedColumns, STYLE as CHART_STYLE, C as CC, type Series } from "./SurveyCharts.tsx";
+import OfferDashboard from "./OfferDashboard.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
   OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel, fmtExtra, statusText,
@@ -56,7 +56,7 @@ export default function OfferCampaignPage({ currentUser }: { currentUser: User }
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
       <div className="bg-gradient-to-r from-[var(--surface)] via-[var(--surface-2)] to-[var(--bg)] border border-[var(--border)] p-6 rounded-3xl shadow-xl flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="bg-violet-950/45 text-violet-400 text-xs font-bold px-3 py-1 rounded-full border border-violet-500/30">Offer campaign</span>
+          <span className="bg-violet-500/10 text-violet-500 text-xs font-bold px-3 py-1 rounded-full border border-violet-500/30">Offer campaign</span>
           <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2 flex items-center gap-2"><Gift className="w-7 h-7 text-violet-400" /> {camp?.name || "Campaign"}</h1>
           {camp && <p className="text-[var(--muted)] text-sm mt-1 font-light">{camp.steps.map((s, i) => `${stepLabel(i + 1)} order ${s}% off`).join(" · ")} — valid {camp.validity_days} days from the day the customer accepts the offer, only through the call center.</p>}
         </div>
@@ -82,7 +82,7 @@ export default function OfferCampaignPage({ currentUser }: { currentUser: User }
           {tab === "find" && <FindCustomer tick={tick} onOpen={(id) => setOpen({ id, mode: "lookup" })} />}
           {tab === "customers" && canManage && <Customers camp={camp} tick={tick} onOpen={(id) => setOpen({ id, mode: "lookup" })} />}
           {tab === "upload" && canManage && <Upload camp={camp} />}
-          {tab === "dashboard" && canManage && <Dashboard camp={camp} tick={tick} />}
+          {tab === "dashboard" && canManage && <OfferDashboard camp={camp} tick={tick} />}
           {tab === "settings" && canManage && <SettingsTab camp={camp} onSaved={loadCampaigns} />}
         </>
       )}
@@ -405,122 +405,6 @@ function Upload({ camp }: { camp: Campaign }) {
         </div>
       )}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- Dashboard (leaders)
-function Dashboard({ camp, tick }: { camp: Campaign; tick: number }) {
-  const today = kwToday();
-  const [range, setRange] = useState({ from: today, to: today, preset: "today" });
-  const [d, setD] = useState<any>(null);
-  const [error, setError] = useState("");
-  const load = useCallback(async () => {
-    try {
-      setError("");
-      const res = await apiFetch(`/api/offer-campaigns/${camp.id}/dashboard?from=${range.from}&to=${range.to}`);
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not load the dashboard.");
-      setD(await res.json());
-    } catch (e: any) { setError(e.message); }
-  }, [camp.id, range.from, range.to]);
-  useEffect(() => { load(); }, [load, tick]);
-  const preset = (p: string) => {
-    const t = kwToday(), dt = new Date(t + "T00:00:00Z");
-    const back = (n: number) => new Date(dt.getTime() - n * 86400_000).toISOString().slice(0, 10);
-    if (p === "today") setRange({ from: t, to: t, preset: p });
-    if (p === "yesterday") setRange({ from: back(1), to: back(1), preset: p });
-    if (p === "week") setRange({ from: back((dt.getUTCDay() + 1) % 7), to: t, preset: p });          // Kuwait week starts Saturday
-    if (p === "month") setRange({ from: t.slice(0, 8) + "01", to: t, preset: p });
-  };
-  const inRange = (day: string) => day >= range.from && day <= range.to;
-  const sum = (k: string) => (d?.days || []).filter((x: any) => inRange(x.day)).reduce((a: number, x: any) => a + (x[k] || 0), 0);
-  const steps: number[] = d?.campaign?.steps || camp.steps;
-  const ordersTotal = steps.reduce((a, _s, i) => a + sum(`o${i + 1}`), 0);
-  const cats = (d?.days || []).map((x: any) => ({ key: x.day, label: String(Number(x.day.slice(8, 10))) }));
-  const dayMap = new Map((d?.days || []).map((x: any) => [x.day, x]));
-  const colors = [CC.aqua, CC.orange, CC.violet, CC.yellow, CC.magenta];
-  const S_CALLS: Series[] = [{ key: "calls", label: "Calls", color: CC.blue }, { key: "reached", label: "Reached", color: CC.aqua }, { key: "accepted", label: "Accepted / ordered", color: CC.orange }];
-  const S_ORDERS: Series[] = steps.map((s, i) => ({ key: `o${i + 1}`, label: `${s}% orders`, color: colors[i] || CC.other }));
-  const t = d?.totals || {};
-  const tile = (l: string, v: any, hint?: string) => (
-    <div key={l} className={box + " px-4 py-3"}><div className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">{l}</div><div className="text-2xl font-extrabold text-[var(--heading)] mt-1">{v ?? "…"}</div>{hint && <div className="text-[10px] text-[var(--muted)]">{hint}</div>}</div>
-  );
-  const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
-  return (
-    <section className="space-y-5 svc">
-      <style>{CHART_STYLE}</style>
-      <div className={box + " p-4 flex flex-wrap items-end gap-3"}>
-        <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Filter className="w-4 h-4 text-violet-400" /> Period</div>
-        {[["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["month", "This month"]].map(([k, l]) => (
-          <button key={k} onClick={() => preset(k)} className={`px-4 py-2 rounded-xl text-xs font-bold border ${range.preset === k ? "bg-violet-600 text-white border-violet-500" : "bg-[var(--bg)] text-[var(--text)] border-[var(--border)]"}`}>{l}</button>
-        ))}
-        <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">From<input type="date" value={range.from} max={range.to} onChange={(e) => e.target.value && setRange({ ...range, from: e.target.value, preset: "" })} className={inputCls} /></label>
-        <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">To<input type="date" value={range.to} min={range.from} max={today} onChange={(e) => e.target.value && setRange({ ...range, to: e.target.value, preset: "" })} className={inputCls} /></label>
-        <button onClick={load} className="ml-auto p-2 rounded-xl text-[var(--muted)] hover:text-[var(--heading)]"><RefreshCw className="w-4 h-4" /></button>
-      </div>
-      <Err text={error} />
-
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-        {tile("Uploaded", sum("uploaded"))}
-        {tile("First calls", sum("first_calls"))}
-        {tile("All calls", sum("calls"), `${sum("outbound")} out · ${sum("inbound")} in`)}
-        {tile("Reached", sum("reached"), pct(sum("reached"), sum("calls")) + " of calls")}
-        {tile("Accepted / ordered", sum("accepted"))}
-        {steps.map((s, i) => tile(`${s}% orders`, sum(`o${i + 1}`)))}
-      </div>
-      <div className="text-[11px] text-[var(--muted)] -mt-2">Offer orders in the period: <b className="text-[var(--heading)]">{ordersTotal}</b>{sum("value") ? <> · value <b className="text-[var(--heading)]">{sum("value").toFixed(3)} KWD</b></> : null}. Calls and orders are counted on the day they happened (Kuwait time).</div>
-
-      <div>
-        <p className="text-xs font-extrabold text-[var(--heading)] mb-2">Whole campaign, right now</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-          {tile("Customers", t.customers)}
-          {tile("Without an agent", t.unassigned)}
-          {tile("Still to call", t.open)}
-          {tile("Offers active", t.offer_active)}
-          {tile("Ending in ≤ 3 days", t.expiring_3d)}
-          {tile("Redeemed (≥1 order)", t.redeemed, t.customers ? pct(t.redeemed, t.customers) + " of customers" : undefined)}
-          {tile("All discounts used", t.completed)}
-          {tile("Expired, never used", t.expired_unused)}
-        </div>
-      </div>
-
-      {d && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-          <ChartCard reset={d} title="Calls per day" sub={`${d.window.from} → ${d.window.to}`} legend={S_CALLS}
-            table={{ head: ["Day", ...S_CALLS.map((s) => s.label)], rows: d.days.map((x: any) => [x.day, ...S_CALLS.map((s) => String(x[s.key]))]) }}>
-            {(setTip) => <GroupedColumns cats={cats} series={S_CALLS} value={(c, s) => (dayMap.get(c) as any)?.[s] || 0} selected={inRange} setTip={setTip} />}
-          </ChartCard>
-          <ChartCard reset={d} title="Offer orders per day" sub="By discount step, on the order date" legend={S_ORDERS}
-            table={{ head: ["Day", ...S_ORDERS.map((s) => s.label)], rows: d.days.map((x: any) => [x.day, ...S_ORDERS.map((s) => String(x[s.key]))]) }}>
-            {(setTip) => <GroupedColumns cats={cats} series={S_ORDERS} value={(c, s) => (dayMap.get(c) as any)?.[s] || 0} selected={inRange} setTip={setTip} />}
-          </ChartCard>
-        </div>
-      )}
-
-      {d && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-          <div className={box + " p-5 xl:col-span-2"}>
-            <p className="text-sm font-bold text-[var(--heading)] mb-3">By agent (period)</p>
-            {!d.agents.length ? <div className="text-xs text-[var(--muted)]">No activity.</div> : (
-              <div className="overflow-x-auto"><table className="w-full text-xs">
-                <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]"><th className="text-left py-2 px-2">Agent</th><th className="text-center py-2 px-2">Calls</th><th className="text-center py-2 px-2">Reached</th><th className="text-center py-2 px-2">Accepted</th><th className="text-center py-2 px-2">Orders logged</th><th className="text-center py-2 px-2">Still to call</th></tr></thead>
-                <tbody>{d.agents.map((a: any) => <tr key={a.user_id} className="border-b border-[var(--border)]/40"><td className="py-2 px-2 font-bold text-[var(--heading)]">{a.name || "—"}</td><td className="py-2 px-2 text-center font-mono">{a.calls}</td><td className="py-2 px-2 text-center font-mono">{a.reached}</td><td className="py-2 px-2 text-center font-mono">{a.accepted}</td><td className="py-2 px-2 text-center font-mono">{a.orders}</td><td className="py-2 px-2 text-center font-mono">{a.open}</td></tr>)}</tbody>
-              </table></div>
-            )}
-          </div>
-          <div className={box + " p-5"}>
-            <p className="text-sm font-bold text-[var(--heading)] mb-3">Why customers stopped ordering (period)</p>
-            {!d.churn.length ? <div className="text-xs text-[var(--muted)]">No reasons recorded.</div> : (() => {
-              const max = Math.max(...d.churn.map((c: any) => c.n));
-              const total = d.churn.reduce((a: number, c: any) => a + c.n, 0);
-              return <div className="space-y-1.5">{d.churn.map((c: any) => (
-                <div key={c.reason} className="text-[11px]"><div className="flex justify-between gap-2"><span className="text-[var(--text)]">{c.reason}</span><span className="font-mono text-[var(--heading)]">{c.n} <span className="text-[var(--muted)]">({pct(c.n, total)})</span></span></div>
-                  <div className="h-[8px] bg-[var(--bg)] rounded-sm overflow-hidden mt-0.5"><div className="h-full rounded-r-[4px]" style={{ width: `${(c.n / max) * 100}%`, background: CC.blue }} /></div></div>
-              ))}</div>;
-            })()}
-          </div>
-        </div>
-      )}
-    </section>
   );
 }
 

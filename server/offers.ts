@@ -500,8 +500,10 @@ export function registerOfferRoutes(app: any, d: Deps) {
       days.push(row);
     }
     const now = Date.now();
-    const totals = { customers: customers.length, unassigned: 0, open: 0, reached: 0, offer_active: 0, expiring_3d: 0, expired_unused: 0, completed: 0, redeemed: 0 };
+    const totals = { customers: customers.length, unassigned: 0, open: 0, reached: 0, offer_active: 0, expiring_3d: 0, expired_unused: 0, completed: 0, redeemed: 0,
+      by_status: {} as Record<string, number> };                 // where every customer stands (each counted once)
     for (const c of customers) {
+      totals.by_status[c.call_status] = (totals.by_status[c.call_status] || 0) + 1;
       const el = eligibility(c, camp.steps, c.orders, now);
       if (!c.assigned && c.call_status === "not_called") totals.unassigned++;
       if (OPEN_STATUSES.includes(c.call_status)) totals.open++;
