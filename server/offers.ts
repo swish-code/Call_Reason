@@ -76,6 +76,15 @@ async function loadCustomer(id: string): Promise<any | undefined> {
   return { customer: c, campaign: camp, orders, events, eligibility: eligibility(c, camp?.steps || [], orders.length), dnc: dnc || null };
 }
 
+// Set the customer's name (agents ask it on the call — the uploaded files often have none). Returns the old name when it changed.
+async function setName(c: any, raw: any, user: any): Promise<{ from: string | null; to: string } | null> {
+  const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+  if (!name || name === (c.customer_name || "")) return null;
+  await DB.query(`UPDATE offer_customers SET customer_name = $2 WHERE id = $1`, [c.id, name]);
+  await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "name", user, details: { from: c.customer_name || null, to: name } });
+  return { from: c.customer_name || null, to: name };
+}
+
 export function registerOfferRoutes(app: any, d: Deps) {
   const { authenticateJWT, asyncHandler } = d;
   const canCall = (u: any) => !!u && u.role !== "marketing" && !d.OPS_ROLES.has(u.role);
@@ -356,7 +365,18 @@ export function registerOfferRoutes(app: any, d: Deps) {
       WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days)]))[0];
     await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "call", user: req.user, direction, call_status: status, prev_status: c.call_status, churn_reason: churn, comment,
       details: { ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
-    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}`.trim(), previous_value: c.call_status, new_value: status };
+    const named = await setName(c, b.customer_name, req.user);
+    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}`.trim(), previous_value: c.call_status, new_value: status };
+    res.json(await loadCustomer(c.id));
+  }));
+
+  // Save just the name (no call to record).
+  app.patch(`${B}/customers/:id`, authenticateJWT, CALL, asyncHandler(async (req, res) => {
+    const c = (await DB.query(`SELECT * FROM offer_customers WHERE id = $1`, [req.params.id]))[0];
+    if (!c) return res.status(404).json({ error: "Customer not found." });
+    if (typeof req.body?.customer_name !== "string" || !req.body.customer_name.trim()) return res.status(400).json({ error: "Type the customer's name." });
+    const named = await setName(c, req.body.customer_name, req.user);
+    if (named) req.auditExtra = { details: `${c.phone} — customer name`, previous_value: named.from || "(none)", new_value: named.to };
     res.json(await loadCustomer(c.id));
   }));
 

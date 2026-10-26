@@ -59,6 +59,7 @@ const LABELS: [RegExp, string][] = [
   [/^POST \/api\/offer-campaigns\/[^/]+\/assign$/, "Gave customers to an agent"],
   [/^PATCH \/api\/offer-campaigns\/customers\/[^/]+\/assign$/, "Moved a customer to another agent"],
   [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/call$/, "Recorded a call"],
+  [/^PATCH \/api\/offer-campaigns\/customers\/[^/]+$/, "Saved the customer's name"],
   [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/orders$/, "Logged an offer order"],
   [/^POST \/api\/offer-campaigns\/orders\/[^/]+\/remove$/, "Removed an offer order"],
   [/^PUT \/api\/offer-campaigns\/[^/]+$/, "Changed the campaign settings"],

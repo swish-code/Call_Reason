@@ -32,6 +32,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   const [status, setStatus] = useState("");
   const [churn, setChurn] = useState("");
   const [comment, setComment] = useState("");
+  const [name, setName] = useState("");
   const [callBack, setCallBack] = useState("");
   // order form
   const [orderNo, setOrderNo] = useState("");
@@ -48,6 +49,9 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
     } catch (e: any) { setError(e.message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  // the name box shows the saved name (and follows it after every save)
+  useEffect(() => { setName(data?.customer.customer_name || ""); }, [data?.customer.customer_name]);
+  const nameChanged = !!name.trim() && name.trim() !== (data?.customer.customer_name || "");
 
   const post = async (path: string, body: any, okText: string, key: string) => {
     setBusy(key); setError(""); setMsg("");
@@ -63,8 +67,17 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   const saveCall = async () => {
     if (!status) { setError("Pick the result of the call."); return; }
     if (status === "call_back" && !callBack) { setError("Pick the day to call back."); return; }
-    const ok = await post(`/api/offer-campaigns/customers/${id}/call`, { call_status: status, direction, churn_reason: churn || undefined, comment: comment || undefined, call_back_date: callBack || undefined }, "Call saved.", "call");
+    const ok = await post(`/api/offer-campaigns/customers/${id}/call`, { call_status: status, direction, churn_reason: churn || undefined, comment: comment || undefined, call_back_date: callBack || undefined, customer_name: nameChanged ? name.trim() : undefined }, "Call saved.", "call");
     if (ok) { setStatus(""); setComment(""); setCallBack(""); }
+  };
+  const saveName = async () => {
+    setBusy("name"); setError(""); setMsg("");
+    try {
+      const res = await apiFetch(`/api/offer-campaigns/customers/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_name: name.trim() }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Could not save the name.");
+      setData(d); setMsg("Name saved."); onChanged?.();
+    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const saveOrder = async () => {
     const digits = orderNo.replace(/\D/g, "");
@@ -146,6 +159,13 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                       <button onClick={() => setDirection("inbound")} className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-bold ${direction === "inbound" ? "bg-violet-600 text-white" : "bg-[var(--bg)] text-[var(--muted)]"}`}><PhoneIncoming className="w-3 h-3" /> Customer called us</button>
                     </div>
                   </div>
+                  <div className="flex items-end gap-2">
+                    <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block flex-1">Customer name
+                      <input value={name} onChange={(e) => setName(e.target.value)} dir="auto" placeholder="Ask the customer's name and type it here" className={inputCls + (nameChanged ? " ring-2 ring-amber-400" : "")} />
+                    </label>
+                    {nameChanged && <button onClick={saveName} disabled={!!busy} className="px-3 py-2 rounded-xl text-[11px] font-bold bg-[var(--bg)] border border-violet-500/40 text-violet-400 disabled:opacity-50 whitespace-nowrap">{busy === "name" ? "Saving…" : "Save name"}</button>}
+                  </div>
+                  {nameChanged && <p className="text-[10px] text-amber-600 -mt-2">The name is also saved when you press "Save the call".</p>}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Result of the call
                       <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
@@ -268,6 +288,7 @@ function EventRow({ e }: { e: OfferEvent }) {
   else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${st(e.prev_status)} → ${st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}`;
   else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
   else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})`;
+  else if (e.kind === "name") text = d.from ? `Name changed: ${d.from} → ${d.to}` : `Name added: ${d.to}`;
   else text = e.kind;
   return (
     <li className="text-[11px] border-l-2 border-[var(--border)] pl-3">
