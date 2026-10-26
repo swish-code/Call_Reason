@@ -479,6 +479,8 @@ export interface DropdownOption {
   label: string;
   sort_order: number;
   active: boolean;
+  /** Only the Shakir campaign's call results use it: the built-in status the result works like. */
+  kind?: string | null;
 }
 
 // Catalog of the dropdown lists managed from the Configuration page

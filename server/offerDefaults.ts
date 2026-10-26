@@ -20,6 +20,18 @@ export const DEFAULT_CHURN_REASONS = [
   "Other",
 ];
 
+// The call results an agent picks from (seeded into Configuration → Shakir Campaign). Each one works like a built-in
+// status — the [status, label] pairs below are the built-ins themselves.
+export const DEFAULT_CALL_RESULTS: [string, string][] = [
+  ["no_answer", "No answer"],
+  ["busy", "Busy / switched off"],
+  ["call_back", "Call back later"],
+  ["wrong_number", "Wrong number"],
+  ["not_interested", "Not interested"],
+  ["accepted", "Accepted the offer"],
+  ["ordered", "Ordered"],
+];
+
 export const SHAKIR_SCRIPT_AR = `سيناريو المكالمة باللغة العربية
 
 الموظف: أهلاً بحضرتك أستاذ/أستاذة [اسم العميل]، مع حضرتك [اسم الموظف] من مطعم شاورما شاكر. في الأول حابب أشكر حضرتك جداً على ثقتك فينا، وحضرتك من عملائنا المميزين جداً بالنسبة لنا، ومصممين لحضرتك عرض خاص في نهاية المكالمة.

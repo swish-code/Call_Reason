@@ -1,7 +1,7 @@
 import pkg from "pg";
 import bcrypt from "bcryptjs";
 import { User, Interaction, Brand, Category, Branch, AuditLog, DropdownOption, OpsLog, AssignedTask, OpsTask } from "../src/types.js";
-import { SHAKIR_CAMPAIGN_ID, DEFAULT_STEPS, DEFAULT_VALIDITY_DAYS, DEFAULT_CHURN_REASONS, SHAKIR_SCRIPT_AR, SHAKIR_SCRIPT_EN } from "./offerDefaults.js";
+import { SHAKIR_CAMPAIGN_ID, DEFAULT_STEPS, DEFAULT_VALIDITY_DAYS, DEFAULT_CHURN_REASONS, DEFAULT_CALL_RESULTS, SHAKIR_SCRIPT_AR, SHAKIR_SCRIPT_EN } from "./offerDefaults.js";
 
 const { Pool } = pkg;
 
@@ -788,6 +788,11 @@ export class DB {
       CREATE INDEX IF NOT EXISTS idx_offer_events_campaign ON offer_events(campaign_id, kind, created_at);
       -- The order number became optional (2026-10-26).
       ALTER TABLE offer_orders ALTER COLUMN order_number DROP NOT NULL;
+      -- The call results became an editable list (Configuration page, 2026-10-26). Each result works like a built-in
+      -- status (options.kind), which the rules keep using as offer_customers.call_status, and the customer also keeps
+      -- the label the agent picked (call_result).
+      ALTER TABLE options ADD COLUMN IF NOT EXISTS kind TEXT;
+      ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS call_result TEXT;
       -- Talabat partner-portal Order report, one row per Kuwait day (YYYY-MM-DD), uploaded each morning by
       -- the talabat-export tool. The CSV is kept gzipped, and its summary (see server/talabat.ts) beside it.
       -- A re-upload of the same day replaces it. Admin only.
@@ -1021,6 +1026,23 @@ export class DB {
             [`opt-${key}-${idx}`, key, labels[idx], idx]
           );
         }
+      }
+    }
+    // The Shakir campaign's call form lists, seeded once the same way: the built-in call results (each working like
+    // itself) and the churn reasons the campaign had until they moved to the Configuration page.
+    const offerListEmpty = async (key: string) => Number((await pool.query("SELECT count(*)::int AS n FROM options WHERE list_key = $1", [key])).rows[0].n) === 0;
+    if (await offerListEmpty("offer_call_result")) {
+      for (const [idx, [kind, label]] of DEFAULT_CALL_RESULTS.entries()) {
+        await pool.query("INSERT INTO options (id, list_key, label, sort_order, active, kind) VALUES ($1,'offer_call_result',$2,$3,true,$4) ON CONFLICT (id) DO NOTHING",
+          [`opt-offer_call_result-${kind}`, label, idx, kind]);
+      }
+    }
+    if (await offerListEmpty("offer_churn_reason")) {
+      const had = (await pool.query("SELECT churn_reasons FROM offer_campaigns WHERE id = $1", [SHAKIR_CAMPAIGN_ID])).rows[0]?.churn_reasons;
+      const reasons: string[] = Array.isArray(had) && had.length ? had : DEFAULT_CHURN_REASONS;
+      for (let idx = 0; idx < reasons.length; idx++) {
+        await pool.query("INSERT INTO options (id, list_key, label, sort_order, active) VALUES ($1,'offer_churn_reason',$2,$3,true) ON CONFLICT (id) DO NOTHING",
+          [`opt-offer_churn_reason-${idx}`, reasons[idx], idx]);
       }
     }
 
@@ -1462,22 +1484,26 @@ export class DB {
     return rows;
   }
 
-  static async addOption(listKey: string, label: string): Promise<DropdownOption> {
+  static async addOption(listKey: string, label: string, kind: string | null = null): Promise<DropdownOption> {
     const m = await pool.query<{ max: number | null }>("SELECT MAX(sort_order) AS max FROM options WHERE list_key = $1", [listKey]);
     const nextOrder = (m.rows[0].max ?? -1) + 1;
     const id = "opt-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
     const { rows } = await pool.query<DropdownOption>(
-      "INSERT INTO options (id, list_key, label, sort_order, active) VALUES ($1,$2,$3,$4,true) RETURNING *",
-      [id, listKey, label, nextOrder]
+      "INSERT INTO options (id, list_key, label, sort_order, active, kind) VALUES ($1,$2,$3,$4,true,$5) RETURNING *",
+      [id, listKey, label, nextOrder, kind]
     );
     return rows[0];
   }
 
-  static async updateOption(id: string, fields: Partial<Pick<DropdownOption, "label" | "active" | "sort_order">>): Promise<DropdownOption | undefined> {
+  static async getOption(id: string): Promise<DropdownOption | undefined> {
+    return (await pool.query<DropdownOption>("SELECT * FROM options WHERE id = $1", [id])).rows[0];
+  }
+
+  static async updateOption(id: string, fields: Partial<Pick<DropdownOption, "label" | "active" | "sort_order" | "kind">>): Promise<DropdownOption | undefined> {
     const sets: string[] = [];
     const values: any[] = [];
     let idx = 1;
-    (["label", "active", "sort_order"] as const).forEach((col) => {
+    (["label", "active", "sort_order", "kind"] as const).forEach((col) => {
       if (col in fields && (fields as any)[col] !== undefined) {
         sets.push(`${col} = $${idx++}`);
         values.push((fields as any)[col]);

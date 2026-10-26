@@ -7,7 +7,7 @@ import OfferCustomerPanel from "./OfferCustomerPanel.tsx";
 import { Card as ChartCard, GroupedColumns, STYLE as CHART_STYLE, C as CC, type Series } from "./SurveyCharts.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
-  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel, fmtExtra,
+  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, stepLabel, fmtExtra, statusText,
 } from "../lib/offers.ts";
 import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X } from "lucide-react";
 
@@ -128,7 +128,7 @@ function MyCalls({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpen:
                 {d.rows.map((r) => (
                   <tr key={r.id} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30">
                     <td className="py-2.5 px-4"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px]" dir="ltr">{r.phone}</div></td>
-                    <td className="py-2.5 px-4"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{CALL_STATUS[r.call_status]?.label || r.call_status}</Badge></td>
+                    <td className="py-2.5 px-4"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge></td>
                     <td className="py-2.5 px-4 text-center font-mono">{r.attempts}</td>
                     <td className="py-2.5 px-4 font-mono">{fmtDay(r.contact_date)}</td>
                     <td className="py-2.5 px-4 max-w-[22rem] truncate" title={r.comment || ""}>{r.comment || <span className="text-[var(--muted)]">—</span>}</td>
@@ -183,7 +183,7 @@ function FindCustomer({ tick, onOpen }: { tick: number; onOpen: (id: string) => 
                   <div className="text-base font-extrabold text-[var(--heading)]">{r.customer_name || "—"} <span className="font-mono text-sm" dir="ltr">{r.phone}</span>{res.dnc && <DncBadge />}</div>
                   <div className="flex flex-wrap gap-2 items-center">
                     <Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>
-                    <Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{CALL_STATUS[r.call_status]?.label || r.call_status}</Badge>
+                    <Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>
                     {r.agent_name && <span className="text-[11px] text-[var(--muted)]">Agent: {r.agent_name}</span>}
                   </div>
                 </div>
@@ -251,7 +251,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
     const extraKeys: string[] = [...new Set<string>(rows.flatMap((r: any) => Object.keys(r.extra || {})))];
     return downloadXlsx(
       ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
-      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, CALL_STATUS[r.call_status]?.label || r.call_status, fmtDay(r.first_call_at),
+      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, statusText(r), fmtDay(r.first_call_at),
         ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "", r.churn_reason || "", r.comment || "",
         OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.starts || "", r.eligibility.expires || "",
         ...extraKeys.map((k) => fmtExtra(k, r.extra?.[k]))]),
@@ -321,7 +321,7 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
                           </select>
                         ) : <span title="Only customers still to be called can change hands">{r.agent_name || "—"}</span>}
                       </td>
-                      <td className="py-2.5 px-3"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{CALL_STATUS[r.call_status]?.label || r.call_status}</Badge>{r.attempts > 0 && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.attempts} attempt(s)</div>}</td>
+                      <td className="py-2.5 px-3"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>{r.attempts > 0 && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.attempts} attempt(s)</div>}</td>
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">{fmtDay(r.first_call_at) || "—"}</td>
                       {camp.steps.map((_s, i) => <td key={i} className="py-2.5 px-3 font-mono whitespace-nowrap">{orderDate(r, i + 1) || "—"}</td>)}
                       <td className="py-2.5 px-3"><Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>{el.expires && <div className="text-[10px] text-[var(--muted)] mt-0.5">until {el.expires}</div>}</td>
@@ -526,15 +526,15 @@ function Dashboard({ camp, tick }: { camp: Campaign; tick: number }) {
 
 // ---------------------------------------------------------------- Script & settings (leaders)
 function SettingsTab({ camp, onSaved }: { camp: Campaign; onSaved: () => void }) {
-  const [v, setV] = useState({ name: camp.name, validity_days: String(camp.validity_days), steps: camp.steps.join(", "), script_ar: camp.script_ar || "", script_en: camp.script_en || "", churn: (camp.churn_reasons || []).join("\n"), status: camp.status });
+  const [v, setV] = useState({ name: camp.name, validity_days: String(camp.validity_days), steps: camp.steps.join(", "), script_ar: camp.script_ar || "", script_en: camp.script_en || "", status: camp.status });
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setV({ name: camp.name, validity_days: String(camp.validity_days), steps: camp.steps.join(", "), script_ar: camp.script_ar || "", script_en: camp.script_en || "", churn: (camp.churn_reasons || []).join("\n"), status: camp.status }); }, [camp]);
+  useEffect(() => { setV({ name: camp.name, validity_days: String(camp.validity_days), steps: camp.steps.join(", "), script_ar: camp.script_ar || "", script_en: camp.script_en || "", status: camp.status }); }, [camp]);
   const save = async () => {
     setBusy(true); setError(""); setMsg("");
     try {
-      const body = { name: v.name, validity_days: Number(v.validity_days), steps: v.steps.split(/[,\s/]+/).filter(Boolean).map(Number), script_ar: v.script_ar, script_en: v.script_en, churn_reasons: v.churn.split("\n").map((s) => s.trim()).filter(Boolean), status: v.status };
+      const body = { name: v.name, validity_days: Number(v.validity_days), steps: v.steps.split(/[,\s/]+/).filter(Boolean).map(Number), script_ar: v.script_ar, script_en: v.script_en, status: v.status };
       const res = await apiFetch(`/api/offer-campaigns/${camp.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || "Could not save.");
@@ -557,7 +557,7 @@ function SettingsTab({ camp, onSaved }: { camp: Campaign; onSaved: () => void })
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Script — Arabic<textarea dir="rtl" rows={16} value={v.script_ar} onChange={(e) => setV({ ...v, script_ar: e.target.value })} className={ta} /></label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Script — English<textarea rows={16} value={v.script_en} onChange={(e) => setV({ ...v, script_en: e.target.value })} className={ta} /></label>
       </div>
-      <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)] max-w-xl">Churn reasons (one per line)<textarea rows={8} value={v.churn} onChange={(e) => setV({ ...v, churn: e.target.value })} className={ta} /></label>
+      <p className="text-[11px] text-[var(--muted)]">The <b>Result of the call</b> and <b>Churn reason</b> lists on the agent's form are edited by admins in <b>Configuration → Shakir Campaign</b>.</p>
       <Err text={error} /><Ok text={msg} />
       <button onClick={save} disabled={busy} className="px-5 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
     </div>

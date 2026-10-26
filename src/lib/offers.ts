@@ -1,4 +1,6 @@
 // Shared definitions for the offer campaign pages (see server/offers.ts for the rules).
+import { useEffect, useState } from "react";
+import { apiFetch } from "./api.ts";
 
 export interface OfferCampaign {
   id: string; name: string; brand_id: string | null; brand_name: string | null; steps: number[]; validity_days: number;
@@ -17,7 +19,7 @@ export interface OfferEvent {
 export interface OfferCustomer {
   id: string; campaign_id: string; phone: string; customer_name: string | null; extra: Record<string, string> | null;
   uploaded_at: string; uploaded_by_name: string | null; assigned_agent_id: string | null; agent_name?: string | null;
-  contact_date: string | null; call_status: string; attempts: number; first_call_at: string | null; first_call_agent_name?: string | null;
+  contact_date: string | null; call_status: string; call_result?: string | null; attempts: number; first_call_at: string | null; first_call_agent_name?: string | null;
   last_call_at: string | null; churn_reason: string | null; comment: string | null; offer_started_at: string | null; offer_expires_at: string | null;
 }
 
@@ -33,6 +35,42 @@ export const CALL_STATUS: Record<string, { label: string; cls: string; open?: bo
 };
 /** What an agent can record as the result of a call (everything except "not called yet"). */
 export const RESULT_STATUSES = Object.keys(CALL_STATUS).filter((k) => k !== "not_called");
+
+/** The status shown for a customer: the result the agent picked, else the built-in status's name. */
+export const statusText = (r: { call_status: string; call_result?: string | null }) => r.call_result || CALL_STATUS[r.call_status]?.label || r.call_status;
+
+/** What a call result can work like — shown when an admin adds one in Configuration. */
+export const RESULT_KIND_HELP: Record<string, string> = {
+  no_answer: "No answer — call again later",
+  busy: "Busy / switched off — call again later",
+  call_back: "Call back later — asks for a date",
+  wrong_number: "Wrong number — closed",
+  not_interested: "Not interested — closed (reached)",
+  accepted: "Accepted the offer — starts the offer days",
+  ordered: "Ordered — starts the offer days",
+};
+
+export interface CallResultOption { id: string; label: string; kind: string; builtin?: boolean }
+
+/** The two lists on the agent's call form, edited on the Configuration page. If the call results can't be loaded
+ *  (or the list is empty) the built-in ones are used; churn reasons then fall back to the campaign's old list. */
+export function useOfferLists() {
+  const [results, setResults] = useState<CallResultOption[] | null>(null);
+  const [churn, setChurn] = useState<string[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    const get = (key: string) => apiFetch(`/api/options/${key}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    Promise.all([get("offer_call_result"), get("offer_churn_reason")]).then(([r, c]) => {
+      if (!live) return;
+      const usable = (Array.isArray(r) ? r : []).filter((o: any) => RESULT_STATUSES.includes(o.kind));
+      setResults(usable.length ? usable.map((o: any) => ({ id: o.id, label: o.label, kind: o.kind }))
+        : RESULT_STATUSES.map((k) => ({ id: `builtin:${k}`, label: CALL_STATUS[k].label, kind: k, builtin: true })));
+      setChurn(Array.isArray(c) ? c.map((o: any) => o.label) : null);
+    });
+    return () => { live = false; };
+  }, []);
+  return { results: results || [], churn, loaded: results !== null };
+}
 
 export const OFFER_STATE: Record<Eligibility["state"], { label: string; cls: string }> = {
   not_started: { label: "Offer not given yet", cls: "bg-zinc-500/10 text-zinc-500 border-zinc-500/25" },

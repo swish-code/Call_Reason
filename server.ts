@@ -10,7 +10,7 @@ import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./serv
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
-import { registerOfferRoutes } from "./server/offers.js";
+import { registerOfferRoutes, OFFER_RESULT_LIST, RESULT_KINDS } from "./server/offers.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -648,20 +648,31 @@ app.get("/api/options/:key", authenticateJWT, asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/options", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
-  const { list_key, label } = req.body;
+  const { list_key, label, kind } = req.body;
   if (!list_key || !label || !label.trim()) {
     return res.status(400).json({ error: "list_key and a non-empty label are required." });
   }
-  const option = await DB.addOption(list_key, label.trim());
+  // A Shakir campaign call result must say which built-in status it works like (the rules run on that).
+  if (list_key === OFFER_RESULT_LIST && !RESULT_KINDS.includes(kind)) return res.status(400).json({ error: "Pick what this result works like." });
+  const option = await DB.addOption(list_key, label.trim(), list_key === OFFER_RESULT_LIST ? kind : null);
   res.status(201).json(option);
 }));
 
 app.put("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
   const { label, active, sort_order } = req.body;
+  let kind: string | undefined;
+  if (req.body.kind !== undefined) {
+    const opt = await DB.getOption(req.params.id);
+    if (opt?.list_key === OFFER_RESULT_LIST) {
+      if (!RESULT_KINDS.includes(req.body.kind)) return res.status(400).json({ error: "Pick what this result works like." });
+      kind = req.body.kind;
+    }
+  }
   const updated = await DB.updateOption(req.params.id, {
     ...(label !== undefined ? { label: String(label).trim() } : {}),
     ...(active !== undefined ? { active: !!active } : {}),
     ...(sort_order !== undefined ? { sort_order } : {}),
+    ...(kind !== undefined ? { kind } : {}),
   });
   if (!updated) return res.status(404).json({ error: "Option not found or no changes provided." });
   res.json(updated);
@@ -2885,7 +2896,7 @@ app.get("/api/audit/activity", authenticateJWT, requireAdminOrSupervisor, asyncH
     DB.query(`SELECT l.id, l.timestamp, l.operator_id, l.operator_name, l.operator_role, l.action, l.details, l.related_ref, l.previous_value, l.new_value, l.ip_address,
              sa.task_no, sa.customer_phone AS survey_phone, sa.order_id AS survey_order, sa.status AS survey_status, sb.brand_name AS survey_brand,
              sa.customer_name AS survey_customer, sa.branch AS survey_branch, sa.order_date AS survey_order_date, sa.item_name AS survey_item, sa.platform_label AS survey_platform,
-             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand, oc.customer_name AS offer_customer, oc.phone AS offer_phone, oc.call_status AS offer_status, r.customer_name AS rating_customer, r.branch AS rating_branch, r.order_date AS rating_order_date, r.review_text AS rating_text
+             r.order_id AS rating_order, r.customer_phone AS rating_phone, r.rating, rb.brand_name AS rating_brand, oc.customer_name AS offer_customer, oc.phone AS offer_phone, COALESCE(oc.call_result, oc.call_status) AS offer_status, r.customer_name AS rating_customer, r.branch AS rating_branch, r.order_date AS rating_order_date, r.review_text AS rating_text
         ${from} ORDER BY l.timestamp::timestamptz DESC LIMIT ${limit} OFFSET ${offset}`, vals),
     DB.query(`SELECT count(*)::int AS n ${from}`, vals),
     DB.query(`SELECT DISTINCT l.operator_id, l.operator_name FROM audit_logs l WHERE ${area.where} AND l.operator_name IS NOT NULL ORDER BY 2`, []),

@@ -18,6 +18,11 @@ export const OPEN_STATUSES = ["not_called", "no_answer", "busy", "call_back"];  
 export const CALL_STATUSES = ["not_called", "no_answer", "busy", "call_back", "wrong_number", "not_interested", "accepted", "ordered"];
 export const REACHED_STATUSES = ["call_back", "not_interested", "accepted", "ordered"];
 const OFFER_STARTS = ["accepted", "ordered"];                                            // the customer took the offer in this call
+// What an agent picks after a call is an editable list (Configuration → Shakir Campaign, options list below). Each
+// result works like one of these built-in statuses (options.kind) — the rules above run on that, and the customer
+// also keeps the label that was picked (offer_customers.call_result).
+export const RESULT_KINDS = CALL_STATUSES.filter((s) => s !== "not_called");
+export const OFFER_RESULT_LIST = "offer_call_result";
 
 const KW_MS = 3 * 3600_000;
 const kwDay = (ms: number) => new Date(ms + KW_MS).toISOString().slice(0, 10);
@@ -245,7 +250,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (q("search")) add("(oc.phone ILIKE '%' || $? || '%' OR oc.customer_name ILIKE '%' || $? || '%')", q("search"));
     const rows = await DB.query(`
       SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
-             oc.contact_date, oc.call_status, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
+             oc.contact_date, oc.call_status, oc.call_result, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
              oc.offer_started_at, oc.offer_expires_at,
              COALESCE((SELECT json_agg(json_build_object('step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number) ORDER BY o.step)
                          FROM offer_orders o WHERE o.customer_id = oc.id), '[]'::json) AS orders
@@ -290,7 +295,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
   app.patch(`${B}/customers/:id/assign`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
     const c = (await DB.query(`SELECT oc.*, u.full_name AS agent_name FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id WHERE oc.id = $1`, [req.params.id]))[0];
     if (!c) return res.status(404).json({ error: "Customer not found." });
-    if (!OPEN_STATUSES.includes(c.call_status)) return res.status(409).json({ error: `This customer is already "${c.call_status}" — only customers still to be called can change hands.` });
+    if (!OPEN_STATUSES.includes(c.call_status)) return res.status(409).json({ error: `This customer is already "${c.call_result || c.call_status}" — only customers still to be called can change hands.` });
     const agentId = req.body?.agent_id || null;
     const agent = agentId ? (await DB.query(`SELECT id, full_name FROM users WHERE id = $1 AND status = 'Active'`, [agentId]))[0] : null;
     if (agentId && !agent) return res.status(400).json({ error: "Unknown agent." });
@@ -307,7 +312,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const today = kwToday();
     const [rows, later, done] = await Promise.all([
       DB.query(`
-        SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.call_status, oc.attempts, oc.contact_date, oc.last_call_at, oc.comment, oc.uploaded_at
+        SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.call_status, oc.call_result, oc.attempts, oc.contact_date, oc.last_call_at, oc.comment, oc.uploaded_at
           FROM offer_customers oc
          WHERE oc.campaign_id = $1 AND oc.assigned_agent_id = $2 AND oc.call_status IN ('not_called','no_answer','busy','call_back')
            AND (oc.contact_date IS NULL OR oc.contact_date <= $3::date)
@@ -324,7 +329,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const key = DB.dncKey(String(req.query.phone || ""));
     if (!key) return res.status(400).json({ error: "Type the customer's phone number (at least 8 digits)." });
     const rows = await DB.query(`
-      SELECT oc.id, oc.campaign_id, c.name AS campaign_name, c.steps, oc.phone, oc.customer_name, oc.call_status, oc.offer_started_at, oc.offer_expires_at,
+      SELECT oc.id, oc.campaign_id, c.name AS campaign_name, c.steps, oc.phone, oc.customer_name, oc.call_status, oc.call_result, oc.offer_started_at, oc.offer_expires_at,
              u.full_name AS agent_name, (SELECT count(*)::int FROM offer_orders o WHERE o.customer_id = oc.id) AS orders
         FROM offer_customers oc JOIN offer_campaigns c ON c.id = oc.campaign_id LEFT JOIN users u ON u.id = oc.assigned_agent_id
        WHERE oc.phone_key = $1 ORDER BY oc.uploaded_at DESC`, [key]);
@@ -343,8 +348,16 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (!data) return res.status(404).json({ error: "Customer not found." });
     const { customer: c, campaign: camp } = data;
     const b = req.body || {};
-    const status = String(b.call_status || "");
-    if (!CALL_STATUSES.includes(status) || status === "not_called") return res.status(400).json({ error: "Pick the result of the call." });
+    // The picked result (from the editable list) decides the built-in status. A screen opened before the list existed
+    // still sends the built-in status itself.
+    let status = String(b.call_status || ""), result: string | null = null;
+    if (b.result_id) {
+      const opt = (await DB.query(`SELECT label, kind, active FROM options WHERE id = $1 AND list_key = $2`, [String(b.result_id), OFFER_RESULT_LIST]))[0];
+      if (!opt || !opt.active) return res.status(400).json({ error: "That call result was removed or turned off — refresh the page and pick again." });
+      if (!RESULT_KINDS.includes(opt.kind)) return res.status(400).json({ error: `"${opt.label}" has no "works like" set — an admin can set it in Configuration.` });
+      status = opt.kind; result = opt.label;
+    }
+    if (!RESULT_KINDS.includes(status)) return res.status(400).json({ error: "Pick the result of the call." });
     const direction = b.direction === "inbound" ? "inbound" : "outbound";
     if (direction === "outbound" && data.dnc) return res.status(409).json({ error: "This customer is on the Do Not Call list — do not call them." });
     const churn = typeof b.churn_reason === "string" && b.churn_reason.trim() ? b.churn_reason.trim().slice(0, 120) : null;
@@ -354,7 +367,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const startsOffer = OFFER_STARTS.includes(status);
     const updated = (await DB.query(`
       UPDATE offer_customers SET
-        call_status = $2,
+        call_status = $2, call_result = $10,
         attempts = attempts + CASE WHEN $3 = 'outbound' THEN 1 ELSE 0 END,
         first_call_at = COALESCE(first_call_at, CASE WHEN $3 = 'outbound' THEN now() END),
         first_call_agent_id = COALESCE(first_call_agent_id, CASE WHEN $3 = 'outbound' THEN $4 END),
@@ -362,11 +375,12 @@ export function registerOfferRoutes(app: any, d: Deps) {
         churn_reason = COALESCE($6, churn_reason), comment = COALESCE($7, comment),
         offer_started_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() ELSE offer_started_at END,
         offer_expires_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() + ($9 || ' days')::interval ELSE offer_expires_at END
-      WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days)]))[0];
+      WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days), result]))[0];
     await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "call", user: req.user, direction, call_status: status, prev_status: c.call_status, churn_reason: churn, comment,
-      details: { ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
+      details: { ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}),
+        ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
     const named = await setName(c, b.customer_name, req.user);
-    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}`.trim(), previous_value: c.call_status, new_value: status };
+    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
     res.json(await loadCustomer(c.id));
   }));
 
@@ -410,12 +424,12 @@ export function registerOfferRoutes(app: any, d: Deps) {
     }
     const comment = typeof b.comment === "string" && b.comment.trim() ? b.comment.trim().slice(0, 2000) : null;
     await DB.query(`
-      UPDATE offer_customers SET call_status = 'ordered', comment = COALESCE($3, comment),
+      UPDATE offer_customers SET call_status = 'ordered', call_result = NULL, comment = COALESCE($3, comment),
         offer_started_at = COALESCE(offer_started_at, now()),
         offer_expires_at = COALESCE(offer_expires_at, now() + ($2 || ' days')::interval)
       WHERE id = $1`, [c.id, String(camp.validity_days), comment]);
     await addEvent({ customerId: c.id, campaignId: camp.id, kind: "order", user: req.user, call_status: "ordered", prev_status: c.call_status, comment,
-      details: { step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, ...(!c.offer_started_at ? { offer_started: true } : {}) } });
+      details: { ...(c.call_result ? { prev_result: c.call_result } : {}), step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, ...(!c.offer_started_at ? { offer_started: true } : {}) } });
     req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — order ${orderNumber || "(no number)"} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}`.trim(), new_value: `${discount}%` };
     res.json(await loadCustomer(c.id));
   }));

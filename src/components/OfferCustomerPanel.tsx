@@ -3,8 +3,8 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import {
-  OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, RESULT_STATUSES, OFFER_STATE,
-  kwToday, fmtDT, fmtDay, fillScript, stepLabel, fmtExtra,
+  OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
+  kwToday, fmtDT, fmtDay, fillScript, stepLabel, fmtExtra, statusText, useOfferLists,
 } from "../lib/offers.ts";
 import { X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
 
@@ -29,8 +29,11 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   const [showScript, setShowScript] = useState(mode === "call");
   // call form
   const [direction, setDirection] = useState<"outbound" | "inbound">(mode === "call" ? "outbound" : "inbound");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("");   // the picked call result (its id in the Configuration list)
   const [churn, setChurn] = useState("");
+  const lists = useOfferLists();
+  const picked = lists.results.find((o) => o.id === status);
+  const kind = picked?.kind || "";              // the built-in status it works like
   const [comment, setComment] = useState("");
   const [name, setName] = useState("");
   const [callBack, setCallBack] = useState("");
@@ -65,9 +68,9 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   };
 
   const saveCall = async () => {
-    if (!status) { setError("Pick the result of the call."); return; }
-    if (status === "call_back" && !callBack) { setError("Pick the day to call back."); return; }
-    const ok = await post(`/api/offer-campaigns/customers/${id}/call`, { call_status: status, direction, churn_reason: churn || undefined, comment: comment || undefined, call_back_date: callBack || undefined, customer_name: nameChanged ? name.trim() : undefined }, "Call saved.", "call");
+    if (!picked) { setError("Pick the result of the call."); return; }
+    if (kind === "call_back" && !callBack) { setError("Pick the day to call back."); return; }
+    const ok = await post(`/api/offer-campaigns/customers/${id}/call`, { ...(picked.builtin ? { call_status: picked.kind } : { result_id: picked.id }), direction, churn_reason: churn || undefined, comment: comment || undefined, call_back_date: callBack || undefined, customer_name: nameChanged ? name.trim() : undefined }, "Call saved.", "call");
     if (ok) { setStatus(""); setComment(""); setCallBack(""); }
   };
   const saveName = async () => {
@@ -109,7 +112,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
             <div className="flex flex-wrap items-center gap-2 mt-0.5">
               <span className="font-mono text-sm font-bold text-[var(--heading)] select-all" dir="ltr">{c?.phone}</span>
               {data?.dnc && <DncBadge />}
-              {c && <Badge cls={CALL_STATUS[c.call_status]?.cls || ""}>{CALL_STATUS[c.call_status]?.label || c.call_status}</Badge>}
+              {c && <Badge cls={CALL_STATUS[c.call_status]?.cls || ""}>{statusText(c)}</Badge>}
               {el && <Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>}
             </div>
           </div>
@@ -169,17 +172,17 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Result of the call
                       <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
-                        <option value="">— pick —</option>
-                        {RESULT_STATUSES.map((s) => <option key={s} value={s}>{CALL_STATUS[s].label}</option>)}
+                        <option value="">{lists.loaded ? "— pick —" : "Loading…"}</option>
+                        {lists.results.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                       </select>
                     </label>
                     <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Why they stopped ordering (churn reason)
                       <select value={churn} onChange={(e) => setChurn(e.target.value)} className={inputCls + " [&>option]:bg-[var(--surface)]"}>
                         <option value="">— not asked / keep as is —</option>
-                        {(camp?.churn_reasons || []).map((r) => <option key={r} value={r}>{r}</option>)}
+                        {(lists.churn ?? camp?.churn_reasons ?? []).map((r) => <option key={r} value={r}>{r}</option>)}
                       </select>
                     </label>
-                    {status === "call_back" && (
+                    {kind === "call_back" && (
                       <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Call back on
                         <input type="date" value={callBack} min={kwToday()} onChange={(e) => setCallBack(e.target.value)} className={inputCls} />
                       </label>
@@ -188,7 +191,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                   <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Comment (what the customer said, complaint, …)
                     <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className={inputCls + " resize-y"} />
                   </label>
-                  {(status === "accepted" || status === "ordered") && !c?.offer_started_at && (
+                  {(kind === "accepted" || kind === "ordered") && !c?.offer_started_at && (
                     <p className="text-[11px] text-emerald-500">Saving this starts the offer: valid {camp?.validity_days} days, until {fmtDay(new Date(Date.now() + (camp?.validity_days || 30) * 86400_000).toISOString())}.</p>
                   )}
                   <button onClick={saveCall} disabled={!!busy} className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{busy === "call" ? "Saving…" : "Save the call"}</button>
@@ -285,7 +288,7 @@ function EventRow({ e }: { e: OfferEvent }) {
   let text: string;
   if (e.kind === "upload") text = "Uploaded to the campaign";
   else if (e.kind === "assign") text = d.from !== undefined ? `Moved from ${d.from || "nobody"} to ${d.to || "nobody"}` : `Assigned to ${d.to}${d.from_file ? " (from the file)" : ""}`;
-  else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${st(e.prev_status)} → ${st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}`;
+  else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${d.prev_result || st(e.prev_status)} → ${d.result || st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}`;
   else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
   else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})`;
   else if (e.kind === "name") text = d.from ? `Name changed: ${d.from} → ${d.to}` : `Name added: ${d.to}`;

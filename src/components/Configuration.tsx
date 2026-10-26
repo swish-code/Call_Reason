@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User, DropdownOption, CONFIGURABLE_LISTS, Brand, Branch, Category } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import { RESULT_KIND_HELP } from "../lib/offers.ts";
 import { Settings, Plus, Trash, Pencil, Check, X, ChevronUp, ChevronDown, Eye, EyeOff, RefreshCw, ListChecks, AlertCircle } from "lucide-react";
 
 interface ConfigurationProps {
@@ -8,13 +9,16 @@ interface ConfigurationProps {
 }
 
 // ---- Generic option list card (add / edit / delete / disable / reorder) ----
+// `kinds`: the list's options also say what they work like (value → description), picked per option.
 interface OptionListCardProps {
   meta: { key: string; title: string; description: string };
   items: DropdownOption[];
   onChange: () => void;
+  kinds?: Record<string, string>;
 }
-const OptionListCard: React.FC<OptionListCardProps> = ({ meta, items, onChange }) => {
+const OptionListCard: React.FC<OptionListCardProps> = ({ meta, items, onChange, kinds }) => {
   const [newLabel, setNewLabel] = useState("");
+  const [newKind, setNewKind] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,10 +28,15 @@ const OptionListCard: React.FC<OptionListCardProps> = ({ meta, items, onChange }
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLabel.trim()) return;
+    if (!newLabel.trim() || (kinds && !newKind)) return;
     setBusy(true);
-    await apiFetch("/api/options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list_key: meta.key, label: newLabel.trim() }) });
-    setNewLabel(""); setBusy(false); refresh();
+    await apiFetch("/api/options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list_key: meta.key, label: newLabel.trim(), ...(kinds ? { kind: newKind } : {}) }) });
+    setNewLabel(""); setNewKind(""); setBusy(false); refresh();
+  };
+
+  const setKind = async (o: DropdownOption, kind: string) => {
+    await apiFetch(`/api/options/${o.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }) });
+    refresh();
   };
 
   const saveEdit = async (id: string) => {
@@ -74,7 +83,15 @@ const OptionListCard: React.FC<OptionListCardProps> = ({ meta, items, onChange }
               <input autoFocus value={editLabel} onChange={(e) => setEditLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveEdit(o.id)}
                 className="flex-1 px-2 py-1 bg-[var(--surface-2)] text-[var(--heading)] border border-blue-500/40 rounded-lg text-xs focus:outline-none" />
             ) : (
-              <span className="flex-1 font-bold text-[var(--heading)]">{o.label}{!o.active && <span className="ml-2 text-[9px] text-[var(--muted)] font-normal">(disabled)</span>}</span>
+              <div className="flex-1 min-w-0">
+                <span className="font-bold text-[var(--heading)]">{o.label}{!o.active && <span className="ml-2 text-[9px] text-[var(--muted)] font-normal">(disabled)</span>}</span>
+                {kinds && (
+                  <select value={o.kind || ""} onChange={(e) => setKind(o, e.target.value)} title="Works like" className={`mt-1 block w-full px-1.5 py-1 bg-[var(--surface-2)] border rounded-lg text-[10px] [&>option]:bg-[var(--surface)] ${o.kind && kinds[o.kind] ? "border-[var(--border)] text-[var(--muted)]" : "border-rose-500/50 text-rose-400"}`}>
+                    {!(o.kind && kinds[o.kind]) && <option value="">Works like…?</option>}
+                    {Object.entries(kinds).map(([k, help]) => <option key={k} value={k}>Works like: {help}</option>)}
+                  </select>
+                )}
+              </div>
             )}
             {editingId === o.id ? (
               <>
@@ -93,9 +110,15 @@ const OptionListCard: React.FC<OptionListCardProps> = ({ meta, items, onChange }
         {sorted.length === 0 && <div className="text-center py-4 text-[var(--muted)] text-xs">No options yet.</div>}
       </div>
 
-      <form onSubmit={add} className="flex gap-2">
-        <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Add new option…" className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-bold text-[var(--heading)] placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-        <button type="submit" disabled={busy} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 active:scale-95"><Plus className="w-4 h-4" /></button>
+      <form onSubmit={add} className="flex flex-wrap gap-2">
+        <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Add new option…" className="flex-1 min-w-[8rem] px-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-bold text-[var(--heading)] placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        {kinds && (
+          <select value={newKind} onChange={(e) => setNewKind(e.target.value)} className="order-first basis-full px-2 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs text-[var(--heading)] [&>option]:bg-[var(--surface)]">
+            <option value="">Works like…</option>
+            {Object.entries(kinds).map(([k, help]) => <option key={k} value={k}>{help}</option>)}
+          </select>
+        )}
+        <button type="submit" disabled={busy || (!!kinds && !newKind)} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 active:scale-95"><Plus className="w-4 h-4" /></button>
       </form>
     </div>
   );
@@ -244,6 +267,14 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
           <SimpleEntityCard title="Brands" description="Brand options used across the system" items={brands} labelField="brand_name" base="/api/brands" onChange={fetchAll} />
           <BranchCard branches={branches} brands={brands} onChange={fetchAll} />
           <SimpleEntityCard title="Categories" description="Case category options" items={categories} labelField="category_name" base="/api/categories" onChange={fetchAll} />
+          <div className="md:col-span-2 xl:col-span-3 pt-2">
+            <h3 className="text-sm font-extrabold text-[var(--heading)]">Shakir Campaign — the agent's call form</h3>
+            <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">The two dropdowns the agent fills in after each call. Renaming or disabling an option does not change calls already saved.</p>
+          </div>
+          <OptionListCard meta={{ key: "offer_call_result", title: "Result of the call", description: "\"Works like\" decides what happens next: call again later, ask for a call-back date, close the customer, or start the offer days." }}
+            items={options.filter((o) => o.list_key === "offer_call_result")} onChange={fetchAll} kinds={RESULT_KIND_HELP} />
+          <OptionListCard meta={{ key: "offer_churn_reason", title: "Churn reasons", description: "Why the customer stopped ordering (optional on each call)." }}
+            items={options.filter((o) => o.list_key === "offer_churn_reason")} onChange={fetchAll} />
         </div>
       )}
     </div>
