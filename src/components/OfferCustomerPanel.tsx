@@ -312,6 +312,10 @@ function EventRow({ e }: { e: OfferEvent }) {
   else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
   else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})`;
   else if (e.kind === "name") text = d.from ? `Name changed: ${d.from} → ${d.to}` : `Name added: ${d.to}`;
+  else if (e.kind === "edit") {
+    const show = (x: any) => (x === null || x === undefined || x === "" ? "empty" : CALL_STATUS[x]?.label || String(x));
+    text = `Edited: ${(d.changes || []).map((x: any) => `${x.field} ${show(x.from)} → ${show(x.to)}`).join("; ")}`;
+  }
   else text = e.kind;
   return (
     <li className="text-[11px] border-l-2 border-[var(--border)] pl-3">

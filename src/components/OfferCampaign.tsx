@@ -4,13 +4,14 @@ import { apiFetch } from "../lib/api.ts";
 import { downloadXlsx } from "../lib/xlsx.ts";
 import DncBadge from "./DncBadge.tsx";
 import OfferCustomerPanel, { WorkedBy } from "./OfferCustomerPanel.tsx";
+import OfferCustomerEdit from "./OfferCustomerEdit.tsx";
 import OfferDashboard from "./OfferDashboard.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
   OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, fmtDT, stepLabel, fmtExtra, statusText,
-  handlersFrom, colleagueWorked, workLabel,
+  handlersFrom, colleagueWorked, workLabel, EDIT_ROLES,
 } from "../lib/offers.ts";
-import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X } from "lucide-react";
+import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X, Pencil, Trash2 } from "lucide-react";
 
 // Offer campaigns page (first campaign: Shakir). Agents: My calls + Find customer. Team leaders and above also:
 // Customers (assign, export), Upload, Dashboard, Script & settings.
@@ -81,7 +82,7 @@ export default function OfferCampaignPage({ currentUser }: { currentUser: User }
         <>
           {tab === "calls" && <MyCalls camp={camp} tick={tick} onOpen={(id) => setOpen({ id, mode: "call" })} />}
           {tab === "find" && <FindCustomer tick={tick} onOpen={(id) => setOpen({ id, mode: "lookup" })} />}
-          {tab === "customers" && canManage && <Customers camp={camp} tick={tick} onOpen={(id) => setOpen({ id, mode: "lookup" })} />}
+          {tab === "customers" && canManage && <Customers camp={camp} tick={tick} role={currentUser.role} onOpen={(id) => setOpen({ id, mode: "lookup" })} />}
           {tab === "upload" && canManage && <Upload camp={camp} />}
           {tab === "dashboard" && canManage && <OfferDashboard camp={camp} tick={tick} />}
           {tab === "settings" && canManage && <SettingsTab camp={camp} onSaved={loadCampaigns} />}
@@ -207,8 +208,11 @@ function FindCustomer({ tick, onOpen }: { tick: number; onOpen: (id: string) => 
 }
 
 // ---------------------------------------------------------------- Customers (leaders)
-function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpen: (id: string) => void }) {
+function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number; onOpen: (id: string) => void; role: string }) {
   const dnc = useDoNotCall();
+  // Edit: admins, supervisors and the managers above them. Delete: admins only (the business, 2026-10-26).
+  const canEdit = EDIT_ROLES.includes(role), canDelete = role === "admin";
+  const [editing, setEditing] = useState<any | null>(null);
   const [rows, setRows] = useState<any[]>([]);
   const [agents, setAgents] = useState<{ id: string; full_name: string; open: number }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -244,6 +248,17 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
     setError(""); setMsg("");
     const res = await apiFetch(`/api/offer-campaigns/customers/${id}/assign`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: agentId || null }) });
     if (!res.ok) { setError((await res.json().catch(() => ({}))).error || "Could not change the agent."); return; }
+    load();
+  };
+
+  const remove = async (r: any) => {
+    const reason = window.prompt(`Delete ${r.customer_name || "this customer"} (${r.phone}) from the campaign?\n\nTheir calls, orders and history go with them (a backup is kept).\nWrite why:`);
+    if (reason === null) return;
+    if (!reason.trim()) { setError("Write why the customer is being deleted."); return; }
+    setError(""); setMsg("");
+    const res = await apiFetch(`/api/offer-campaigns/customers/${r.id}/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+    if (!res.ok) { setError((await res.json().catch(() => ({}))).error || "Could not delete the customer."); return; }
+    setMsg(`Deleted ${r.customer_name || r.phone}.`);
     load();
   };
 
@@ -336,7 +351,13 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
                       {camp.steps.map((_s, i) => <td key={i} className="py-2.5 px-3 font-mono whitespace-nowrap">{orderDate(r, i + 1) || "—"}</td>)}
                       <td className="py-2.5 px-3"><Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>{el.expires && <div className="text-[10px] text-[var(--muted)] mt-0.5">until {el.expires}</div>}</td>
                       <td className="py-2.5 px-3 max-w-[10rem]">{r.churn_reason || <span className="text-[var(--muted)]">—</span>}</td>
-                      <td className="py-2.5 px-3 text-right"><button onClick={() => onOpen(r.id)} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-[var(--bg)] border border-[var(--border)] hover:text-[var(--heading)]">Open</button></td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => onOpen(r.id)} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-[var(--bg)] border border-[var(--border)] hover:text-[var(--heading)]">Open</button>
+                          {canEdit && <button onClick={() => setEditing(r)} title="Edit this customer" aria-label="Edit this customer" className="p-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--muted)] hover:text-violet-500 hover:border-violet-500/40"><Pencil className="w-3.5 h-3.5" /></button>}
+                          {canDelete && <button onClick={() => remove(r)} title="Delete this customer" aria-label="Delete this customer" className="p-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--muted)] hover:text-rose-500 hover:border-rose-500/40"><Trash2 className="w-3.5 h-3.5" /></button>}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -345,6 +366,8 @@ function Customers({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpe
           </div>
         )}
       </div>
+      {editing && <OfferCustomerEdit row={editing} camp={camp} agents={agents} onClose={() => setEditing(null)}
+        onSaved={() => { setMsg(`Saved the changes to ${editing.customer_name || editing.phone}.`); setEditing(null); load(); }} />}
     </div>
   );
 }

@@ -103,6 +103,8 @@ export const OFFER_STATE: Record<Eligibility["state"], { label: string; cls: str
 };
 
 export const MANAGER_ROLES = ["admin", "owner", "manager", "supervisor", "leader"];
+/** Who may edit a customer (the server checks the same list); deleting is admins only. */
+export const EDIT_ROLES = ["admin", "owner", "manager", "supervisor"];
 
 const KW_MS = 3 * 3600_000;
 export const kwToday = () => new Date(Date.now() + KW_MS).toISOString().slice(0, 10);

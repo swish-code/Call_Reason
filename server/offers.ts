@@ -409,6 +409,114 @@ export function registerOfferRoutes(app: any, d: Deps) {
     res.json(await loadCustomer(c.id));
   }));
 
+  // ---- edit / delete a customer (the business, 2026-10-26): edit = admins and supervisors (and the managers above
+  // them), delete = admins only. Every edit is a history event with each field before → after; a deleted customer is
+  // backed up with its orders and history in deleted_uploads first.
+  const canEdit = (u: any) => !!u && ["admin", "owner", "manager", "supervisor"].includes(u.role);
+  const EDIT = (req: any, res: any, next: any) => (canEdit(req.user) ? next() : res.status(403).json({ error: "Only admins and supervisors can edit a customer." }));
+  const ADMIN = (req: any, res: any, next: any) => (req.user?.role === "admin" ? next() : res.status(403).json({ error: "Only an admin can delete a customer." }));
+
+  app.put(`${B}/customers/:id`, authenticateJWT, EDIT, asyncHandler(async (req, res) => {
+    const data = await loadCustomer(req.params.id);
+    if (!data) return res.status(404).json({ error: "Customer not found." });
+    const { customer: c, campaign: camp, orders } = data;
+    const b = req.body || {};
+    const days = (await DB.query(`SELECT to_char(contact_date, 'YYYY-MM-DD') AS contact, (SELECT to_char(min(order_date), 'YYYY-MM-DD') FROM offer_orders WHERE customer_id = $1) AS first_order
+                                    FROM offer_customers WHERE id = $1`, [c.id]))[0];
+    const sets: string[] = [], vals: any[] = [c.id], changes: { field: string; from: any; to: any }[] = [];
+    const col = (name: string, v: any) => { vals.push(v); sets.push(`${name} = $${vals.length}`); };
+    const text = (v: any, max: number) => (typeof v === "string" && v.replace(/\s+/g, " ").trim() ? v.replace(/\s+/g, " ").trim().slice(0, max) : null);
+
+    if (b.customer_name !== undefined) {
+      const n = text(b.customer_name, 120);
+      if (n !== (c.customer_name || null)) { col("customer_name", n); changes.push({ field: "Name", from: c.customer_name, to: n }); }
+    }
+    if (b.phone !== undefined) {
+      const key = DB.dncKey(String(b.phone || ""));
+      if (!key) return res.status(400).json({ error: "The phone needs at least 8 digits." });
+      const digits = d.normalisePhone(String(b.phone)).replace(/\D/g, "");
+      const phone = digits.length === 11 && digits.startsWith("965") ? digits.slice(3) : digits.length === 8 ? digits : d.normalisePhone(String(b.phone));
+      if (phone !== c.phone) {
+        if (key !== c.phone_key && (await DB.query(`SELECT 1 FROM offer_customers WHERE campaign_id = $1 AND phone_key = $2 AND id <> $3`, [c.campaign_id, key, c.id]))[0])
+          return res.status(409).json({ error: "Another customer in this campaign already has this number." });
+        col("phone", phone); col("phone_key", key); changes.push({ field: "Phone", from: c.phone, to: phone });
+      }
+    }
+    if (b.status_changed) {
+      let status = String(b.call_status || ""), result: string | null = null;
+      if (b.result_id) {
+        const opt = (await DB.query(`SELECT label, kind FROM options WHERE id = $1 AND list_key = $2`, [String(b.result_id), OFFER_RESULT_LIST]))[0];
+        if (!opt || !RESULT_KINDS.includes(opt.kind)) return res.status(400).json({ error: "That status was removed — refresh and pick again." });
+        status = opt.kind; result = opt.label;
+      }
+      if (!CALL_STATUSES.includes(status)) return res.status(400).json({ error: "Pick a status." });
+      if (orders.length && status !== "ordered") return res.status(409).json({ error: `This customer has ${orders.length} offer order(s), so the status stays Ordered. Remove the orders first.` });
+      if (status !== c.call_status || result !== (c.call_result || null)) {
+        col("call_status", status); col("call_result", result);
+        changes.push({ field: "Status", from: c.call_result || c.call_status, to: result || status });
+      }
+    }
+    if (b.contact_date !== undefined) {
+      const v = b.contact_date || null;
+      if (v && !isDay(v)) return res.status(400).json({ error: "Pick a valid contact date." });
+      if (v !== (days.contact || null)) { vals.push(v); sets.push(`contact_date = $${vals.length}::date`); changes.push({ field: "Contact date", from: days.contact, to: v }); }
+    }
+    if (b.agent_id !== undefined) {
+      const id = b.agent_id || null;
+      if (id !== (c.assigned_agent_id || null)) {
+        const agent = id ? (await DB.query(`SELECT id, full_name FROM users WHERE id = $1 AND status = 'Active'`, [id]))[0] : null;
+        if (id && !agent) return res.status(400).json({ error: "Unknown agent." });
+        col("assigned_agent_id", id); sets.push(id ? "assigned_at = now()" : "assigned_at = NULL");
+        changes.push({ field: "Agent", from: c.agent_name, to: agent?.full_name || null });
+      }
+    }
+    if (b.churn_reason !== undefined) {
+      const v = text(b.churn_reason, 120);
+      if (v !== (c.churn_reason || null)) { col("churn_reason", v); changes.push({ field: "Churn reason", from: c.churn_reason, to: v }); }
+    }
+    if (b.comment !== undefined) {
+      const v = typeof b.comment === "string" && b.comment.trim() ? b.comment.trim().slice(0, 2000) : null;
+      if (v !== (c.comment || null)) { col("comment", v); changes.push({ field: "Comment", from: c.comment, to: v }); }
+    }
+    if (b.offer_start !== undefined || b.offer_end !== undefined) {
+      const s = b.offer_start || null, e = b.offer_end || null;
+      if ((s && !isDay(s)) || (e && !isDay(e)) || !!s !== !!e) return res.status(400).json({ error: "Give both offer dates, or clear both." });
+      if (s && e < s) return res.status(400).json({ error: "The offer can't end before it starts." });
+      if (!s && orders.length) return res.status(409).json({ error: "This customer has offer orders, so the offer can't be cleared." });
+      if (s && days.first_order && s > days.first_order) return res.status(409).json({ error: `The first offer order is on ${days.first_order}, so the offer must start on or before that day.` });
+      const el = data.eligibility;
+      if (s !== el.starts || e !== el.expires) {
+        // Kuwait day boundaries, so the offer runs from the start of its first day to the end of its last.
+        vals.push(s ? `${s}T00:00:00+03:00` : null); sets.push(`offer_started_at = $${vals.length}::timestamptz`);
+        vals.push(e ? `${e}T23:59:59+03:00` : null); sets.push(`offer_expires_at = $${vals.length}::timestamptz`);
+        changes.push({ field: "Offer", from: el.starts ? `${el.starts} to ${el.expires}` : null, to: s ? `${s} to ${e}` : null });
+      }
+    }
+    if (!changes.length) return res.status(400).json({ error: "Nothing was changed." });
+    const note = typeof b.note === "string" && b.note.trim() ? b.note.trim().slice(0, 500) : null;
+    await DB.query(`UPDATE offer_customers SET ${sets.join(", ")} WHERE id = $1`, vals);
+    await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "edit", user: req.user, comment: note, details: { changes } });
+    const show = (v: any) => (v === null || v === undefined || v === "" ? "(empty)" : String(v).replace(/_/g, " "));
+    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — edited (${camp?.name || "campaign"}): ${changes.map((x) => `${x.field} ${show(x.from)} → ${show(x.to)}`).join("; ")}${note ? `. Note: ${note}` : ""}`.trim() };
+    res.json(await loadCustomer(c.id));
+  }));
+
+  app.post(`${B}/customers/:id/delete`, authenticateJWT, ADMIN, asyncHandler(async (req, res) => {
+    const data = await loadCustomer(req.params.id);
+    if (!data) return res.status(404).json({ error: "Customer not found." });
+    const reason = String(req.body?.reason || "").trim().slice(0, 300);
+    if (!reason) return res.status(400).json({ error: "Write why this customer is being deleted." });
+    const { customer: c, orders, events } = data;
+    // Back up the customer with their orders and history (restorable by a developer), then delete — orders and
+    // history go with the customer (ON DELETE CASCADE).
+    await DB.query(`INSERT INTO deleted_uploads (id, upload_batch_id, upload_type, batch, table_name, row_count, rows, deleted_by, deleted_by_name)
+                    VALUES ($1, $2, 'offer_customers', $3::jsonb, 'offer_customers', 1, $4::jsonb, $5, $6)`,
+      [newId("del"), c.upload_batch_id || "manual", JSON.stringify({ reason, single_customer: true }), JSON.stringify([{ ...c, orders, events }]), req.user.id, req.user.full_name]);
+    await DB.query(`DELETE FROM offer_customers WHERE id = $1`, [c.id]);
+    req.auditExtra = { details: `Deleted customer ${c.customer_name || ""} ${c.phone} (${c.call_result || c.call_status}, ${orders.length} order(s), agent ${c.agent_name || "none"}) — ${reason}`.replace(/\s+/g, " ").trim(), previous_value: c.call_result || c.call_status };
+    res.json({ ok: true });
+  }));
+
   // Log an order that used the offer: the next discount, inside the validity window.
   app.post(`${B}/customers/:id/orders`, authenticateJWT, CALL, asyncHandler(async (req, res) => {
     const data = await loadCustomer(req.params.id);
