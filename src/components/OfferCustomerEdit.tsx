@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api.ts";
-import { OfferCampaign, CALL_STATUS, fmtDay, kwToday, statusText, useOfferLists, type CallResultOption } from "../lib/offers.ts";
-import { X, AlertCircle, Pencil } from "lucide-react";
+import { OfferCampaign, CALL_STATUS, fmtDay, kwToday, statusText, stepLabel, useOfferLists, type CallResultOption } from "../lib/offers.ts";
+import { X, AlertCircle, CheckCircle2, Pencil, Trash2 } from "lucide-react";
 
 // Edit one customer of an offer campaign (admins, supervisors and the managers above them). Every change is kept in
 // the customer's history with its value before and after, and in the audit log.
@@ -13,10 +13,12 @@ const L = ({ label, children, wide }: { label: string; children: any; wide?: boo
   <label className={`text-[10px] font-bold text-[var(--muted)] space-y-1 block ${wide ? "sm:col-span-2" : ""}`}>{label}{children}</label>
 );
 
-export default function OfferCustomerEdit({ row, camp, agents, onClose, onSaved }: {
-  row: any; camp: OfferCampaign; agents: { id: string; full_name: string }[]; onClose: () => void; onSaved: () => void;
+export default function OfferCustomerEdit({ row: initial, camp, agents, onClose, onSaved, onChanged }: {
+  row: any; camp: OfferCampaign; agents: { id: string; full_name: string }[]; onClose: () => void; onSaved: () => void; onChanged?: () => void;
 }) {
   const lists = useOfferLists();
+  const [row, setRow] = useState<any>(initial);          // follows the customer after an order is removed here
+  const [msg, setMsg] = useState("");
   const [v, setV] = useState({
     name: row.customer_name || "", phone: row.phone || "", agent: row.assigned_agent_id || "", contact: fmtDay(row.contact_date) || "",
     churn: row.churn_reason || "", comment: row.comment || "", start: row.eligibility?.starts || "", end: row.eligibility?.expires || "", note: "",
@@ -43,6 +45,25 @@ export default function OfferCustomerEdit({ row, camp, agents, onClose, onSaved 
   };
   const churnOptions = [...new Set([...(lists.churn ?? camp.churn_reasons ?? []), ...(row.churn_reason ? [row.churn_reason] : [])])];
   const agentOptions = row.assigned_agent_id && !agents.some((a) => a.id === row.assigned_agent_id) ? [{ id: row.assigned_agent_id, full_name: row.agent_name || "Current agent" }, ...agents] : agents;
+
+  // Only the latest order can be taken back (the discounts stay in order); taking back the only one puts the customer
+  // where they were before it, so the status can be changed again.
+  const removeOrder = async (o: any) => {
+    const reason = window.prompt(`Remove the ${stepLabel(o.step)} order${o.order_number ? ` ${o.order_number}` : ""} (${o.discount}% off)?\nWrite why (kept in the history):`);
+    if (reason === null) return;
+    if (!reason.trim()) { setError("Write why the order is being removed."); return; }
+    setError(""); setMsg(""); setBusy(true);
+    try {
+      const res = await apiFetch(`/api/offer-campaigns/orders/${o.id}/remove`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Could not remove the order.");
+      setRow((p: any) => ({ ...p, ...d.customer, orders: d.orders, eligibility: d.eligibility }));
+      setV((p) => ({ ...p, start: d.eligibility?.starts || "", end: d.eligibility?.expires || "" }));
+      setStatusTouched(false);
+      setMsg(d.orders.length ? "Order removed." : `Order removed. The customer is back to "${statusText(d.customer)}"${d.eligibility?.starts ? "" : " and has no offer running"}.`);
+      onChanged?.();
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  };
 
   const save = async () => {
     setError(""); setBusy(true);
@@ -72,15 +93,30 @@ export default function OfferCustomerEdit({ row, camp, agents, onClose, onSaved 
         </div>
         <div className="p-5 space-y-4">
           {error && <div className="p-3 rounded-xl text-xs border bg-rose-950/20 border-rose-500/20 text-rose-400 flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" /> {error}</div>}
+          {msg && <div className="p-3 rounded-xl text-xs border bg-emerald-500/10 border-emerald-500/25 text-emerald-600 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 shrink-0" /> {msg}</div>}
+          {hasOrders && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+              <p className="text-[11px] font-bold text-[var(--heading)]">Offer orders</p>
+              {row.orders.map((o: any, i: number) => (
+                <div key={o.id || o.step} className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text)]">
+                  <span><b className="text-[var(--heading)]">{o.discount}% off</b>, {stepLabel(o.step)} order on {fmtDay(o.order_date)}{o.order_number ? `, #${o.order_number}` : ""}{o.logged_by_name ? `, logged by ${o.logged_by_name}` : ""}</span>
+                  {i === row.orders.length - 1 && o.id && (
+                    <button onClick={() => removeOrder(o)} disabled={busy} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold border border-rose-500/40 text-rose-500 hover:bg-rose-500/10 disabled:opacity-50"><Trash2 className="w-3 h-3" /> Remove</button>
+                  )}
+                </div>
+              ))}
+              <p className="text-[10px] text-[var(--muted)]">While the customer has an order the status stays Ordered. Only the latest order can be removed; removing the only one puts the customer back where they were before it.</p>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <L label="Customer name"><input value={v.name} onChange={(e) => set("name", e.target.value)} dir="auto" className={inputCls} /></L>
             <L label="Phone"><input value={v.phone} onChange={(e) => set("phone", e.target.value)} dir="ltr" className={inputCls + " font-mono"} /></L>
             <L label="Status">
-              <select value={statusId} onChange={(e) => pickStatus(e.target.value)} disabled={!lists.loaded} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+              <select value={statusId} onChange={(e) => pickStatus(e.target.value)} disabled={!lists.loaded || hasOrders} className={inputCls + " font-bold disabled:opacity-60 [&>option]:bg-[var(--surface)]"}>
                 {!currentMatch && <option value="current">{statusText(row)} (current)</option>}
                 {statusOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
-              {hasOrders && <span className="block font-normal text-[10px] text-amber-600">Has offer orders, so it stays Ordered.</span>}
+              {hasOrders && <span className="block font-normal text-[10px] text-amber-600">Remove the order above to change the status.</span>}
             </L>
             <L label="Agent">
               <select value={v.agent} onChange={(e) => set("agent", e.target.value)} className={inputCls + " [&>option]:bg-[var(--surface)]"}>

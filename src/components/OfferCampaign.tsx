@@ -366,7 +366,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
           </div>
         )}
       </div>
-      {editing && <OfferCustomerEdit row={editing} camp={camp} agents={agents} onClose={() => setEditing(null)}
+      {editing && <OfferCustomerEdit row={editing} camp={camp} agents={agents} onClose={() => setEditing(null)} onChanged={load}
         onSaved={() => { setMsg(`Saved the changes to ${editing.customer_name || editing.phone}.`); setEditing(null); load(); }} />}
     </div>
   );

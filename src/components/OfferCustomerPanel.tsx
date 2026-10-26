@@ -310,7 +310,7 @@ function EventRow({ e }: { e: OfferEvent }) {
   else if (e.kind === "assign") text = d.from !== undefined ? `Moved from ${d.from || "nobody"} to ${d.to || "nobody"}` : `Assigned to ${d.to}${d.from_file ? " (from the file)" : ""}`;
   else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${d.prev_result || st(e.prev_status)} → ${d.result || st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}${d.stays_ordered ? " (the customer stays Ordered)" : ""}`;
   else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
-  else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})`;
+  else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})${d.reverted_to ? `, customer back to ${st(d.reverted_to)}` : ""}${d.offer_cleared ? ", offer taken back" : ""}`;
   else if (e.kind === "name") text = d.from ? `Name changed: ${d.from} → ${d.to}` : `Name added: ${d.to}`;
   else if (e.kind === "edit") {
     const show = (x: any) => (x === null || x === undefined || x === "" ? "empty" : CALL_STATUS[x]?.label || String(x));

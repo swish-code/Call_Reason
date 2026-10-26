@@ -260,7 +260,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
       SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
              oc.contact_date, oc.call_status, oc.call_result, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
              oc.offer_started_at, oc.offer_expires_at,
-             COALESCE((SELECT json_agg(json_build_object('step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number) ORDER BY o.step)
+             COALESCE((SELECT json_agg(json_build_object('id', o.id, 'step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number, 'logged_by_name', o.logged_by_name) ORDER BY o.step)
                          FROM offer_orders o WHERE o.customer_id = oc.id), '[]'::json) AS orders,
              ${WORK_SQL} AS work
         FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id
@@ -450,7 +450,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
         status = opt.kind; result = opt.label;
       }
       if (!CALL_STATUSES.includes(status)) return res.status(400).json({ error: "Pick a status." });
-      if (orders.length && status !== "ordered") return res.status(409).json({ error: `This customer has ${orders.length} offer order(s), so the status stays Ordered. Remove the orders first.` });
+      if (orders.length && status !== "ordered") return res.status(409).json({ error: `This customer has ${orders.length} offer order(s), so the status stays Ordered. Remove the order(s) first, under "Offer orders" in this window.` });
       if (status !== c.call_status || result !== (c.call_result || null)) {
         col("call_status", status); col("call_result", result);
         changes.push({ field: "Status", from: c.call_result || c.call_status, to: result || status });
@@ -566,8 +566,27 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const reason = String(req.body?.reason || "").trim().slice(0, 300);
     if (!reason) return res.status(400).json({ error: "Write why this order is being removed." });
     await DB.query(`DELETE FROM offer_orders WHERE id = $1`, [o.id]);
-    await addEvent({ customerId: o.customer_id, campaignId: o.campaign_id, kind: "order_removed", user: req.user, comment: reason, details: { step: o.step, discount: o.discount, order_number: o.order_number, order_date: o.order_date, logged_by: o.logged_by_name } });
-    req.auditExtra = { details: `Removed order ${o.order_number || "(no number)"} (${o.discount}%, logged by ${o.logged_by_name || "?"}) — ${reason}`, previous_value: `${o.discount}%` };
+    // Taking back the customer's only order undoes it: the customer returns to the status they had before it, and an
+    // offer that this order started (nobody accepted it on a call since) is taken back too.
+    const undo: { reverted_to?: string; offer_cleared?: boolean } = {};
+    if (o.step === 1) {
+      const c = (await DB.query(`SELECT call_status FROM offer_customers WHERE id = $1`, [o.customer_id]))[0];
+      const ev = (await DB.query(`SELECT prev_status, details, created_at FROM offer_events WHERE customer_id = $1 AND kind = 'order' AND (details->>'step')::int = 1
+                                  ORDER BY created_at DESC LIMIT 1`, [o.customer_id]))[0];
+      // Back to the result of the customer's latest call (before or after the order), or to where they were before the
+      // order if nobody ever called them.
+      const lastCall = (await DB.query(`SELECT call_status, details FROM offer_events WHERE customer_id = $1 AND kind = 'call' ORDER BY created_at DESC LIMIT 1`, [o.customer_id]))[0];
+      const back = lastCall?.call_status || ev?.prev_status;
+      if (c?.call_status === "ordered" && back && back !== "ordered") undo.reverted_to = back;
+      if (ev?.details?.offer_started && !(await DB.query(`SELECT 1 FROM offer_events WHERE customer_id = $1 AND kind = 'call' AND call_status IN ('accepted','ordered') AND created_at > $2`, [o.customer_id, ev.created_at]))[0])
+        undo.offer_cleared = true;
+      if (undo.reverted_to || undo.offer_cleared)
+        await DB.query(`UPDATE offer_customers SET call_status = COALESCE($2, call_status), call_result = CASE WHEN $2::text IS NULL THEN call_result ELSE $4 END,
+                          offer_started_at = CASE WHEN $3 THEN NULL ELSE offer_started_at END, offer_expires_at = CASE WHEN $3 THEN NULL ELSE offer_expires_at END
+                        WHERE id = $1`, [o.customer_id, undo.reverted_to || null, !!undo.offer_cleared, (lastCall && lastCall.details?.result) || null]);
+    }
+    await addEvent({ customerId: o.customer_id, campaignId: o.campaign_id, kind: "order_removed", user: req.user, comment: reason, details: { step: o.step, discount: o.discount, order_number: o.order_number, order_date: o.order_date, logged_by: o.logged_by_name, ...undo } });
+    req.auditExtra = { details: `Removed order ${o.order_number || "(no number)"} (${o.discount}%, logged by ${o.logged_by_name || "?"}) — ${reason}${undo.reverted_to ? `, customer back to ${undo.reverted_to.replace(/_/g, " ")}` : ""}${undo.offer_cleared ? ", offer taken back" : ""}`, previous_value: `${o.discount}%` };
     res.json(await loadCustomer(o.customer_id));
   }));
 
