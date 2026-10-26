@@ -1251,9 +1251,16 @@ export class DB {
               [b.id, delId, b.upload_type, JSON.stringify(b), spec.table, by?.id ?? null, by?.name ?? null]);
             result.deleted = c.deletable;
           }
-          // Drop the upload's record once nothing of it is left.
+          // Drop the upload's record once nothing of it is left. An upload that never added a row (every row
+          // skipped) has nothing to back up above, so its record (with the skipped-rows list) is backed up here.
           const { rows: [left] } = await client.query(`SELECT count(*)::int AS n FROM ${spec.table} WHERE upload_batch_id = $1`, [b.id]);
-          if (left.n === 0) await client.query(`DELETE FROM upload_batches WHERE id = $1`, [b.id]);
+          if (left.n === 0) {
+            if (!result.deleted) await client.query(
+              `INSERT INTO deleted_uploads (id, upload_batch_id, upload_type, batch, table_name, row_count, rows, deleted_by, deleted_by_name)
+               VALUES ($1, $2, $3, $4::jsonb, $5, 0, '[]'::jsonb, $6, $7)`,
+              ["del-" + Date.now() + "-" + Math.floor(Math.random() * 99999), b.id, b.upload_type, JSON.stringify(b), spec.table, by?.id ?? null, by?.name ?? null]);
+            await client.query(`DELETE FROM upload_batches WHERE id = $1`, [b.id]);
+          }
         }
         out.push(result);
       }

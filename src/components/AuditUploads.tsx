@@ -124,6 +124,15 @@ export default function AuditUploads({ currentUser }: Props) {
       const kept = preview.reduce((a, r) => a + r.protected, 0);
       const overwrite = preview.some((r) => r.upload_type === "ratings" && r.sub_type === "overwrite");
       const rebuilt = preview.some((r) => r.reconstructed);
+      // An upload that added nothing (every row skipped) only leaves its line in this list — removing it changes no data.
+      const empty = preview.filter((r) => r.total === 0).length;
+      if (del === 0 && empty) {
+        if (!window.confirm(`Remove ${empty} empty upload(s) from the list?\n\nEvery row in ${empty === 1 ? "it" : "them"} was skipped, so nothing was added and no data changes.${kept ? `\n${kept} worked-on row(s) in the other selected upload(s) stay.` : ""}`)) return;
+        await post(false);
+        setDeleteMsg(`Removed ${empty} empty upload(s) from the list.`);
+        await load();
+        return;
+      }
       if (del === 0 && kept === 0) { setDeleteMsg("Nothing left to delete in the selected upload(s)."); load(); return; }
       const msg = [
         `Delete ${targets.length} upload(s)?`,
