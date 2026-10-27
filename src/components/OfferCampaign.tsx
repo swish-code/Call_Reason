@@ -11,7 +11,7 @@ import {
   OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, fmtDT, stepLabel, fmtExtra, statusText,
   handlersFrom, colleagueWorked, workLabel, EDIT_ROLES,
 } from "../lib/offers.ts";
-import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X, Pencil, Trash2 } from "lucide-react";
+import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X, Pencil, Trash2, ListChecks, PhoneCall, UserX, Clock } from "lucide-react";
 
 // Offer campaigns page (first campaign: Shakir). Agents: My calls + Find customer. Team leaders and above also:
 // Customers (assign, export), Upload, Dashboard, Script & settings.
@@ -263,6 +263,14 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   };
 
   const unassigned = rows.filter((r) => !r.assigned_agent_id && r.call_status === "not_called").length;
+  // Summary of the customers below (it follows the filters): called at least once, spoke to the customer, said no, not called yet.
+  const tiles = [
+    { label: "Total customers", n: rows.length, Icon: ListChecks, cls: "bg-indigo-500/10 text-indigo-500" },
+    { label: "Completed — called", n: rows.filter((r) => r.call_status !== "not_called").length, Icon: CheckCircle2, cls: "bg-emerald-500/10 text-emerald-500" },
+    { label: "Reached", n: rows.filter((r) => CALL_STATUS[r.call_status]?.reached).length, Icon: PhoneCall, cls: "bg-sky-500/10 text-sky-500" },
+    { label: "Refused / not interested", n: rows.filter((r) => r.call_status === "not_interested").length, Icon: UserX, cls: "bg-orange-500/10 text-orange-500" },
+    { label: "Pending — not called yet", n: rows.filter((r) => r.call_status === "not_called").length, Icon: Clock, cls: "bg-amber-500/10 text-amber-500" },
+  ];
   const orderDate = (r: any, step: number) => fmtDay(r.orders.find((o: any) => o.step === step)?.order_date) || "";
   // The requested fields, then whatever extra columns the uploaded files had (lifetime orders, last order date…).
   const exportXlsx = () => {
@@ -282,6 +290,17 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
 
   return (
     <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {tiles.map(({ label, n, Icon, cls }) => (
+          <div key={label} className={box + " p-4 flex items-center gap-3"}>
+            <div className={`p-2.5 rounded-xl shrink-0 ${cls}`}><Icon className="w-5 h-5" /></div>
+            <div className="min-w-0">
+              <div className="text-xl font-extrabold text-[var(--heading)] leading-tight">{loading ? "…" : n.toLocaleString()}</div>
+              <div className="text-[10px] font-bold text-[var(--muted)] uppercase leading-tight">{label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
       <div className={box + " p-4 flex flex-wrap items-end gap-3"}>
         <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Users className="w-4 h-4 text-violet-400" /> Give customers</div>
         <span className="text-[11px] text-[var(--muted)]"><b className="text-[var(--heading)]">{unassigned}</b> never-called customer(s) without an agent</span>
