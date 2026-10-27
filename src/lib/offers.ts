@@ -109,6 +109,8 @@ export const EDIT_ROLES = ["admin", "owner", "manager", "supervisor"];
 const KW_MS = 3 * 3600_000;
 export const kwToday = () => new Date(Date.now() + KW_MS).toISOString().slice(0, 10);
 export const fmtDT = (ts?: string | null) => (ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16) : "");
+/** HH:MM in Kuwait time ("" when there is no timestamp). */
+export const fmtTime = (ts?: string | null) => (ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().slice(11, 16) : "");
 export const fmtDay = (ts?: string | null) => (ts ? (/^\d{4}-\d{2}-\d{2}$/.test(ts) ? ts : new Date(new Date(ts).getTime() + KW_MS).toISOString().slice(0, 10)) : "");
 
 /** The campaign script with the customer's and the agent's names filled in. */

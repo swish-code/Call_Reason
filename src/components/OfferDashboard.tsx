@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { apiFetch } from "../lib/api.ts";
 import { OfferCampaign as Campaign, kwToday, stepLabel } from "../lib/offers.ts";
 import { Card as ChartCard, GroupedColumns, STYLE as CHART_STYLE, C as CC, type Series } from "./SurveyCharts.tsx";
+import OfferBestTime from "./OfferBestTime.tsx";
 import { RefreshCw, AlertCircle, PhoneOutgoing, PhoneIncoming, UploadCloud, Sparkles, UserX, Hourglass, CalendarX2, CheckCircle2 } from "lucide-react";
 
 // The campaign dashboard (team leaders and up).
@@ -207,6 +208,8 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
               {(setTip) => <GroupedColumns cats={cats} series={S_ORDERS} value={(c, s) => (dayMap.get(c) as any)?.[s] || 0} selected={inRange} setTip={setTip} />}
             </ChartCard>
           </div>
+
+          <OfferBestTime slots={d.slots || []} from={range.from} to={range.to} campId={camp.id} periodText={periodText} />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
             <Agents agents={d.agents} grown={grown} periodText={periodText} />

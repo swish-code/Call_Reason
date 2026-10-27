@@ -8,7 +8,7 @@ import OfferCustomerEdit from "./OfferCustomerEdit.tsx";
 import OfferDashboard from "./OfferDashboard.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
-  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, fmtDT, stepLabel, fmtExtra, statusText,
+  OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, fmtDT, fmtTime, stepLabel, fmtExtra, statusText,
   handlersFrom, colleagueWorked, workLabel, EDIT_ROLES,
 } from "../lib/offers.ts";
 import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X, Pencil, Trash2, ListChecks, PhoneCall, UserX, Clock } from "lucide-react";
@@ -276,8 +276,8 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   const exportXlsx = () => {
     const extraKeys: string[] = [...new Set<string>(rows.flatMap((r: any) => Object.keys(r.extra || {})))];
     return downloadXlsx(
-      ["Uploaded Day", "Date of contact", "Customer Name", "Gender", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
-      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.gender === "female" ? "Female" : r.gender === "male" ? "Male" : "", r.phone, statusText(r), fmtDay(r.first_call_at),
+      ["Uploaded Day", "Date of contact", "Customer Name", "Gender", "Phone number", "Call status", "1st Call Date", "1st Call Time", "Last Call Date", "Last Call Time", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
+      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.gender === "female" ? "Female" : r.gender === "male" ? "Male" : "", r.phone, statusText(r), fmtDay(r.first_call_at), fmtTime(r.first_call_at), fmtDay(r.last_call_at), fmtTime(r.last_call_at),
         ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "",
         handlersFrom(r.work || []).map((h) => `${h.name}: ${h.actions.join(", ")}`).join(" | "), colleagueWorked(handlersFrom(r.work || []), r.assigned_agent_id) ? "Yes" : "",
         r.churn_reason || "", r.comment || "",
@@ -366,7 +366,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
                         {(() => { const hs = handlersFrom(r.work || []); return colleagueWorked(hs, r.assigned_agent_id) && <div className="mt-1.5 max-w-[17rem]"><WorkedBy hs={hs} owner={r.assigned_agent_id} /></div>; })()}
                       </td>
                       <td className="py-2.5 px-3"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>{r.attempts > 0 && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.attempts} attempt(s)</div>}</td>
-                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">{fmtDay(r.first_call_at) || "—"}</td>
+                      <td className="py-2.5 px-3 font-mono whitespace-nowrap">{fmtDT(r.first_call_at) || "—"}</td>
                       {camp.steps.map((_s, i) => <td key={i} className="py-2.5 px-3 font-mono whitespace-nowrap">{orderDate(r, i + 1) || "—"}</td>)}
                       <td className="py-2.5 px-3"><Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>{el.expires && <div className="text-[10px] text-[var(--muted)] mt-0.5">until {el.expires}</div>}</td>
                       <td className="py-2.5 px-3 max-w-[10rem]">{r.churn_reason || <span className="text-[var(--muted)]">—</span>}</td>

@@ -627,7 +627,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     let wFrom = from === to ? addDays(to, -13) : from;
     if (Date.parse(to) - Date.parse(wFrom) > 91 * 86400_000) wFrom = addDays(to, -91);
     const DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kuwait')::date`;
-    const [uploads, calls, orders, byAgent, churn, customers] = await Promise.all([
+    const [uploads, calls, orders, byAgent, churn, customers, slots] = await Promise.all([
       DB.query(`SELECT to_char(${DAY("uploaded_at")}, 'YYYY-MM-DD') AS day, count(*)::int AS n FROM offer_customers
                  WHERE campaign_id = $1 AND ${DAY("uploaded_at")} BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, wFrom, to]),
       DB.query(`SELECT to_char(${DAY("created_at")}, 'YYYY-MM-DD') AS day, count(*)::int AS calls,
@@ -675,6 +675,11 @@ export function registerOfferRoutes(app: any, d: Deps) {
       DB.query(`SELECT oc.call_status, oc.assigned_agent_id IS NOT NULL AS assigned, oc.offer_started_at, oc.offer_expires_at,
                        (SELECT count(*)::int FROM offer_orders o WHERE o.customer_id = oc.id) AS orders
                   FROM offer_customers oc WHERE oc.campaign_id = $1`, [camp.id]),
+      // Best time to call: our outbound calls by Kuwait weekday and hour, and how many were answered (the customer picked up).
+      DB.query(`SELECT EXTRACT(dow FROM created_at AT TIME ZONE 'Asia/Kuwait')::int AS dow, EXTRACT(hour FROM created_at AT TIME ZONE 'Asia/Kuwait')::int AS hour,
+                       count(*)::int AS calls, count(*) FILTER (WHERE call_status = ANY($4))::int AS answered
+                  FROM offer_events WHERE campaign_id = $1 AND kind = 'call' AND direction = 'outbound' AND ${DAY("created_at")} BETWEEN $2::date AND $3::date
+                 GROUP BY 1, 2`, [camp.id, from, to, REACHED_STATUSES]),
     ]);
     const days: any[] = [];
     for (let day = wFrom; day <= to; day = addDays(day, 1)) {
@@ -698,6 +703,24 @@ export function registerOfferRoutes(app: any, d: Deps) {
       if (el.state === "completed") totals.completed++;
       if (c.orders > 0) totals.redeemed++;
     }
-    res.json({ campaign: { id: camp.id, name: camp.name, steps: camp.steps, validity_days: camp.validity_days }, range: { from, to }, window: { from: wFrom, to }, days, agents: byAgent, churn, totals });
+    res.json({ campaign: { id: camp.id, name: camp.name, steps: camp.steps, validity_days: camp.validity_days }, range: { from, to }, window: { from: wFrom, to }, days, agents: byAgent, churn, totals, slots });
+  }));
+
+  // Every call of a period with its Kuwait date and time (the calls report).
+  app.get(`${B}/:id/calls`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
+    const camp = await getCampaign(req.params.id);
+    if (!camp) return res.status(404).json({ error: "Campaign not found." });
+    const to = isDay(req.query.to) ? String(req.query.to) : kwToday();
+    const from = isDay(req.query.from) ? String(req.query.from) : to;
+    if (from > to) return res.status(400).json({ error: "From is after To." });
+    const K = "(e.created_at AT TIME ZONE 'Asia/Kuwait')";
+    const rows = await DB.query(`
+      SELECT to_char(${K}, 'YYYY-MM-DD') AS date, to_char(${K}, 'HH24:MI') AS time, to_char(${K}, 'FMDay') AS weekday,
+             oc.customer_name, oc.phone, e.user_name AS agent, e.direction, e.call_status, e.details->>'result' AS result,
+             (e.call_status = ANY($4)) AS answered, e.churn_reason, e.comment
+        FROM offer_events e JOIN offer_customers oc ON oc.id = e.customer_id
+       WHERE e.campaign_id = $1 AND e.kind = 'call' AND ${K}::date BETWEEN $2::date AND $3::date
+       ORDER BY e.created_at LIMIT 50000`, [camp.id, from, to, REACHED_STATUSES]);
+    res.json({ from, to, rows });
   }));
 }

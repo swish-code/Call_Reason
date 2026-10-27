@@ -273,6 +273,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                     {(() => { const hs = handlersFrom(data.events); return hs.length > 0 && <><dt className="text-[var(--muted)]">Worked on by</dt><dd><WorkedBy hs={hs} owner={c!.assigned_agent_id} /></dd></>; })()}
                     <dt className="text-[var(--muted)]">Contact date</dt><dd>{fmtDay(c!.contact_date) || "—"}</dd>
                     <dt className="text-[var(--muted)]">1st call</dt><dd>{c!.first_call_at ? `${fmtDT(c!.first_call_at)}${c!.first_call_agent_name ? ` · ${c!.first_call_agent_name}` : ""}` : "—"}</dd>
+                    <dt className="text-[var(--muted)]">Last call</dt><dd>{c!.last_call_at ? fmtDT(c!.last_call_at) : "—"}</dd>
                     <dt className="text-[var(--muted)]">Attempts</dt><dd>{c!.attempts}</dd>
                     <dt className="text-[var(--muted)]">Churn reason</dt><dd>{c!.churn_reason || "—"}</dd>
                     <dt className="text-[var(--muted)]">Comment</dt><dd className="whitespace-pre-wrap">{c!.comment || "—"}</dd>
