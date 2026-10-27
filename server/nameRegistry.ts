@@ -17,7 +17,10 @@ export async function loadCatalog(): Promise<Catalog> {
     pool.query("SELECT id, branch_name, brand, aliases FROM branches ORDER BY branch_name"),
   ]);
   const brands: NameBrand[] = b.rows.map((r: any) => ({ id: r.id, name: r.brand_name, aliases: parseAliases(r.aliases) }));
-  const byName = new Map(brands.map((x) => [normalize(x.name), x.id]));
+  // branches.brand is plain text and brands were renamed later ("Table" -> "Tabel"), so a brand's other names count too.
+  const byName = new Map<string, string>();
+  for (const x of brands) byName.set(normalize(x.name), x.id);
+  for (const x of brands) for (const a of x.aliases) if (!byName.has(normalize(a))) byName.set(normalize(a), x.id);
   const branches = new Map<string, NameBranch[]>();
   for (const r of br.rows as any[]) {
     const bid = byName.get(normalize(r.brand || ""));
@@ -62,13 +65,21 @@ export async function seedNameRegistry(): Promise<{ brandsTouched: number; branc
     if (next.length !== cur.length) { await pool.query("UPDATE branches SET aliases = $1 WHERE id = $2", [JSON.stringify(next), row.id]); row.aliases = JSON.stringify(next); branchesTouched++; }
   };
   const brandByName = (n: string) => brandRows.find((r) => normalize(r.brand_name) === normalize(n));
-  const branchOf = (brand: string, n: string) => branchRows.find((r) => normalize(r.brand || "") === normalize(brand) && normalize(r.branch_name) === normalize(n));
+  // The brand's rows are found by its name or any other name it is written with (old rows still say "Table", "Pattie"...).
+  const namesOf = (brand: string, extra: string[] = []) => {
+    const row = brandByName(brand);
+    return new Set([brand, ...extra, ...(row ? parseAliases(row.aliases) : [])].map(normalize));
+  };
+  const branchOf = (brand: string, n: string, extra: string[] = []) => {
+    const names = namesOf(brand, extra);
+    return branchRows.find((r) => names.has(normalize(r.brand || "")) && normalize(r.branch_name) === normalize(n));
+  };
 
   for (const reg of BRANCH_REGISTRY) {
     const b = brandByName(reg.brand);
     if (!b) continue;
     if (reg.brandAliases?.length) await setBrand(b, reg.brandAliases);
-    for (const br of reg.branches || []) { const row = branchOf(reg.brand, br.name); if (row) await setBranch(row, br.aliases); }
+    for (const br of reg.branches || []) { const row = branchOf(reg.brand, br.name, reg.brandAliases); if (row) await setBranch(row, br.aliases); }
   }
   for (const [name, list] of Object.entries(learned.brands || {})) { const b = brandByName(name); if (b) await setBrand(b, list); }
   for (const [key, list] of Object.entries(learned.branches || {})) {
@@ -108,4 +119,24 @@ export async function holdRatingRow(batchId: string, rawBrand: string, data: Rec
   if (dup.rowCount) return;
   await pool.query("INSERT INTO rating_held_rows (id, batch_id, raw_brand, row_data) VALUES ($1,$2,$3,$4)",
     ["held-" + Date.now() + "-" + Math.floor(Math.random() * 99999), batchId, rawBrand, JSON.stringify(data)]);
+}
+
+/** Reviews stored as "unmatched" are tried again against the current names and aliases (after a deploy, a brand fix or a new alias). */
+export async function rematchUnmatched(): Promise<number> {
+  const cat = await loadCatalog();
+  const groups = (await pool.query(
+    "SELECT brand_id, COALESCE(branch_raw, branch) AS raw FROM ratings WHERE name_status = 'unmatched' GROUP BY brand_id, COALESCE(branch_raw, branch)")).rows as any[];
+  let fixed = 0;
+  for (const g of groups) {
+    const brand = cat.brands.find((b) => b.id === g.brand_id);
+    if (!brand || !g.raw) continue;
+    const m = matchBranch(g.raw, brand, cat.branches.get(brand.id) || [], cat.neverAutoLink.get(brand.id) || []);
+    if (m.status !== "matched" || !m.branch) continue;
+    const r = await pool.query(
+      `UPDATE ratings SET branch = $1, branch_id = $2, name_status = 'matched'
+       WHERE brand_id = $3 AND name_status = 'unmatched' AND lower(regexp_replace(btrim(COALESCE(branch_raw, branch)), '\\s+', ' ', 'g')) = $4`,
+      [m.branch.name, m.branch.id, brand.id, normalize(g.raw)]);
+    fixed += r.rowCount || 0;
+  }
+  return fixed;
 }

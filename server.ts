@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
-import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRatingRow } from "./server/nameRegistry.js";
+import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRatingRow, rematchUnmatched } from "./server/nameRegistry.js";
 import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
 import { registerNameRoutes } from "./server/nameRoutes.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
@@ -4303,7 +4303,8 @@ app.post("/api/survey-records/delete", authenticateJWT, asyncHandler(async (req:
 async function startServer() {
   // Ensure database schema exists and is seeded before serving traffic
   await DB.init();
-  try { const seeded = await seedNameRegistry(); if (seeded.brandsTouched || seeded.branchesTouched) console.log(`[names] aliases added: ${seeded.brandsTouched} brand(s), ${seeded.branchesTouched} branch(es)`); }
+  try { const seeded = await seedNameRegistry(); if (seeded.brandsTouched || seeded.branchesTouched) console.log(`[names] aliases added: ${seeded.brandsTouched} brand(s), ${seeded.branchesTouched} branch(es)`);
+    const again = await rematchUnmatched(); if (again) console.log(`[names] ${again} stored review(s) matched to their branch`); }
   catch (e: any) { console.error("[names] alias seed failed (matching still works with what is stored):", e.message); }
   registerNameRoutes(app, { auth: authenticateJWT, manage: requireAdminOrSupervisor, adminOnly: (req: any, res: any, next: any) => (req.user?.role === "admin" ? next() : res.status(403).json({ error: "Admins only." })), triage: triageRating });
 

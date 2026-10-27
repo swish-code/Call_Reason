@@ -51,7 +51,7 @@ export const BRANCH_REGISTRY: RegistryBrand[] = [
     { name: "Mishref", aliases: ["Mubarak Al-Abdullah - West Mishref", "Mubarak Al-Abdullah"] },
   ] },
   { brand: "Just C", branches: [{ name: "Yard", aliases: ["Abu Hasaniya"] }] },
-  { brand: "Chili Pepper", branches: [
+  { brand: "Chili Pepper", brandAliases: ["Chili"], branches: [
     { name: "Qortuba", aliases: ["Qurtoba"] },
     { name: "Yard", aliases: ["Vibes", "Yard Mall"] },
   ] },
