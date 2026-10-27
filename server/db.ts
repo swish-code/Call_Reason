@@ -793,6 +793,8 @@ export class DB {
       -- the label the agent picked (call_result).
       ALTER TABLE options ADD COLUMN IF NOT EXISTS kind TEXT;
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS call_result TEXT;
+      -- Gender (female / male), asked on the call (2026-10-27).
+      ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS gender TEXT;
       -- Talabat partner-portal Order report, one row per Kuwait day (YYYY-MM-DD), uploaded each morning by
       -- the talabat-export tool. The CSV is kept gzipped, and its summary (see server/talabat.ts) beside it.
       -- A re-upload of the same day replaces it. Admin only.

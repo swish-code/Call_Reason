@@ -20,7 +20,7 @@ export default function OfferCustomerEdit({ row: initial, camp, agents, onClose,
   const [row, setRow] = useState<any>(initial);          // follows the customer after an order is removed here
   const [msg, setMsg] = useState("");
   const [v, setV] = useState({
-    name: row.customer_name || "", phone: row.phone || "", agent: row.assigned_agent_id || "", contact: fmtDay(row.contact_date) || "",
+    name: row.customer_name || "", gender: row.gender || "", phone: row.phone || "", agent: row.assigned_agent_id || "", contact: fmtDay(row.contact_date) || "",
     churn: row.churn_reason || "", comment: row.comment || "", start: row.eligibility?.starts || "", end: row.eligibility?.expires || "", note: "",
   });
   const set = (k: keyof typeof v, val: string) => setV((p) => ({ ...p, [k]: val }));
@@ -71,7 +71,7 @@ export default function OfferCustomerEdit({ row: initial, camp, agents, onClose,
       const status = statusTouched && picked ? (picked.builtin ? { status_changed: true, call_status: picked.kind } : { status_changed: true, result_id: picked.id }) : {};
       const res = await apiFetch(`/api/offer-campaigns/customers/${row.id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_name: v.name, phone: v.phone, agent_id: v.agent || null, contact_date: v.contact || null, churn_reason: v.churn, comment: v.comment,
+        body: JSON.stringify({ customer_name: v.name, gender: v.gender || null, phone: v.phone, agent_id: v.agent || null, contact_date: v.contact || null, churn_reason: v.churn, comment: v.comment,
           offer_start: v.start || null, offer_end: v.end || null, note: v.note, ...status }),
       });
       const d = await res.json().catch(() => ({}));
@@ -110,6 +110,13 @@ export default function OfferCustomerEdit({ row: initial, camp, agents, onClose,
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <L label="Customer name"><input value={v.name} onChange={(e) => set("name", e.target.value)} dir="auto" className={inputCls} /></L>
+            <L label="Gender">
+              <select value={v.gender} onChange={(e) => set("gender", e.target.value)} className={inputCls + " [&>option]:bg-[var(--surface)]"}>
+                <option value="">— not set —</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
+            </L>
             <L label="Phone"><input value={v.phone} onChange={(e) => set("phone", e.target.value)} dir="ltr" className={inputCls + " font-mono"} /></L>
             <L label="Status">
               <select value={statusId} onChange={(e) => pickStatus(e.target.value)} disabled={!lists.loaded || hasOrders} className={inputCls + " font-bold disabled:opacity-60 [&>option]:bg-[var(--surface)]"}>

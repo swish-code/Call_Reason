@@ -96,6 +96,15 @@ async function setName(c: any, raw: any, user: any): Promise<{ from: string | nu
   return { from: c.customer_name || null, to: name };
 }
 
+// Gender (female / male), asked on the call. Returns the old and new value when it changed.
+async function setGender(c: any, raw: any, user: any): Promise<{ from: string | null; to: string } | null> {
+  const g = raw === "female" || raw === "male" ? raw : "";
+  if (!g || g === (c.gender || "")) return null;
+  await DB.query(`UPDATE offer_customers SET gender = $2 WHERE id = $1`, [c.id, g]);
+  await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "gender", user, details: { from: c.gender || null, to: g } });
+  return { from: c.gender || null, to: g };
+}
+
 export function registerOfferRoutes(app: any, d: Deps) {
   const { authenticateJWT, asyncHandler } = d;
   const canCall = (u: any) => !!u && u.role !== "marketing" && !d.OPS_ROLES.has(u.role);
@@ -257,7 +266,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     // A colleague (not the customer's agent) recorded a call or an order on the customer.
     if (q("helped") === "1") where.push(`oc.assigned_agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM offer_events e WHERE e.customer_id = oc.id AND e.kind IN ('call','order') AND e.user_id <> oc.assigned_agent_id)`);
     const rows = await DB.query(`
-      SELECT oc.id, oc.phone, oc.customer_name, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
+      SELECT oc.id, oc.phone, oc.customer_name, oc.gender, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
              oc.contact_date, oc.call_status, oc.call_result, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
              oc.offer_started_at, oc.offer_expires_at,
              COALESCE((SELECT json_agg(json_build_object('id', o.id, 'step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number, 'logged_by_name', o.logged_by_name) ORDER BY o.step)
@@ -395,7 +404,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
       details: { ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}), ...(keepOrdered && status !== "ordered" ? { stays_ordered: true } : {}),
         ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
     const named = await setName(c, b.customer_name, req.user);
-    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
+    const gendered = await setGender(c, b.gender, req.user);
+    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${gendered ? `, gender set to ${gendered.to}` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
     res.json(await loadCustomer(c.id));
   }));
 
@@ -403,9 +413,12 @@ export function registerOfferRoutes(app: any, d: Deps) {
   app.patch(`${B}/customers/:id`, authenticateJWT, CALL, asyncHandler(async (req, res) => {
     const c = (await DB.query(`SELECT * FROM offer_customers WHERE id = $1`, [req.params.id]))[0];
     if (!c) return res.status(404).json({ error: "Customer not found." });
-    if (typeof req.body?.customer_name !== "string" || !req.body.customer_name.trim()) return res.status(400).json({ error: "Type the customer's name." });
-    const named = await setName(c, req.body.customer_name, req.user);
-    if (named) req.auditExtra = { details: `${c.phone} — customer name`, previous_value: named.from || "(none)", new_value: named.to };
+    const hasName = typeof req.body?.customer_name === "string" && req.body.customer_name.trim();
+    const hasGender = req.body?.gender === "female" || req.body?.gender === "male";
+    if (!hasName && !hasGender) return res.status(400).json({ error: "Type the customer's name or pick the gender." });
+    const named = hasName ? await setName(c, req.body.customer_name, req.user) : null;
+    const gendered = hasGender ? await setGender(c, req.body.gender, req.user) : null;
+    if (named || gendered) req.auditExtra = { details: `${c.phone} — ${[named && "customer name", gendered && "gender"].filter(Boolean).join(" and ")}`, previous_value: named ? named.from || "(none)" : gendered!.from || "(none)", new_value: named ? named.to : gendered!.to };
     res.json(await loadCustomer(c.id));
   }));
 
@@ -430,6 +443,10 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (b.customer_name !== undefined) {
       const n = text(b.customer_name, 120);
       if (n !== (c.customer_name || null)) { col("customer_name", n); changes.push({ field: "Name", from: c.customer_name, to: n }); }
+    }
+    if (b.gender !== undefined) {
+      const g = b.gender === "female" || b.gender === "male" ? b.gender : null;
+      if (g !== (c.gender || null)) { col("gender", g); changes.push({ field: "Gender", from: c.gender, to: g }); }
     }
     if (b.phone !== undefined) {
       const key = DB.dncKey(String(b.phone || ""));

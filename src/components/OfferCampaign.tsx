@@ -268,8 +268,8 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   const exportXlsx = () => {
     const extraKeys: string[] = [...new Set<string>(rows.flatMap((r: any) => Object.keys(r.extra || {})))];
     return downloadXlsx(
-      ["Uploaded Day", "Date of contact", "Customer Name", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
-      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.phone, statusText(r), fmtDay(r.first_call_at),
+      ["Uploaded Day", "Date of contact", "Customer Name", "Gender", "Phone number", "Call status", "1st Call Date", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
+      rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.gender === "female" ? "Female" : r.gender === "male" ? "Male" : "", r.phone, statusText(r), fmtDay(r.first_call_at),
         ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "",
         handlersFrom(r.work || []).map((h) => `${h.name}: ${h.actions.join(", ")}`).join(" | "), colleagueWorked(handlersFrom(r.work || []), r.assigned_agent_id) ? "Yes" : "",
         r.churn_reason || "", r.comment || "",

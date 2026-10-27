@@ -17,7 +17,7 @@ export interface OfferEvent {
   comment: string | null; details: any; user_id?: string | null; user_name: string | null; created_at: string;
 }
 export interface OfferCustomer {
-  id: string; campaign_id: string; phone: string; customer_name: string | null; extra: Record<string, string> | null;
+  id: string; campaign_id: string; phone: string; customer_name: string | null; gender?: string | null; extra: Record<string, string> | null;
   uploaded_at: string; uploaded_by_name: string | null; assigned_agent_id: string | null; agent_name?: string | null;
   contact_date: string | null; call_status: string; call_result?: string | null; attempts: number; first_call_at: string | null; first_call_agent_name?: string | null;
   last_call_at: string | null; churn_reason: string | null; comment: string | null; offer_started_at: string | null; offer_expires_at: string | null;
