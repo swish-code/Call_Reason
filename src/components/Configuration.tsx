@@ -6,6 +6,8 @@ import { Settings, Plus, Trash, Pencil, Check, X, ChevronUp, ChevronDown, Eye, E
 
 interface ConfigurationProps {
   currentUser: User;
+  /** Call Center supervisors see only the Shakir campaign's call-form lists. */
+  shakirOnly?: boolean;
 }
 
 // ---- Generic option list card (add / edit / delete / disable / reorder) ----
@@ -209,7 +211,7 @@ const BranchCard: React.FC<BranchCardProps> = ({ branches, brands, onChange }) =
   );
 };
 
-export default function Configuration({ currentUser }: ConfigurationProps) {
+export default function Configuration({ currentUser, shakirOnly = false }: ConfigurationProps) {
   const [options, setOptions] = useState<DropdownOption[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -221,13 +223,16 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
     try {
       setLoading(true); setError("");
       const [ro, rb, rbr, rc] = await Promise.all([
-        apiFetch("/api/options"), apiFetch("/api/brands"), apiFetch("/api/branches"), apiFetch("/api/categories"),
+        apiFetch("/api/options"),
+        shakirOnly ? Promise.resolve(null) : apiFetch("/api/brands"),
+        shakirOnly ? Promise.resolve(null) : apiFetch("/api/branches"),
+        shakirOnly ? Promise.resolve(null) : apiFetch("/api/categories"),
       ]);
       if (!ro.ok) throw new Error("Failed to load configuration options.");
       setOptions(await ro.json());
-      if (rb.ok) setBrands(await rb.json());
-      if (rbr.ok) setBranches(await rbr.json());
-      if (rc.ok) setCategories(await rc.json());
+      if (rb?.ok) setBrands(await rb.json());
+      if (rbr?.ok) setBranches(await rbr.json());
+      if (rc?.ok) setCategories(await rc.json());
     } catch (err: any) {
       setError(err.message || "Connection error.");
     } finally {
@@ -243,8 +248,8 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
         <div className="flex items-center gap-3">
           <div className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl"><Settings className="w-6 h-6" /></div>
           <div>
-            <h2 className="text-md font-extrabold text-[var(--heading)]">System Configuration</h2>
-            <p className="text-xs text-[var(--muted)] font-light mt-0.5">Manage every dropdown list used across the system. Changes apply to all forms on their next load.</p>
+            <h2 className="text-md font-extrabold text-[var(--heading)]">{shakirOnly ? "Call form settings" : "System Configuration"}</h2>
+            <p className="text-xs text-[var(--muted)] font-light mt-0.5">{shakirOnly ? "Edit the dropdowns the agents fill in after each Shakir campaign call. Changes apply to the form on its next load." : "Manage every dropdown list used across the system. Changes apply to all forms on their next load."}</p>
           </div>
         </div>
         <button onClick={fetchAll} className="p-3 text-[var(--muted)] hover:text-[var(--heading)] bg-[var(--bg)] hover:bg-[var(--surface)] border border-[var(--border)] rounded-2xl active:scale-95 transition" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
@@ -261,12 +266,12 @@ export default function Configuration({ currentUser }: ConfigurationProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {CONFIGURABLE_LISTS.map((meta) => (
+          {!shakirOnly && CONFIGURABLE_LISTS.map((meta) => (
             <OptionListCard key={meta.key} meta={meta} items={options.filter((o) => o.list_key === meta.key)} onChange={fetchAll} />
           ))}
-          <SimpleEntityCard title="Brands" description="Brand options used across the system" items={brands} labelField="brand_name" base="/api/brands" onChange={fetchAll} />
-          <BranchCard branches={branches} brands={brands} onChange={fetchAll} />
-          <SimpleEntityCard title="Categories" description="Case category options" items={categories} labelField="category_name" base="/api/categories" onChange={fetchAll} />
+          {!shakirOnly && <SimpleEntityCard title="Brands" description="Brand options used across the system" items={brands} labelField="brand_name" base="/api/brands" onChange={fetchAll} />}
+          {!shakirOnly && <BranchCard branches={branches} brands={brands} onChange={fetchAll} />}
+          {!shakirOnly && <SimpleEntityCard title="Categories" description="Case category options" items={categories} labelField="category_name" base="/api/categories" onChange={fetchAll} />}
           <div className="md:col-span-2 xl:col-span-3 pt-2">
             <h3 className="text-sm font-extrabold text-[var(--heading)]">Shakir Campaign — the agent's call form</h3>
             <p className="text-[11px] text-[var(--muted)] mt-0.5 font-light">The two dropdowns the agent fills in after each call. Renaming or disabling an option does not change calls already saved.</p>

@@ -445,7 +445,7 @@ export default function App() {
     ] },
     { type: "group", key: "admin", label: "Administration", icon: ShieldAlert, items: [
       { page: "users", label: "User Management", icon: ShieldAlert, visible: isAdmin || isManager, accent: "amber" },
-      { page: "configuration", label: "Configuration", icon: SlidersHorizontal, visible: isAdmin },
+      { page: "configuration", label: isSupervisor ? "Call form settings" : "Configuration", icon: SlidersHorizontal, visible: isAdmin || isSupervisor },
       { page: "audit", label: "Audit", icon: FileSearch, visible: isAdmin || isSupervisor },
     ] },
   ];
@@ -609,7 +609,7 @@ export default function App() {
               {activePage === "talabat" && "Delivery Platforms"}
               {activePage === "users" && "User and Access Role Management"}
               {activePage === "audit" && "Audit"}
-              {activePage === "configuration" && "System Configuration"}
+              {activePage === "configuration" && (isSupervisor ? "Call form settings" : "System Configuration")}
               {activePage === "newlog" && "New Log"}
               {activePage === "logs" && "Operations Logs"}
               {activePage === "history" && "History Logs — Audit Trail"}
@@ -719,7 +719,7 @@ export default function App() {
             <AuditPage currentUser={currentUser} />
           )}
           {activePage === "configuration" && currentUser.role !== "marketing" && !isOpsRole && (
-            <Configuration currentUser={currentUser} />
+            <Configuration currentUser={currentUser} shakirOnly={isSupervisor} />
           )}
           {activePage === "newlog" && currentUser.role !== "marketing" && !isOpsRole && (
             <OpsLogForm currentUser={currentUser} onDone={() => setActivePage("logs")} />

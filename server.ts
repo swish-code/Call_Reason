@@ -628,16 +628,28 @@ app.delete("/api/branches/:id", authenticateJWT, requireBranchManage, asyncHandl
 // Dropdown Options API (Configuration page)
 // ----------------------------------------------------
 // Full list (incl. inactive) for the Configuration screen
-app.get("/api/options", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
-  res.json(await DB.getAllOptions());
+// Call Center supervisors may manage only the Shakir campaign's call-form lists (offer_*); admins and leaders all lists.
+const requireOptionsManager = (req: any, res: any, next: any) => {
+  const role = req.user?.role;
+  if (role === "admin" || role === "leader" || role === "supervisor") return next();
+  res.status(403).json({ error: "Sorry, this action is restricted to Team Leaders or Admins." });
+};
+const mayEditList = (req: any, listKey: any) =>
+  req.user?.role !== "supervisor" || (typeof listKey === "string" && listKey.startsWith("offer_"));
+const SUPERVISOR_LIST_DENIED = { error: "Supervisors can only change the Shakir campaign call-form lists." };
+
+app.get("/api/options", authenticateJWT, requireOptionsManager, asyncHandler(async (req, res) => {
+  const all = await DB.getAllOptions();
+  res.json(req.user.role === "supervisor" ? all.filter((o: any) => String(o.list_key).startsWith("offer_")) : all);
 }));
 
 // Reorder a list — defined before "/:id" routes (POST, distinct path)
-app.post("/api/options/reorder", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+app.post("/api/options/reorder", authenticateJWT, requireOptionsManager, asyncHandler(async (req, res) => {
   const { list_key, ids } = req.body;
   if (!list_key || !Array.isArray(ids)) {
     return res.status(400).json({ error: "list_key and ids[] are required." });
   }
+  if (!mayEditList(req, list_key)) return res.status(403).json(SUPERVISOR_LIST_DENIED);
   await DB.reorderOptions(list_key, ids);
   res.json({ message: "Reordered successfully" });
 }));
@@ -647,19 +659,21 @@ app.get("/api/options/:key", authenticateJWT, asyncHandler(async (req, res) => {
   res.json(await DB.getOptionsByKey(req.params.key, true));
 }));
 
-app.post("/api/options", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+app.post("/api/options", authenticateJWT, requireOptionsManager, asyncHandler(async (req, res) => {
   const { list_key, label, kind } = req.body;
   if (!list_key || !label || !label.trim()) {
     return res.status(400).json({ error: "list_key and a non-empty label are required." });
   }
+  if (!mayEditList(req, list_key)) return res.status(403).json(SUPERVISOR_LIST_DENIED);
   // A Shakir campaign call result must say which built-in status it works like (the rules run on that).
   if (list_key === OFFER_RESULT_LIST && !RESULT_KINDS.includes(kind)) return res.status(400).json({ error: "Pick what this result works like." });
   const option = await DB.addOption(list_key, label.trim(), list_key === OFFER_RESULT_LIST ? kind : null);
   res.status(201).json(option);
 }));
 
-app.put("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+app.put("/api/options/:id", authenticateJWT, requireOptionsManager, asyncHandler(async (req, res) => {
   const { label, active, sort_order } = req.body;
+  if (req.user.role === "supervisor" && !mayEditList(req, (await DB.getOption(req.params.id))?.list_key)) return res.status(403).json(SUPERVISOR_LIST_DENIED);
   let kind: string | undefined;
   if (req.body.kind !== undefined) {
     const opt = await DB.getOption(req.params.id);
@@ -678,7 +692,8 @@ app.put("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(
   res.json(updated);
 }));
 
-app.delete("/api/options/:id", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req, res) => {
+app.delete("/api/options/:id", authenticateJWT, requireOptionsManager, asyncHandler(async (req, res) => {
+  if (req.user.role === "supervisor" && !mayEditList(req, (await DB.getOption(req.params.id))?.list_key)) return res.status(403).json(SUPERVISOR_LIST_DENIED);
   const success = await DB.deleteOption(req.params.id);
   if (success) {
     res.json({ message: "Option deleted successfully" });

@@ -474,7 +474,7 @@ function SettingsTab({ camp, onSaved }: { camp: Campaign; onSaved: () => void })
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Script — Arabic<textarea dir="rtl" rows={16} value={v.script_ar} onChange={(e) => setV({ ...v, script_ar: e.target.value })} className={ta} /></label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Script — English<textarea rows={16} value={v.script_en} onChange={(e) => setV({ ...v, script_en: e.target.value })} className={ta} /></label>
       </div>
-      <p className="text-[11px] text-[var(--muted)]">The <b>Result of the call</b> and <b>Churn reason</b> lists on the agent's form are edited by admins in <b>Configuration → Shakir Campaign</b>.</p>
+      <p className="text-[11px] text-[var(--muted)]">The <b>Result of the call</b> and <b>Churn reason</b> lists on the agent's form are edited by admins in <b>Configuration → Shakir Campaign</b> and by supervisors in <b>Call form settings</b>.</p>
       <Err text={error} /><Ok text={msg} />
       <button onClick={save} disabled={busy} className="px-5 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
     </div>
