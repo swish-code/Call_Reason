@@ -2134,6 +2134,10 @@ const normalisePhone = (p: string): string => p ? p.replace(/[\s\-\(\)\.]/g, "")
 const normaliseExcelDate = (v: string): string => {
   if (!v) return "";
   const s = String(v).trim();
+  if (/^\d{8}$/.test(s)) {   // 20261025 (Keeta exports)
+    const y = Number(s.slice(0, 4)), m = Number(s.slice(4, 6)), d = Number(s.slice(6, 8));
+    if (y >= 1990 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  }
   if (/^\d{4,6}(\.\d+)?$/.test(s)) {
     const serial = Number(s);
     if (serial > 20000 && serial < 90000) {
@@ -2166,9 +2170,29 @@ const triageRating = (ratingVal: number, reviewText: string | undefined, phone: 
   const isTask = hasComment || (ratingVal <= 3 && !!phone);
   return { isTask, action_status: isTask ? "pending" : "no_action_needed", requires_action: isTask };
 };
-// Talabat's own export has no Restaurant / Platform columns: the brand and branch share the "Vendor Name (English)" cell.
-const vendorOf = (r: Record<string, any>) => pick(r, "Vendor Name (English)", "Vendor Name", "Vendor");
-const platformOf = (r: Record<string, any>) => pick(r, "Platform") || (vendorOf(r) ? "Talabat" : "");
+// Talabat's and Keeta's own exports have no Restaurant / Platform columns: the brand and branch share one cell
+// ("Tabel, Ardhiya" / "Tabel(Ardiya)"). A lone "-" in a cell means empty there.
+const dash = (s: string) => (/^[-\u2013\u2014]$/.test(String(s).trim()) ? "" : s);
+const vendorOf = (r: Record<string, any>) => pick(r, "Vendor Name (English)", "Vendor Name", "Vendor", "Store name");
+const platformOf = (r: Record<string, any>) => pick(r, "Platform")
+  || (pick(r, "Vendor Name (English)", "Vendor Name") ? "Talabat" : (pick(r, "Store name") && /keeta/i.test(pick(r, "Order type") || "keeta") ? "Keeta" : ""));
+const rateOf = (r: Record<string, any>) => dash(pick(r, "Rate", "Rating (1-5)", "Rating", "Avg. Order Rating (Original)", "Review score"));
+// Some exporters write a wrong sheet size (the Keeta file says A1:A100001 for 14 columns), which would read column A only.
+const readSheetRows = (buf: Buffer): Record<string, any>[] => {
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (ws["!ref"]) {
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    for (const k in ws) {
+      if (k.charCodeAt(0) === 33) continue;   // "!ref", "!cols"...
+      const c = XLSX.utils.decode_cell(k);
+      if (c.c > range.e.c) range.e.c = c.c;
+      if (c.r > range.e.r) range.e.r = c.r;
+    }
+    ws["!ref"] = XLSX.utils.encode_range(range);
+  }
+  return XLSX.utils.sheet_to_json(ws, { defval: "" });
+};
 
 // Excel template (returns base64 xlsx)
 app.get("/api/ratings/template", authenticateJWT, requireUpload, asyncHandler(async (_req, res) => {
@@ -2185,10 +2209,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   const { file, mode = "skip" } = req.body;
   if (!file) return res.status(400).json({ error: "No file provided." });
 
-  const buf = Buffer.from(file, "base64");
-  const wb = XLSX.read(buf, { type: "buffer" });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  const rows = readSheetRows(Buffer.from(file, "base64"));
 
   const cat = await loadCatalog();
   const platforms = await DB.getPlatforms();
@@ -2214,6 +2235,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const plat = platformOf(r).trim().toLowerCase();
       const oid = pick(r, "Order ID", "OrderID", "Order").trim();
       if (!plat || !oid) continue;
+      if (rateOf(r) === "") continue;                          // nobody rated it: it will not be recorded
       if (normalisePhone(pick(r, "Phone Number"))) continue;   // already has one
       if (!wanted.has(plat)) wanted.set(plat, new Set());
       wanted.get(plat)!.add(oid);
@@ -2236,7 +2258,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const brandName = pick(r, "Restaurant", "Brand") || vendorOf(r);
       const platformName = platformOf(r);
       const orderId = pick(r, "Order ID", "OrderID", "Order");
-      const rateRaw = pick(r, "Rate", "Rating (1-5)", "Rating", "Avg. Order Rating (Original)");
+      const rateRaw = rateOf(r);
       const ratingVal = Math.round(Number(String(rateRaw).replace(/[^0-9.]/g, "")));
 
       if (!brandName) { reject("Missing Restaurant/Brand."); continue; }
@@ -2244,8 +2266,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       if (!orderId) { reject("Missing Order ID."); continue; }
       // An order nobody rated is not a review: nothing to record (the exports list every order, rated or not).
       if (rateRaw === "") {
-        result.no_rating++;
-        issues.push({ ...base, reason: "no_rating", detail: "The order has no rating, so there is no review to record" });
+        result.no_rating++;   // counted only: exports list every order, so listing each one would bury the real issues
         continue;
       }
       if (!ratingVal || ratingVal < 1 || ratingVal > 5) { reject(`Invalid rate: ${rateRaw}`); continue; }
@@ -2253,7 +2274,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const platform_id = platMap.get(platformName.toLowerCase());
       if (!platform_id) { reject(`Unknown platform: ${platformName}`); continue; }
 
-      const review_text = pick(r, "Customer Comment", "Rating Review");
+      const review_text = dash(pick(r, "Customer Comment", "Rating Review", "Review content"));
       let phone = normalisePhone(pick(r, "Phone Number"));
       let enrichedName = "";
       if (!phone) {
@@ -2273,7 +2294,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const names = resolveNames(cat, brandName, pick(r, "Branch"));
       const rowFields = {
         platform_id, order_id: orderId, rating: ratingVal, review_text: review_text || undefined, customer_phone: phone || undefined,
-        order_date: normaliseExcelDate(pick(r, "Date", "Order Rating Date")) || undefined,
+        order_date: normaliseExcelDate(dash(pick(r, "Date", "Order Rating Date"))) || undefined,
         customer_name: pick(r, "Customer Name") || enrichedName || undefined,
         filled_by: pick(r, "Served By", "Filled By") || undefined,
         following_date: normaliseExcelDate(pick(r, "Following Date")) || undefined,
