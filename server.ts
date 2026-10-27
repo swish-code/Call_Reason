@@ -6,6 +6,9 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { DB, type UploadIssueRow } from "./server/db.js";
+import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRatingRow } from "./server/nameRegistry.js";
+import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
+import { registerNameRoutes } from "./server/nameRoutes.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
@@ -2157,6 +2160,16 @@ const requireUpload = async (req: any, res: any, next: any) => {
   return res.status(403).json({ error: "Upload permission required." });
 };
 
+// A review is a task for the call center when it has a comment, or is 1-3 stars with a phone; anything else closes itself.
+const triageRating = (ratingVal: number, reviewText: string | undefined, phone: string) => {
+  const hasComment = !!(reviewText && reviewText.trim());
+  const isTask = hasComment || (ratingVal <= 3 && !!phone);
+  return { isTask, action_status: isTask ? "pending" : "no_action_needed", requires_action: isTask };
+};
+// Talabat's own export has no Restaurant / Platform columns: the brand and branch share the "Vendor Name (English)" cell.
+const vendorOf = (r: Record<string, any>) => pick(r, "Vendor Name (English)", "Vendor Name", "Vendor");
+const platformOf = (r: Record<string, any>) => pick(r, "Platform") || (vendorOf(r) ? "Talabat" : "");
+
 // Excel template (returns base64 xlsx)
 app.get("/api/ratings/template", authenticateJWT, requireUpload, asyncHandler(async (_req, res) => {
   const headers = ["Date","Restaurant","Platform","Customer Name","Phone Number","Branch","Order ID","Customer Comment","Rate","Served By","Following Date","Surveyed By","Type of Complaint","Complaint Cases","Note"];
@@ -2177,9 +2190,8 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-  const brands = await DB.getBrands();
+  const cat = await loadCatalog();
   const platforms = await DB.getPlatforms();
-  const brandMap = new Map(brands.map((b) => [b.brand_name.toLowerCase(), b.id]));
   const platMap = new Map(platforms.map((p) => [p.name.toLowerCase(), p.id]));
 
   // Eligible agents for auto-assign: active Call Center agents, distributed even round-robin.
@@ -2189,7 +2201,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
     .map((u: any) => u.id);
   let rrPointer = 0;
 
-  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, enriched: 0, errors: [] as { row: number; message: string }[] };
+  const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, enriched: 0, no_rating: 0, held: 0, branch_fixed: 0, branch_unmatched: 0, errors: [] as { row: number; message: string }[] };
   const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
 
   // Fill missing phones from our own scrapers BEFORE the triage below, because
@@ -2199,7 +2211,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   {
     const wanted = new Map<string, Set<string>>();   // platform (lower) -> order ids
     for (const r of rows) {
-      const plat = pick(r, "Platform").trim().toLowerCase();
+      const plat = platformOf(r).trim().toLowerCase();
       const oid = pick(r, "Order ID", "OrderID", "Order").trim();
       if (!plat || !oid) continue;
       if (normalisePhone(pick(r, "Phone Number"))) continue;   // already has one
@@ -2217,27 +2229,31 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const lineNum = i + 2;
-    const base = { row: lineNum, phone: pick(r, "Phone Number") || null, brand: pick(r, "Restaurant", "Brand") || null,
+    const base = { row: lineNum, phone: pick(r, "Phone Number") || null, brand: pick(r, "Restaurant", "Brand") || vendorOf(r) || null,
       order_id: pick(r, "Order ID", "OrderID", "Order") || null, customer_name: pick(r, "Customer Name") || null };
     const reject = (message: string) => { result.errors.push({ row: lineNum, message }); issues.push({ ...base, reason: "error", detail: message }); };
     try {
-      const brandName = pick(r, "Restaurant", "Brand");
-      const platformName = pick(r, "Platform");
+      const brandName = pick(r, "Restaurant", "Brand") || vendorOf(r);
+      const platformName = platformOf(r);
       const orderId = pick(r, "Order ID", "OrderID", "Order");
-      const rateRaw = pick(r, "Rate", "Rating (1-5)", "Rating");
+      const rateRaw = pick(r, "Rate", "Rating (1-5)", "Rating", "Avg. Order Rating (Original)");
       const ratingVal = Math.round(Number(String(rateRaw).replace(/[^0-9.]/g, "")));
 
       if (!brandName) { reject("Missing Restaurant/Brand."); continue; }
       if (!platformName) { reject("Missing Platform."); continue; }
       if (!orderId) { reject("Missing Order ID."); continue; }
+      // An order nobody rated is not a review: nothing to record (the exports list every order, rated or not).
+      if (rateRaw === "") {
+        result.no_rating++;
+        issues.push({ ...base, reason: "no_rating", detail: "The order has no rating, so there is no review to record" });
+        continue;
+      }
       if (!ratingVal || ratingVal < 1 || ratingVal > 5) { reject(`Invalid rate: ${rateRaw}`); continue; }
 
-      const brand_id = brandMap.get(brandName.toLowerCase());
-      if (!brand_id) { reject(`Unknown brand: ${brandName}`); continue; }
       const platform_id = platMap.get(platformName.toLowerCase());
       if (!platform_id) { reject(`Unknown platform: ${platformName}`); continue; }
 
-      const review_text = pick(r, "Customer Comment");
+      const review_text = pick(r, "Customer Comment", "Rating Review");
       let phone = normalisePhone(pick(r, "Phone Number"));
       let enrichedName = "";
       if (!phone) {
@@ -2251,9 +2267,34 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       //   AUTO CLOSE = everything else: 4-5 with no comment, or a 1-3 with no comment and no phone
       //                -> no_action_needed, hidden from the Reviews list, counted in reports only
       const hasComment = !!(review_text && review_text.trim());
-      const isTask = hasComment || (ratingVal <= 3 && !!phone);
-      const action_status = isTask ? "pending" : "no_action_needed";
-      const requires_action = isTask;
+      const { isTask, action_status, requires_action } = triageRating(ratingVal, review_text, phone);
+
+      // Which brand and branch the file means: spellings differ between sources, so names are resolved here, not by the staff.
+      const names = resolveNames(cat, brandName, pick(r, "Branch"));
+      const rowFields = {
+        platform_id, order_id: orderId, rating: ratingVal, review_text: review_text || undefined, customer_phone: phone || undefined,
+        order_date: normaliseExcelDate(pick(r, "Date", "Order Rating Date")) || undefined,
+        customer_name: pick(r, "Customer Name") || enrichedName || undefined,
+        filled_by: pick(r, "Served By", "Filled By") || undefined,
+        following_date: normaliseExcelDate(pick(r, "Following Date")) || undefined,
+        surveyed_by: pick(r, "Surveyed By", "Surved by") || undefined,
+        complaint_type: pick(r, "Type of Complaint", "Type of complain", "Complaint Type") || undefined,
+        complaint_cases: pick(r, "Complaint Cases") || undefined,
+        complaint_status: pick(r, "Note", "Complaint Status") || undefined,
+        served_by: pick(r, "Served By", "Filled By") || undefined,
+        raw_branch: names.rawBranch || undefined,
+      };
+      if (!names.brand) {
+        // Never lose the row: it waits (name and all) until someone says which brand that spelling is.
+        const sp = splitVendor(brandName);
+        await holdRatingRow(uploadBatchId, sp.brand, { ...rowFields, raw_branch: names.rawBranch || sp.rest || undefined, uploaded_by: req.user.id });
+        result.held++;
+        issues.push({ ...base, reason: "brand_held", detail: `Brand "${brandName}" is not one we know yet — the review is kept and waits for someone to say which brand it is (Reviews → Names to fix)` });
+        continue;
+      }
+      const brand_id = names.brand.id;
+      const linkedBranch = names.match?.status === "matched" ? names.match.branch : null;
+      const branchValue = linkedBranch ? linkedBranch.name : (names.rawBranch || undefined);
       // Even round-robin across active Call Center agents (task rows only).
       let assigned_agent_id: string | null = null;
       if (isTask && ccAgentIds.length) {
@@ -2266,19 +2307,24 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
         review_text: review_text || undefined,
         customer_phone: phone || undefined,
         requires_action, action_status, assigned_agent_id, uploaded_by: req.user.id,
-        order_date: normaliseExcelDate(pick(r, "Date")) || undefined,
-        customer_name: pick(r, "Customer Name") || enrichedName || undefined,
-        branch: pick(r, "Branch") || undefined,
-        filled_by: pick(r, "Served By", "Filled By") || undefined,
-        following_date: normaliseExcelDate(pick(r, "Following Date")) || undefined,
-        surveyed_by: pick(r, "Surveyed By", "Surved by") || undefined,
-        complaint_type: pick(r, "Type of Complaint", "Type of complain", "Complaint Type") || undefined,
-        complaint_cases: pick(r, "Complaint Cases") || undefined,
-        complaint_status: pick(r, "Note", "Complaint Status") || undefined,
-        served_by: pick(r, "Served By", "Filled By") || undefined,
+        order_date: rowFields.order_date,
+        customer_name: rowFields.customer_name,
+        branch: branchValue,
+        filled_by: rowFields.filled_by,
+        following_date: rowFields.following_date,
+        surveyed_by: rowFields.surveyed_by,
+        complaint_type: rowFields.complaint_type,
+        complaint_cases: rowFields.complaint_cases,
+        complaint_status: rowFields.complaint_status,
+        served_by: rowFields.served_by,
         upload_batch_id: uploadBatchId,
       }, mode as "skip" | "overwrite");
 
+      if (outcome !== "skipped" && names.rawBranch) {
+        await stampRatingNames({ brand_id, platform_id, order_id: orderId }, { branch: branchValue || null, branch_raw: names.rawBranch, branch_id: linkedBranch?.id ?? null, status: linkedBranch ? "matched" : "unmatched" });
+        if (!linkedBranch) result.branch_unmatched++;
+        else if (normalizeName(names.rawBranch) !== normalizeName(linkedBranch.name)) result.branch_fixed++;
+      }
       if (outcome === "inserted") result.inserted++;
       else if (outcome === "skipped") {
         result.duplicates++;
@@ -2298,7 +2344,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
     total_rows: result.total, inserted: result.inserted + result.overwritten,
     skipped: result.duplicates, errors: result.errors.length, tasks: result.tasks,
-    skip_breakdown: { already_uploaded: result.duplicates, error: result.errors.length },
+    skip_breakdown: { already_uploaded: result.duplicates, error: result.errors.length, ...(result.no_rating ? { no_rating: result.no_rating } : {}), ...(result.held ? { brand_held: result.held } : {}) },
     issue_rows: issues,
   });
   res.json(result);
@@ -2850,6 +2896,8 @@ const uploadIssueLabel = (reason: string): string => ({
   already_queued: "Already in the survey queue",
   do_not_call: "Customer asked not to be called again",
   already_uploaded: "Review already uploaded",
+  no_rating: "Order has no rating",
+  brand_held: "Brand not known yet — kept, waiting",
   empty_row: "Empty row",
   error: "Rejected (error)",
 } as Record<string, string>)[reason] || reason;
@@ -4215,6 +4263,9 @@ app.post("/api/survey-records/delete", authenticateJWT, asyncHandler(async (req:
 async function startServer() {
   // Ensure database schema exists and is seeded before serving traffic
   await DB.init();
+  try { const seeded = await seedNameRegistry(); if (seeded.brandsTouched || seeded.branchesTouched) console.log(`[names] aliases added: ${seeded.brandsTouched} brand(s), ${seeded.branchesTouched} branch(es)`); }
+  catch (e: any) { console.error("[names] alias seed failed (matching still works with what is stored):", e.message); }
+  registerNameRoutes(app, { auth: authenticateJWT, manage: requireAdminOrSupervisor, adminOnly: (req: any, res: any, next: any) => (req.user?.role === "admin" ? next() : res.status(403).json({ error: "Admins only." })), triage: triageRating });
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

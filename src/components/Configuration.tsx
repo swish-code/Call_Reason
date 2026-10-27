@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { User, DropdownOption, CONFIGURABLE_LISTS, Brand, Branch, Category } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { RESULT_KIND_HELP } from "../lib/offers.ts";
+import NameAliasesEditor from "./NameAliasesEditor.tsx";
 import { Settings, Plus, Trash, Pencil, Check, X, ChevronUp, ChevronDown, Eye, EyeOff, RefreshCw, ListChecks, AlertCircle } from "lucide-react";
 
 interface ConfigurationProps {
@@ -271,6 +272,7 @@ export default function Configuration({ currentUser, shakirOnly = false }: Confi
           ))}
           {!shakirOnly && <SimpleEntityCard title="Brands" description="Brand options used across the system" items={brands} labelField="brand_name" base="/api/brands" onChange={fetchAll} />}
           {!shakirOnly && <BranchCard branches={branches} brands={brands} onChange={fetchAll} />}
+          {!shakirOnly && currentUser.role === "admin" && <NameAliasesEditor />}
           {!shakirOnly && <SimpleEntityCard title="Categories" description="Case category options" items={categories} labelField="category_name" base="/api/categories" onChange={fetchAll} />}
           <div className="md:col-span-2 xl:col-span-3 pt-2">
             <h3 className="text-sm font-extrabold text-[var(--heading)]">Shakir Campaign — the agent's call form</h3>

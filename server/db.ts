@@ -21,7 +21,7 @@ if (!connectionString) {
 // connecting through the public proxy URL) via PGSSL=require.
 const useSSL = process.env.PGSSL === "require" || /sslmode=require/.test(connectionString);
 
-const pool = new Pool({
+export const pool = new Pool({
   connectionString,
   ssl: useSSL ? { rejectUnauthorized: false } : undefined,
 });
@@ -582,6 +582,20 @@ export class DB {
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS category TEXT;
       ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS related_ref TEXT;
       ALTER TABLE branches ADD COLUMN IF NOT EXISTS brand TEXT;
+      ALTER TABLE brands ADD COLUMN IF NOT EXISTS aliases TEXT;
+      ALTER TABLE branches ADD COLUMN IF NOT EXISTS aliases TEXT;
+      ALTER TABLE ratings ADD COLUMN IF NOT EXISTS branch_raw TEXT;
+      ALTER TABLE ratings ADD COLUMN IF NOT EXISTS branch_id TEXT;
+      ALTER TABLE ratings ADD COLUMN IF NOT EXISTS name_status TEXT;
+      CREATE INDEX IF NOT EXISTS idx_ratings_name_status ON ratings(name_status) WHERE name_status = 'unmatched';
+      CREATE TABLE IF NOT EXISTS rating_held_rows (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT,
+        raw_brand TEXT NOT NULL,
+        row_data JSONB NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS started_at TEXT;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER DEFAULT 0;
       ALTER TABLE logs ADD COLUMN IF NOT EXISTS calls_reviewed INTEGER;

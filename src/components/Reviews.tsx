@@ -3,6 +3,7 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { useDoNotCall } from "../lib/dnc.ts";
 import DncBadge from "./DncBadge.tsx";
+import NamesToFix from "./NamesToFix.tsx";
 import {
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download,
 } from "lucide-react";
@@ -37,6 +38,7 @@ interface CallAttempt {
 interface UploadResult {
   total: number; inserted: number; duplicates: number; overwritten: number;
   tasks?: number; auto_closed?: number; enriched?: number;
+  no_rating?: number; held?: number; branch_fixed?: number; branch_unmatched?: number;
   errors: { row: number; message: string }[];
 }
 
@@ -460,6 +462,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
 
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
+      {['admin', 'supervisor'].includes(currentUser.role) && <NamesToFix refreshKey={uploadResult?.total ?? 0} onChanged={fetchRatings} />}
       {/* Header */}
       <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -940,7 +943,12 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   <span className="text-[var(--muted)]">Tasks (assigned):</span><span className="font-bold text-amber-400">{uploadResult.tasks ?? 0}</span>
                   <span className="text-[var(--muted)]">Auto-closed:</span><span className="font-bold text-zinc-400">{uploadResult.auto_closed ?? 0}</span>
                   <span className="text-[var(--muted)]">Phones filled:</span><span className="font-bold text-violet-400">{uploadResult.enriched ?? 0}</span>
+                  {!!uploadResult.no_rating && <><span className="text-[var(--muted)]">No rating (not a review):</span><span className="font-bold text-zinc-400">{uploadResult.no_rating}</span></>}
+                  {!!uploadResult.branch_fixed && <><span className="text-[var(--muted)]">Branch names corrected:</span><span className="font-bold text-sky-400">{uploadResult.branch_fixed}</span></>}
+                  {!!uploadResult.branch_unmatched && <><span className="text-[var(--muted)]">Branch name not matched:</span><span className="font-bold text-amber-400">{uploadResult.branch_unmatched}</span></>}
+                  {!!uploadResult.held && <><span className="text-[var(--muted)]">Kept — unknown brand:</span><span className="font-bold text-amber-400">{uploadResult.held}</span></>}
                 </div>
+                {(!!uploadResult.branch_unmatched || !!uploadResult.held) && <p className="text-[11px] text-amber-400">Nothing was lost. A supervisor says what the unknown names are under <b>Names to fix</b> at the top of this page.</p>}
                 {uploadResult.errors.length > 0 && (
                   <div className="mt-2 space-y-1">
                     <p className="text-[11px] font-bold text-rose-400">Errors ({uploadResult.errors.length})</p>
