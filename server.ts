@@ -3713,7 +3713,7 @@ app.get("/api/talabat-reports/:day/download", authenticateJWT, requireAdmin, asy
 }));
 
 // ---- Offer campaigns (Shakir win-back and later ones) — see server/offers.ts ----
-registerOfferRoutes(app, { authenticateJWT, asyncHandler, XLSX, pick, normalisePhone, isLeaderLevel, OPS_ROLES });
+registerOfferRoutes(app, { authenticateJWT, asyncHandler, XLSX, pick, normalisePhone, isLeaderLevel, OPS_ROLES, logCall: logShakirCall });
 
 // Daily capacity for the next 7 days
 app.get("/api/surveys/capacity", authenticateJWT, asyncHandler(async (_req, res) => {
@@ -3753,6 +3753,25 @@ const SURVEY_DONE_STATUSES = new Set(["successful", "unreachable", "declined", "
 const SURVEY_RESULT_LABEL: Record<string, string> = {
   successful: "Surveyed", unreachable: "Not reached", declined: "Not reached (declined)", refused: "Refused to complete", not_interested: "Not interested",
 };
+// A call recorded in the Shakir campaign is written to the agent's Task Log the same way a finished survey is (a "Survey"
+// entry, same log type and department routing), so it shows in My Logs / History and counts in their numbers.
+async function logShakirCall(user: any, info: { campaign: any; customer: any; result: string; direction: string }): Promise<void> {
+  try {
+    const isFM = user.job_title === "FM" || user.job_title === "FM Team Leader";
+    const log_type = isFM ? "call_center" : (DEPT_TO_LOGTYPE[user.department] || "call_center");
+    const now = new Date().toISOString();
+    const c = info.customer;
+    const notes = [info.campaign?.name || "Shakir Campaign", info.direction === "inbound" ? "Customer called us" : null, info.result, c.phone, `[auto:offer-${c.id}-${Date.now()}]`].filter(Boolean).join(" · ");
+    await DB.addLog({
+      log_type: log_type as any, department: user.department || "Call Center", activity_type: "Survey", status: "Completed",
+      agent_id: user.id, agent_name: user.full_name,
+      brand: info.campaign?.brand_name || undefined, customer_name: c.customer_name || undefined,
+      notes, duration_seconds: 0, created_at: now, updated_at: now, created_by: user.id,
+    } as any);
+  } catch (e: any) {
+    console.warn("[offer-log] could not write the Task Log entry:", e?.message || e);
+  }
+}
 async function logFinishedSurvey(user: any, assignment: any): Promise<void> {
   try {
     if (!assignment || !SURVEY_DONE_STATUSES.has(assignment.status)) return;

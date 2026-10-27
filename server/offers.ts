@@ -41,6 +41,8 @@ type Deps = {
   authenticateJWT: any; asyncHandler: (fn: (req: any, res: any) => Promise<any>) => any;
   XLSX: any; pick: (row: Record<string, any>, ...names: string[]) => string;
   normalisePhone: (p: string) => string; isLeaderLevel: (role: string) => boolean; OPS_ROLES: Set<string>;
+  /** Writes a finished call to the agent's Task Log (like a finished survey). Never throws. */
+  logCall: (user: any, info: { campaign: any; customer: any; result: string; direction: string }) => Promise<void>;
 };
 
 export type Eligibility = {
@@ -104,6 +106,11 @@ async function setGender(c: any, raw: any, user: any): Promise<{ from: string | 
   await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "gender", user, details: { from: c.gender || null, to: g } });
   return { from: c.gender || null, to: g };
 }
+
+const CALL_STATUS_LABEL: Record<string, string> = {
+  no_answer: "No answer", busy: "Busy / switched off", call_back: "Call back later", wrong_number: "Wrong number",
+  not_interested: "Not interested", accepted: "Accepted the offer", ordered: "Ordered",
+};
 
 export function registerOfferRoutes(app: any, d: Deps) {
   const { authenticateJWT, asyncHandler } = d;
@@ -405,6 +412,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
         ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
     const named = await setName(c, b.customer_name, req.user);
     const gendered = await setGender(c, b.gender, req.user);
+    await d.logCall(req.user, { campaign: camp, customer: c, result: result || CALL_STATUS_LABEL[status] || status, direction });
     req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${gendered ? `, gender set to ${gendered.to}` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
     res.json(await loadCustomer(c.id));
   }));
