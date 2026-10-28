@@ -3,7 +3,7 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { Star, MessageSquare, ClipboardList, CheckCircle2, AlertCircle, Users, Filter, X, PhoneCall, Flag, Megaphone, ChevronRight } from "lucide-react";
 
-interface Props { currentUser: User; }
+interface Props { currentUser: User; /** Shown inside the Ratings & Reviews page: no banner of its own. */ embedded?: boolean; }
 type NC = { name: string; count: number };
 
 interface FeedbackData {
@@ -21,7 +21,7 @@ const ratingStatusLabel = (s: string) =>
   s === 'resolved' ? 'Complaint Recorded' : s === 'no_action_needed' ? 'No Action Required'
   : s === 'in_progress' ? 'In Progress' : s === 'unreachable' ? 'Unreachable' : 'Pending';
 
-export default function FeedbackDashboard({ currentUser }: Props) {
+export default function FeedbackDashboard({ currentUser: _u, embedded = false }: Props) {
   const [d, setD] = useState<FeedbackData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -152,11 +152,11 @@ export default function FeedbackDashboard({ currentUser }: Props) {
   return (
     <div className="space-y-8 animate-fade-in text-[var(--text)]">
       {/* Banner */}
-      <div className="bg-gradient-to-r from-[var(--surface)] via-[var(--surface-2)] to-[var(--bg)] border border-[var(--border)] p-6 md:p-8 rounded-3xl shadow-xl">
+      {!embedded && <div className="bg-gradient-to-r from-[var(--surface)] via-[var(--surface-2)] to-[var(--bg)] border border-[var(--border)] p-6 md:p-8 rounded-3xl shadow-xl">
         <span className="bg-blue-950/45 text-blue-400 text-xs font-bold px-3 py-1 rounded-full border border-blue-500/30">Feedback Analytics</span>
         <h1 className="text-2xl md:text-3xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Ratings &amp; Reviews</h1>
         <p className="text-[var(--muted)] text-sm mt-1 font-light">Consolidated performance across ratings and review handling</p>
-      </div>
+      </div>}
 
       {/* Date filter */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-lg flex flex-wrap items-end gap-3">

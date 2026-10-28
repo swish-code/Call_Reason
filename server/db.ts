@@ -3800,6 +3800,7 @@ export class DB {
     const rTot = (await q(`SELECT COUNT(*)::int total, COALESCE(ROUND(AVG(rating)::numeric,2),0)::float avg_rating,
         SUM(CASE WHEN requires_action THEN 1 ELSE 0 END)::int needs_action,
         SUM(CASE WHEN action_status IN ('resolved','no_action_needed') THEN 1 ELSE 0 END)::int resolved,
+        SUM(CASE WHEN requires_action AND action_status IN ('resolved','no_action_needed','unreachable') THEN 1 ELSE 0 END)::int handled,
         SUM(CASE WHEN action_status='unreachable' THEN 1 ELSE 0 END)::int unreachable
       FROM ratings r WHERE ${rW}`)).rows[0];
     const rByStatus = (await q(`SELECT action_status name, COUNT(*)::int count FROM ratings r WHERE ${rW} GROUP BY action_status ORDER BY count DESC`)).rows;
@@ -3859,7 +3860,7 @@ export class DB {
       ratings: {
         total: rTot.total, avgRating: Number(rTot.avg_rating), needsAction: rTot.needs_action,
         resolved: rTot.resolved, unreachable: rTot.unreachable,
-        resolutionRate: rTot.needs_action > 0 ? Math.round((rTot.resolved / rTot.needs_action) * 100) : 0,
+        resolutionRate: rTot.needs_action > 0 ? Math.round((rTot.handled / rTot.needs_action) * 100) : 0,
         byStatus: rByStatus, byRating: rByRating, byBrand: rByBrand, byPlatform: rByPlatform, byAgent: rByAgent,
         platformPerf, brandPerf, brandBranchPerf,
       },

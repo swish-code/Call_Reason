@@ -16,7 +16,6 @@ import TaskPool from "./components/TaskPool.tsx";
 import Reviews from "./components/Reviews.tsx";
 import Surveys from "./components/Surveys.tsx";
 import OfferCampaignPage from "./components/OfferCampaign.tsx";
-import FeedbackDashboard from "./components/FeedbackDashboard.tsx";
 import ChangePassword from "./components/ChangePassword.tsx";
 import OpsTasks from "./components/OpsTasks.tsx";
 import OpsTaskTypes from "./components/OpsTaskTypes.tsx";
@@ -434,7 +433,6 @@ export default function App() {
       { page: "talabat", label: "Delivery Platforms", icon: ShoppingBag, visible: isAdmin },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
-      { page: "feedbackdash", label: "Feedback Dashboard", icon: BarChart2, visible: notAgent },
       { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: !isOpsRole },
       { page: "surveys", label: "Surveys", icon: MessageSquare, visible: !isOpsRole },
       { page: "offers", label: "Shakir Campaign", icon: Gift, visible: !isOpsRole && !isMarketing },
@@ -621,7 +619,6 @@ export default function App() {
               {activePage === "reviews" && "Ratings & Reviews"}
               {activePage === "surveys" && "Surveys"}
               {activePage === "offers" && "Shakir Campaign"}
-              {activePage === "feedbackdash" && "Feedback Dashboard"}
             </h1>
           </div>
 
@@ -744,9 +741,6 @@ export default function App() {
           )}
           {activePage === "offers" && !isOpsRole && !isMarketing && (
             <OfferCampaignPage currentUser={currentUser} />
-          )}
-          {activePage === "feedbackdash" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
-            <FeedbackDashboard currentUser={currentUser} />
           )}
           {activePage === "opstasks" && (isOpsRole || isAdmin) && (
             <OpsTasks currentUser={currentUser} />
