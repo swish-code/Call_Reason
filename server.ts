@@ -10,6 +10,7 @@ import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRati
 import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
 import { registerNameRoutes } from "./server/nameRoutes.js";
 import { getRatingsDashboard } from "./server/ratingsDashboard.js";
+import { fillRatingItems, itemsConfigured, itemsText } from "./server/orderItems.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
@@ -2361,6 +2362,13 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   // Overwritten rows now point at this batch too (upsert moves upload_batch_id), so they
   // count with inserted — that keeps the batch's row count equal to what the Audit page
   // finds when it joins back on upload_batch_id.
+  // What each review's customer ordered, from the GrubTech archive (task rows first; the list fills the rest as it is shown).
+  if (itemsConfigured()) {
+    try {
+      const fresh = (await DB.query(`SELECT id FROM ratings WHERE upload_batch_id = $1 AND requires_action ORDER BY uploaded_at LIMIT 600`, [uploadBatchId])).map((r: any) => r.id);
+      await fillRatingItems(fresh);
+    } catch (e: any) { console.warn("[items] after upload:", e?.message || e); }
+  }
   await DB.addUploadBatch({
     id: uploadBatchId, upload_type: "ratings", sub_type: mode,
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
@@ -2556,6 +2564,19 @@ app.get("/api/ratings/dashboard", authenticateJWT, asyncHandler(async (req: any,
   if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) return res.status(400).json({ error: "Pick a period of a year or less." });
   const agent = typeof req.query.agent_id === "string" && req.query.agent_id ? req.query.agent_id : null;
   res.json(await getRatingsDashboard(from, to, agent));
+}));
+
+// Items of the reviews on screen: stored ones, plus a GrubTech lookup for the ones still missing (asked again after a while).
+app.post("/api/ratings/items", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 200) : [];
+  if (!ids.length) return res.json({ items: {}, configured: itemsConfigured() });
+  if (req.user.role === "agent") {
+    // agents only see their own reviews' items
+    const mine = (await DB.query(`SELECT id FROM ratings WHERE id = ANY($1) AND assigned_agent_id = $2`, [ids, req.user.id])).map((r: any) => r.id);
+    return res.json({ items: await fillRatingItems(mine), configured: itemsConfigured() });
+  }
+  res.json({ items: await fillRatingItems(ids), configured: itemsConfigured() });
 }));
 
 // Assign / take back reviews by count (like the survey campaigns): N unassigned open reviews go to an agent, or N of an
@@ -2768,7 +2789,7 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
   const rows = await DB.getAllRatingsForExport();
   const header = [
     "Date", "Brand", "Platform", "Order ID", "Customer Name", "Customer Phone", "Branch",
-    "Rating", "Review Text", "Status", "Requires Action", "Assigned Agent", "Action Note",
+    "Rating", "Review Text", "Items", "Status", "Requires Action", "Assigned Agent", "Action Note",
     "Served By", "Uploaded By", "Uploaded At",
   ];
   const aoa: any[][] = [header];
@@ -2795,6 +2816,7 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
       r.branch || "",
       Number(r.rating) || "",
       r.review_text || "",
+      itemsText(r.items),
       REVIEW_STATUS_LABEL[r.action_status] || r.action_status || "",
       r.requires_action ? "Yes" : "No",
       r.agent_name || "",

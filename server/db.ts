@@ -587,6 +587,8 @@ export class DB {
       ALTER TABLE ratings ADD COLUMN IF NOT EXISTS branch_raw TEXT;
       ALTER TABLE ratings ADD COLUMN IF NOT EXISTS branch_id TEXT;
       ALTER TABLE ratings ADD COLUMN IF NOT EXISTS name_status TEXT;
+      ALTER TABLE ratings ADD COLUMN IF NOT EXISTS items JSONB;
+      ALTER TABLE ratings ADD COLUMN IF NOT EXISTS items_checked_at TIMESTAMPTZ;
       CREATE INDEX IF NOT EXISTS idx_ratings_name_status ON ratings(name_status) WHERE name_status = 'unmatched';
       CREATE TABLE IF NOT EXISTS rating_held_rows (
         id TEXT PRIMARY KEY,

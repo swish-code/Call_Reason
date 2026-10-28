@@ -26,6 +26,7 @@ interface Rating {
   uploaded_by?: string; uploaded_by_name?: string; uploaded_at?: string;
   resolved_at?: string; recorded_by?: string; recorded_by_name?: string; recorded_at?: string;
   order_date?: string; customer_name?: string; branch?: string;
+  items?: { name: string; qty: number; modifiers: string[] }[] | null;
   filled_by?: string; following_date?: string; surveyed_by?: string;
   complaint_type?: string; complaint_cases?: string; complaint_status?: string;
   served_by?: string; note?: string;
@@ -473,6 +474,26 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = ratings.slice(pageStart, pageStart + PAGE_SIZE);
 
+  // Items of the reviews on this page (what the customer ordered), from the GrubTech order archive. Asked per page;
+  // the server keeps what it finds, so a row is looked up once.
+  const [itemsById, setItemsById] = useState<Record<string, Rating["items"]>>({});
+  const [itemsOff, setItemsOff] = useState(false);
+  useEffect(() => {
+    const need = paged.filter(r => itemsById[r.id] === undefined).map(r => r.id);
+    if (!need.length) return;
+    let live = true;
+    apiFetch('/api/ratings/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: need }) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!live || !d) return;
+        setItemsOff(d.configured === false);
+        setItemsById(prev => { const next = { ...prev }; for (const id of need) next[id] = d.items[id] || null; return next; });
+      }).catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, ratings]);
+  const itemsLine = (items: Rating["items"]) => (items || []).map(it => `${it.qty > 1 ? `${it.qty}× ` : ''}${it.name}${it.modifiers?.length ? ` (${it.modifiers.join(', ')})` : ''}`);
+
   // Header checkbox selects the CURRENT page; selections persist across pages
   const pageIds = paged.map(r => r.id);
   const pageAllSelected = pageIds.length > 0 && pageIds.every(id => selected.includes(id));
@@ -757,6 +778,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                   <th className="p-4">Customer</th>
                   <th className="p-4">Rate</th>
                   <th className="p-4">Review</th>
+                  <th className="p-4" title={itemsOff ? "GrubTech lookup is not configured (GRUBTECH_LOOKUP_URL / _TOKEN)" : "What the customer ordered, from the GrubTech order archive"}>Items</th>
                   <th className="p-4">Served By</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">Closed</th>
@@ -802,6 +824,20 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                           {r.review_text.length > 60 ? r.review_text.slice(0, 60) + '…' : r.review_text}
                         </span>
                       ) : <span className="text-[var(--muted)]">—</span>}
+                    </td>
+                    <td className="p-4 max-w-[220px]">
+                      {(() => {
+                        const items = itemsById[r.id];
+                        if (items === undefined) return <span className="text-[var(--muted)] text-[10px]">…</span>;
+                        if (!items || !items.length) return <span className="text-[var(--muted)]" title={itemsOff ? "Lookup not configured" : "Not in the GrubTech archive (yet)"}>—</span>;
+                        const lines = itemsLine(items);
+                        return (
+                          <div className="text-[11px] text-[var(--text)] space-y-0.5" title={lines.join("\n")}>
+                            {lines.slice(0, 2).map((l, i) => <div key={i} className="truncate">{l}</div>)}
+                            {lines.length > 2 && <div className="text-[10px] text-[var(--muted)]">+{lines.length - 2} more</div>}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="p-4 text-[var(--muted)]">{r.served_by || r.filled_by || '—'}</td>
                     <td className="p-4">
@@ -857,7 +893,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 ))}
                 {ratings.length === 0 && (
                   <tr>
-                    <td colSpan={11 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
+                    <td colSpan={12 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
                   </tr>
                 )}
               </tbody>
