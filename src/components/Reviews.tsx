@@ -799,7 +799,9 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
                 {paged.map(r => (
-                  <tr key={r.id} className={`hover:bg-[var(--surface-2)]/40 transition align-middle ${selected.includes(r.id) ? 'bg-violet-500/5' : ''}`}>
+                  <tr key={r.id} title="Click to open the review"
+                    onClick={(e) => { if (!(e.target as HTMLElement).closest('button,input,a,select,label')) openDetail(r); }}
+                    className={`hover:bg-[var(--surface-2)]/40 transition align-middle cursor-pointer ${selected.includes(r.id) ? 'bg-violet-500/5' : ''}`}>
                     {canAssign && (
                       <td className="p-4">
                         <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" />
