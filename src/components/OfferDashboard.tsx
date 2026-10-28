@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { apiFetch } from "../lib/api.ts";
-import { OfferCampaign as Campaign, kwToday, stepLabel } from "../lib/offers.ts";
+import { OfferCampaign as Campaign, kwToday, stepLabel, fmtDur } from "../lib/offers.ts";
 import { Card as ChartCard, GroupedColumns, STYLE as CHART_STYLE, C as CC, type Series } from "./SurveyCharts.tsx";
 import OfferBestTime from "./OfferBestTime.tsx";
-import { RefreshCw, AlertCircle, PhoneOutgoing, PhoneIncoming, UploadCloud, Sparkles, UserX, Hourglass, CalendarX2, CheckCircle2 } from "lucide-react";
+import { RefreshCw, AlertCircle, PhoneOutgoing, PhoneIncoming, UploadCloud, Sparkles, UserX, Hourglass, CalendarX2, CheckCircle2, Timer } from "lucide-react";
 
 // The campaign dashboard (team leaders and up).
 //  - The period: what the calls did, as a funnel (calls ⊇ reached ⊇ accepted — all calls made in the period), and
@@ -161,6 +161,7 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
                   <Chip icon={PhoneOutgoing} n={sum("outbound")} text="we called" />
                   <Chip icon={PhoneIncoming} n={sum("inbound")} text="called us" />
                   <Chip icon={UploadCloud} n={sum("uploaded")} text="customers uploaded" />
+                  {sum("timed") > 0 && <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 border border-white/15 text-xs"><Timer className="w-3.5 h-3.5 text-white/70" /><b className="tabular-nums">{fmtDur(sum("work_seconds") / sum("timed"))}</b><span className="text-white/70">avg per call</span></span>}
                 </div>
               </div>
             </motion.div>
@@ -312,7 +313,7 @@ const Fact = ({ n, label, sub }: { n: number; label: string; sub?: string }) => 
 );
 
 // ---------------------------------------------------------------- agents and churn
-const AGENT_COLS = "grid grid-cols-[minmax(10rem,1.3fr)_2fr_repeat(3,4.2rem)_8rem_4.2rem] gap-3";
+const AGENT_COLS = "grid grid-cols-[minmax(10rem,1.3fr)_2fr_repeat(3,4.2rem)_4.6rem_8rem_4.2rem] gap-3";
 function Agents({ agents, grown, periodText }: { agents: any[]; grown: boolean; periodText: string }) {
   const max = Math.max(1, ...agents.map((a) => a.calls));
   return (
@@ -321,9 +322,9 @@ function Agents({ agents, grown, periodText }: { agents: any[]; grown: boolean; 
       <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}. Calls are the ones each person made. Accepted and orders count for the customer's agent, even when a colleague recorded them. "To call" is everything on their list now.</p>
       {!agents.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No calls or orders in this period yet.</div> : (
         <div className="overflow-x-auto">
-          <div className="min-w-[680px]">
+          <div className="min-w-[740px]">
             <div className={`${AGENT_COLS} px-2 pb-2 text-[10px] font-bold text-[var(--muted)] border-b border-[var(--border)]`}>
-              <span>Agent</span><span>Calls</span><span className="text-center">Reached</span><span className="text-center">Accepted</span><span className="text-center">Orders</span>
+              <span>Agent</span><span>Calls</span><span className="text-center">Reached</span><span className="text-center">Accepted</span><span className="text-center">Orders</span><span className="text-center" title="Average time spent on a customer per call (screen open and in use)">Avg time</span>
               <span title="Done by a colleague on this agent's customers / done by this person on colleagues' customers">Colleagues</span><span className="text-center">To call</span>
             </div>
             {agents.map((a, i) => {
@@ -343,6 +344,7 @@ function Agents({ agents, grown, periodText }: { agents: any[]; grown: boolean; 
                   <span className="text-center text-xs tabular-nums">{a.reached}</span>
                   <span className="text-center text-xs tabular-nums font-bold text-emerald-600">{a.accepted || <span className="text-[var(--muted)] font-normal">0</span>}</span>
                   <span className="text-center text-xs tabular-nums font-bold text-orange-500">{a.orders || <span className="text-[var(--muted)] font-normal">0</span>}</span>
+                  <span className="text-center text-xs tabular-nums text-[var(--text)]">{fmtDur(a.avg_seconds)}</span>
                   <span className="flex flex-col items-start gap-1">
                     {a.by_colleagues > 0 && <span title="Accepted or orders on this agent's customers that a colleague recorded" className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-600 whitespace-nowrap">{a.by_colleagues} by a colleague</span>}
                     {a.helped > 0 && <span title="Calls and orders this person did on colleagues' customers" className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/10 border border-sky-500/30 text-sky-600 whitespace-nowrap">helped on {a.helped}</span>}

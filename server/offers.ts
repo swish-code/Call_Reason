@@ -12,7 +12,7 @@
 //  accepted it (or ordered), or their first order if they called us first. A customer who said "not
 //  interested" has no running offer until then. Days are Kuwait days.
 // ---------------------------------------------------------------------------
-import { DB } from "./db.js";
+import { DB, WORK_DELTA_SQL } from "./db.js";
 
 export const OPEN_STATUSES = ["not_called", "no_answer", "busy", "call_back"];           // still to be called
 export const CALL_STATUSES = ["not_called", "no_answer", "busy", "call_back", "wrong_number", "not_interested", "accepted", "ordered"];
@@ -42,7 +42,7 @@ type Deps = {
   XLSX: any; pick: (row: Record<string, any>, ...names: string[]) => string;
   normalisePhone: (p: string) => string; isLeaderLevel: (role: string) => boolean; OPS_ROLES: Set<string>;
   /** Writes a finished call to the agent's Task Log (like a finished survey). Never throws. */
-  logCall: (user: any, info: { campaign: any; customer: any; result: string; direction: string }) => Promise<void>;
+  logCall: (user: any, info: { campaign: any; customer: any; result: string; direction: string; seconds?: number }) => Promise<void>;
 };
 
 export type Eligibility = {
@@ -99,6 +99,13 @@ async function setName(c: any, raw: any, user: any): Promise<{ from: string | nu
 }
 
 // Gender (female / male), asked on the call. Returns the old and new value when it changed.
+/** Closes this agent's open work sessions on a customer (called when a call is saved) and returns the seconds they add up to. */
+async function endCustomerWork(customerId: string, agentId: string, reason: string): Promise<number> {
+  const rows = await DB.query(`UPDATE offer_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now(), ended_at = now(), end_reason = $3
+      WHERE customer_id = $1 AND agent_id = $2 AND ended_at IS NULL RETURNING active_seconds`, [customerId, agentId, reason]);
+  return rows.reduce((a: number, r: any) => a + (Number(r.active_seconds) || 0), 0);
+}
+
 async function setGender(c: any, raw: any, user: any): Promise<{ from: string | null; to: string } | null> {
   const g = raw === "female" || raw === "male" ? raw : "";
   if (!g || g === (c.gender || "")) return null;
@@ -389,6 +396,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (!RESULT_KINDS.includes(status)) return res.status(400).json({ error: "Pick the result of the call." });
     const direction = b.direction === "inbound" ? "inbound" : "outbound";
     if (direction === "outbound" && data.dnc) return res.status(409).json({ error: "This customer is on the Do Not Call list — do not call them." });
+    // The time the agent worked on this customer since the last call (the screen open and in use) goes with this call.
+    const workSecs = await endCustomerWork(c.id, req.user.id, "saved");
     const churn = typeof b.churn_reason === "string" && b.churn_reason.trim() ? b.churn_reason.trim().slice(0, 120) : null;
     const comment = typeof b.comment === "string" && b.comment.trim() ? b.comment.trim().slice(0, 2000) : null;
     const today = kwToday();
@@ -408,13 +417,39 @@ export function registerOfferRoutes(app: any, d: Deps) {
         offer_expires_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() + ($9 || ' days')::interval ELSE offer_expires_at END
       WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days), result, keepOrdered]))[0];
     await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "call", user: req.user, direction, call_status: status, prev_status: c.call_status, churn_reason: churn, comment,
-      details: { ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}), ...(keepOrdered && status !== "ordered" ? { stays_ordered: true } : {}),
+      details: { ...(workSecs ? { work_seconds: workSecs } : {}), ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}), ...(keepOrdered && status !== "ordered" ? { stays_ordered: true } : {}),
         ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
     const named = await setName(c, b.customer_name, req.user);
     const gendered = await setGender(c, b.gender, req.user);
-    await d.logCall(req.user, { campaign: camp, customer: c, result: result || CALL_STATUS_LABEL[status] || status, direction });
+    await d.logCall(req.user, { campaign: camp, customer: c, result: result || CALL_STATUS_LABEL[status] || status, direction, seconds: workSecs });
     req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${gendered ? `, gender set to ${gendered.to}` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
     res.json(await loadCustomer(c.id));
+  }));
+
+  // ---- time spent on a customer (the screen open and in use), the same idea as a survey's handling time ----
+  // The screen beats every 20 seconds while it is visible and in use; the time between two beats counts only when they are close.
+  app.post(`${B}/customers/:id/work/start`, authenticateJWT, CALL, asyncHandler(async (req, res) => {
+    const c = (await DB.query(`SELECT id FROM offer_customers WHERE id = $1`, [req.params.id]))[0];
+    if (!c) return res.status(404).json({ error: "Customer not found." });
+    const open = (await DB.query(`SELECT id, active_seconds FROM offer_work_sessions
+        WHERE customer_id = $1 AND agent_id = $2 AND ended_at IS NULL AND last_beat_at > now() - interval '2 minutes' ORDER BY started_at DESC LIMIT 1`, [c.id, req.user.id]))[0];
+    if (open) {
+      await DB.query(`UPDATE offer_work_sessions SET last_beat_at = now() WHERE id = $1`, [open.id]);
+      return res.json({ id: open.id, active_seconds: Number(open.active_seconds) || 0 });
+    }
+    const id = "ows-" + Date.now() + "-" + Math.floor(Math.random() * 99999);
+    await DB.query(`INSERT INTO offer_work_sessions (id, customer_id, agent_id) VALUES ($1,$2,$3)`, [id, c.id, req.user.id]);
+    res.json({ id, active_seconds: 0 });
+  }));
+  app.post(`${B}/work/:sid/beat`, authenticateJWT, CALL, asyncHandler(async (req, res) => {
+    const r = (await DB.query(`UPDATE offer_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now()
+        WHERE id = $1 AND agent_id = $2 AND ended_at IS NULL RETURNING active_seconds`, [req.params.sid, req.user.id]))[0];
+    res.json({ active_seconds: r ? Number(r.active_seconds) : null });
+  }));
+  app.post(`${B}/work/:sid/end`, authenticateJWT, CALL, asyncHandler(async (req, res) => {
+    await DB.query(`UPDATE offer_work_sessions SET active_seconds = active_seconds + ${WORK_DELTA_SQL}, last_beat_at = now(), ended_at = now(), end_reason = $3
+        WHERE id = $1 AND agent_id = $2 AND ended_at IS NULL`, [req.params.sid, req.user.id, String(req.body?.reason || "closed").slice(0, 20)]);
+    res.json({ ok: true });
   }));
 
   // Save just the name (no call to record).
@@ -634,7 +669,9 @@ export function registerOfferRoutes(app: any, d: Deps) {
                        count(*) FILTER (WHERE direction = 'outbound')::int AS outbound, count(*) FILTER (WHERE direction = 'inbound')::int AS inbound,
                        count(*) FILTER (WHERE call_status = ANY($4))::int AS reached,
                        count(*) FILTER (WHERE call_status IN ('accepted','ordered'))::int AS accepted,
-                       count(DISTINCT customer_id) FILTER (WHERE direction = 'outbound' AND prev_status = 'not_called')::int AS first_calls
+                       count(DISTINCT customer_id) FILTER (WHERE direction = 'outbound' AND prev_status = 'not_called')::int AS first_calls,
+                       COALESCE(sum((details->>'work_seconds')::int), 0)::int AS work_seconds,
+                       count(*) FILTER (WHERE COALESCE((details->>'work_seconds')::int, 0) > 0)::int AS timed
                   FROM offer_events WHERE campaign_id = $1 AND kind = 'call' AND ${DAY("created_at")} BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, wFrom, to, REACHED_STATUSES]),
       DB.query(`SELECT to_char(order_date, 'YYYY-MM-DD') AS day, step, count(*)::int AS n, COALESCE(sum(order_value), 0)::float AS value
                   FROM offer_orders WHERE campaign_id = $1 AND order_date BETWEEN $2::date AND $3::date GROUP BY 1, 2`, [camp.id, wFrom, to]),
@@ -642,13 +679,14 @@ export function registerOfferRoutes(app: any, d: Deps) {
       // colleague recorded them (the business, 2026-10-26), with how many of those a colleague did (by_colleagues)
       // and, for the colleague, how many calls/orders they did on others' customers (helped).
       DB.query(`
-        WITH ev AS (SELECT e.user_id, e.user_name, e.call_status, oc.assigned_agent_id AS owner
+        WITH ev AS (SELECT e.user_id, e.user_name, e.call_status, oc.assigned_agent_id AS owner, COALESCE((e.details->>'work_seconds')::int, 0) AS secs
                       FROM offer_events e JOIN offer_customers oc ON oc.id = e.customer_id
                      WHERE e.campaign_id = $1 AND e.kind = 'call' AND ${DAY("e.created_at")} BETWEEN $2::date AND $3::date),
              od AS (SELECT o.logged_by AS user_id, o.logged_by_name AS user_name, oc.assigned_agent_id AS owner
                       FROM offer_orders o JOIN offer_customers oc ON oc.id = o.customer_id
                      WHERE o.campaign_id = $1 AND o.order_date BETWEEN $2::date AND $3::date),
              c AS (SELECT user_id, max(user_name) AS user_name, count(*)::int AS calls, count(*) FILTER (WHERE call_status = ANY($4))::int AS reached,
+                          COALESCE(round(avg(secs) FILTER (WHERE secs > 0)), 0)::int AS avg_seconds,
                           count(*) FILTER (WHERE owner IS NOT NULL AND owner <> user_id)::int AS helped_calls
                      FROM ev GROUP BY 1),
              acc AS (SELECT COALESCE(owner, user_id) AS user_id, count(*)::int AS accepted,
@@ -662,7 +700,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
                      FROM offer_customers WHERE campaign_id = $1 AND assigned_agent_id IS NOT NULL GROUP BY 1),
              ids AS (SELECT user_id FROM c UNION SELECT user_id FROM acc UNION SELECT user_id FROM o UNION SELECT user_id FROM oh UNION SELECT user_id FROM a)
         SELECT ids.user_id, COALESCE(u.full_name, c.user_name, oh.user_name) AS name,
-               COALESCE(c.calls, 0) AS calls, COALESCE(c.reached, 0) AS reached, COALESCE(acc.accepted, 0) AS accepted, COALESCE(o.orders, 0) AS orders,
+               COALESCE(c.calls, 0) AS calls, COALESCE(c.reached, 0) AS reached, COALESCE(c.avg_seconds, 0) AS avg_seconds, COALESCE(acc.accepted, 0) AS accepted, COALESCE(o.orders, 0) AS orders,
                COALESCE(acc.by_others, 0) + COALESCE(o.by_others, 0) AS by_colleagues,
                COALESCE(c.helped_calls, 0) + COALESCE(oh.helped_orders, 0) AS helped, COALESCE(a.open, 0) AS open
           FROM ids LEFT JOIN c USING (user_id) LEFT JOIN acc USING (user_id) LEFT JOIN o USING (user_id) LEFT JOIN oh USING (user_id) LEFT JOIN a USING (user_id)
@@ -685,7 +723,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     for (let day = wFrom; day <= to; day = addDays(day, 1)) {
       const c = calls.find((r: any) => r.day === day) || {};
       const row: any = { day, uploaded: uploads.find((r: any) => r.day === day)?.n || 0, calls: c.calls || 0, outbound: c.outbound || 0, inbound: c.inbound || 0,
-        first_calls: c.first_calls || 0, reached: c.reached || 0, accepted: c.accepted || 0, value: 0 };
+        first_calls: c.first_calls || 0, reached: c.reached || 0, accepted: c.accepted || 0, work_seconds: c.work_seconds || 0, timed: c.timed || 0, value: 0 };
       camp.steps.forEach((_s: number, i: number) => { const o = orders.find((r: any) => r.day === day && r.step === i + 1); row[`o${i + 1}`] = o?.n || 0; row.value += o?.value || 0; });
       days.push(row);
     }
@@ -717,7 +755,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const rows = await DB.query(`
       SELECT to_char(${K}, 'YYYY-MM-DD') AS date, to_char(${K}, 'HH24:MI') AS time, to_char(${K}, 'FMDay') AS weekday,
              oc.customer_name, oc.phone, e.user_name AS agent, e.direction, e.call_status, e.details->>'result' AS result,
-             (e.call_status = ANY($4)) AS answered, e.churn_reason, e.comment
+             (e.call_status = ANY($4)) AS answered, e.churn_reason, e.comment, (e.details->>'work_seconds')::int AS work_seconds
         FROM offer_events e JOIN offer_customers oc ON oc.id = e.customer_id
        WHERE e.campaign_id = $1 AND e.kind = 'call' AND ${K}::date BETWEEN $2::date AND $3::date
        ORDER BY e.created_at LIMIT 50000`, [camp.id, from, to, REACHED_STATUSES]);

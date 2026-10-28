@@ -111,6 +111,14 @@ export const kwToday = () => new Date(Date.now() + KW_MS).toISOString().slice(0,
 export const fmtDT = (ts?: string | null) => (ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().replace("T", " ").slice(0, 16) : "");
 /** HH:MM in Kuwait time ("" when there is no timestamp). */
 export const fmtTime = (ts?: string | null) => (ts ? new Date(new Date(ts).getTime() + KW_MS).toISOString().slice(11, 16) : "");
+/** Seconds as "2m 10s" / "1h 05m" ("—" when there is none). */
+export const fmtDur = (s?: number | null) => {
+  const n = Math.round(Number(s) || 0);
+  if (n <= 0) return "—";
+  if (n < 60) return `${n}s`;
+  if (n < 3600) return `${Math.floor(n / 60)}m ${String(n % 60).padStart(2, "0")}s`;
+  return `${Math.floor(n / 3600)}h ${String(Math.floor((n % 3600) / 60)).padStart(2, "0")}m`;
+};
 export const fmtDay = (ts?: string | null) => (ts ? (/^\d{4}-\d{2}-\d{2}$/.test(ts) ? ts : new Date(new Date(ts).getTime() + KW_MS).toISOString().slice(0, 10)) : "");
 
 /** The campaign script with the customer's and the agent's names filled in. */

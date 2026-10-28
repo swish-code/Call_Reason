@@ -1,12 +1,12 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
-  kwToday, fmtDT, fmtDay, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler,
+  kwToday, fmtDT, fmtDay, fmtDur, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler,
 } from "../lib/offers.ts";
-import { X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
+import { Timer, X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
 
 // One customer of an offer campaign: the script, the offer (what is used, what is next, until when), logging a
 // call or an order, and the full history. Opened from My calls (to make the call) and
@@ -60,6 +60,50 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   const genderChanged = !!gender && gender !== (data?.customer.gender || "");
   const detailsChanged = nameChanged || genderChanged;
 
+  // ---- time on this customer: beats while the screen is open, visible and in use (like a survey's handling time) ----
+  const sessionRef = useRef<string | null>(null);
+  const lastActivity = useRef(Date.now());
+  const [workSecs, setWorkSecs] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const beat = useCallback(async () => {
+    const sid = sessionRef.current;
+    if (!sid) return;
+    try {
+      const res = await apiFetch(`/api/offer-campaigns/work/${sid}/beat`, { method: "POST" });
+      if (res.ok) { const d = await res.json(); if (sessionRef.current === sid && d.active_seconds != null) setWorkSecs(d.active_seconds); }
+    } catch { /* a lost beat only loses a few seconds */ }
+  }, []);
+  const startWork = useCallback(async () => {
+    sessionRef.current = null; setWorkSecs(0); setPaused(false); lastActivity.current = Date.now();
+    try {
+      const res = await apiFetch(`/api/offer-campaigns/customers/${encodeURIComponent(id)}/work/start`, { method: "POST" });
+      if (res.ok) { const d = await res.json(); sessionRef.current = d.id; setWorkSecs(d.active_seconds ?? 0); }
+    } catch { /* the call still works without timing */ }
+  }, [id]);
+  useEffect(() => {
+    startWork();
+    const isActive = () => document.visibilityState === "visible" && Date.now() - lastActivity.current < 5 * 60_000;
+    let wasActive = true;
+    const onActivity = () => { const resumed = !isActive(); lastActivity.current = Date.now(); if (resumed) { wasActive = true; setPaused(false); beat(); } };
+    const onVisibility = () => { beat(); setPaused(!isActive()); };
+    const evs = ["mousemove", "mousedown", "keydown", "touchstart", "wheel"] as const;
+    evs.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    document.addEventListener("visibilitychange", onVisibility);
+    const beatTimer = window.setInterval(() => { if (isActive()) beat(); }, 20_000);
+    const tick = window.setInterval(() => {   // display only
+      const active = isActive();
+      if (active) setWorkSecs((s) => s + 1);
+      if (active !== wasActive) { wasActive = active; setPaused(!active); }
+    }, 1000);
+    return () => {
+      evs.forEach((e) => window.removeEventListener(e, onActivity));
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(beatTimer); window.clearInterval(tick);
+      const sid = sessionRef.current; sessionRef.current = null;
+      if (sid) apiFetch(`/api/offer-campaigns/work/${sid}/end`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "closed" }) }).catch(() => {});
+    };
+  }, [startWork, beat]);
+
   const post = async (path: string, body: any, okText: string, key: string) => {
     setBusy(key); setError(""); setMsg("");
     try {
@@ -75,7 +119,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
     if (!picked) { setError("Pick the result of the call."); return; }
     if (kind === "call_back" && !callBack) { setError("Pick the day to call back."); return; }
     const ok = await post(`/api/offer-campaigns/customers/${id}/call`, { ...(picked.builtin ? { call_status: picked.kind } : { result_id: picked.id }), direction, churn_reason: churn || undefined, comment: comment || undefined, call_back_date: callBack || undefined, customer_name: nameChanged ? name.trim() : undefined, gender: genderChanged ? gender : undefined }, "Call saved.", "call");
-    if (ok) { setStatus(""); setComment(""); setCallBack(""); }
+    if (ok) { setStatus(""); setComment(""); setCallBack(""); startWork(); }   // the call took the time so far; the next call starts a new count
   };
   const saveName = async () => {
     setBusy("name"); setError(""); setMsg("");
@@ -118,6 +162,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
               {data?.dnc && <DncBadge />}
               {c && <Badge cls={CALL_STATUS[c.call_status]?.cls || ""}>{statusText(c)}</Badge>}
               {el && <Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>}
+              <span title="Time on this customer since the last saved call — it counts only while this screen is open and in use" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold border tabular-nums ${paused ? "border-zinc-500/30 text-zinc-500" : "border-sky-500/30 text-sky-500"}`}><Timer className="w-3 h-3" />{String(Math.floor(workSecs / 60)).padStart(2, "0")}:{String(workSecs % 60).padStart(2, "0")}{paused ? " paused" : ""}</span>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -336,6 +381,7 @@ function EventRow({ e }: { e: OfferEvent }) {
       <div className="text-[var(--heading)] font-bold">{text}</div>
       {e.churn_reason && <div className="text-[var(--text)]">Reason: {e.churn_reason}</div>}
       {e.comment && <div className="text-[var(--text)] whitespace-pre-wrap">“{e.comment}”</div>}
+      {d.work_seconds > 0 && <div className="text-[10px] text-sky-500">Time on the customer: {fmtDur(d.work_seconds)}</div>}
       <div className="text-[10px] text-[var(--muted)]">{fmtDT(e.created_at)}{e.user_name ? ` · ${e.user_name}` : ""}</div>
     </li>
   );

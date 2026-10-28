@@ -149,7 +149,7 @@ const UPLOAD_ISSUE_ROWS_CAP = 20000;
 // 20s, which tolerates one late or lost beat. WORK_DELTA_SQL adds the time since the
 // previous beat only when it is that short.
 const WORK_BEAT_GAP = 45;
-const WORK_DELTA_SQL =
+export const WORK_DELTA_SQL =
   `CASE WHEN now() - last_beat_at <= interval '${WORK_BEAT_GAP} seconds'
         THEN GREATEST(0, ROUND(EXTRACT(EPOCH FROM (now() - last_beat_at))))::int ELSE 0 END`;
 
@@ -673,6 +673,17 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_sws_agent_started ON survey_work_sessions(agent_id, started_at);
       CREATE INDEX IF NOT EXISTS idx_sws_assignment ON survey_work_sessions(assignment_id);
+      CREATE TABLE IF NOT EXISTS offer_work_sessions (
+        id TEXT PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        agent_id TEXT,
+        started_at TIMESTAMPTZ DEFAULT now(),
+        last_beat_at TIMESTAMPTZ DEFAULT now(),
+        active_seconds INTEGER DEFAULT 0,
+        ended_at TIMESTAMPTZ,
+        end_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_ows_customer ON offer_work_sessions(customer_id, agent_id);
       -- Call verification: for each finished survey, was the customer really called (XonTel call
       -- records, matched by customer number + time)? One verdict per survey, rewritten when it is
       -- re-checked. result: answered | unanswered | no_call. See server/xontel.ts.

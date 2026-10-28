@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Clock, Download } from "lucide-react";
 import { apiFetch } from "../lib/api.ts";
 import { downloadXlsx } from "../lib/xlsx.ts";
+import { fmtDur } from "../lib/offers.ts";
 
 // Best time to call: when customers pick up. Our outbound calls of the period by Kuwait hour (and weekday), with the share
 // that was answered. "Answered" = the customer picked up (call back later, not interested, accepted, ordered); no answer,
@@ -34,8 +35,8 @@ export default function OfferBestTime({ slots, from, to, campId, periodText }: {
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setErr(d.error || "Could not load the calls."); return; }
       await downloadXlsx(
-        ["Date", "Time (Kuwait)", "Day", "Customer", "Phone", "Agent", "Direction", "Result", "Answered", "Churn reason", "Comment"],
-        d.rows.map((r: any) => [r.date, r.time, r.weekday, r.customer_name || "", r.phone, r.agent || "", r.direction, r.result || r.call_status, r.answered ? "Yes" : "No", r.churn_reason || "", r.comment || ""]),
+        ["Date", "Time (Kuwait)", "Day", "Customer", "Phone", "Agent", "Direction", "Result", "Answered", "Time on the customer", "Churn reason", "Comment"],
+        d.rows.map((r: any) => [r.date, r.time, r.weekday, r.customer_name || "", r.phone, r.agent || "", r.direction, r.result || r.call_status, r.answered ? "Yes" : "No", fmtDur(r.work_seconds) === "—" ? "" : fmtDur(r.work_seconds), r.churn_reason || "", r.comment || ""]),
         `Shakir_calls_${from}_${to}`, "Calls");
     } finally { setBusy(false); }
   };

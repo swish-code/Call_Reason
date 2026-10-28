@@ -3755,7 +3755,7 @@ const SURVEY_RESULT_LABEL: Record<string, string> = {
 };
 // A call recorded in the Shakir campaign is written to the agent's Task Log the same way a finished survey is (a "Survey"
 // entry, same log type and department routing), so it shows in My Logs / History and counts in their numbers.
-async function logShakirCall(user: any, info: { campaign: any; customer: any; result: string; direction: string }): Promise<void> {
+async function logShakirCall(user: any, info: { campaign: any; customer: any; result: string; direction: string; seconds?: number }): Promise<void> {
   try {
     const isFM = user.job_title === "FM" || user.job_title === "FM Team Leader";
     const log_type = isFM ? "call_center" : (DEPT_TO_LOGTYPE[user.department] || "call_center");
@@ -3766,7 +3766,7 @@ async function logShakirCall(user: any, info: { campaign: any; customer: any; re
       log_type: log_type as any, department: user.department || "Call Center", activity_type: "Survey", status: "Completed",
       agent_id: user.id, agent_name: user.full_name,
       brand: info.campaign?.brand_name || undefined, customer_name: c.customer_name || undefined,
-      notes, duration_seconds: 0, created_at: now, updated_at: now, created_by: user.id,
+      notes, duration_seconds: Number(info.seconds) || 0, created_at: now, updated_at: now, created_by: user.id,
     } as any);
   } catch (e: any) {
     console.warn("[offer-log] could not write the Task Log entry:", e?.message || e);
