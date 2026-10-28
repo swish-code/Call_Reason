@@ -9,6 +9,7 @@ import { DB, type UploadIssueRow } from "./server/db.js";
 import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRatingRow, rematchUnmatched } from "./server/nameRegistry.js";
 import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
 import { registerNameRoutes } from "./server/nameRoutes.js";
+import { getRatingsDashboard } from "./server/ratingsDashboard.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
@@ -2544,6 +2545,41 @@ app.post("/api/ratings/assign", authenticateJWT, asyncHandler(async (req: any, r
   res.json({ assigned: n });
 }));
 
+// The Ratings & Reviews dashboard (team leaders and up). Kuwait days; one day = that day.
+app.get("/api/ratings/dashboard", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (req.user.role === "agent" || NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const isDay = (v: any) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const today = new Date(Date.now() + KW_OFFSET_MS).toISOString().slice(0, 10);
+  const to = isDay(req.query.to) ? String(req.query.to) : today;
+  const from = isDay(req.query.from) ? String(req.query.from) : to;
+  if (from > to) return res.status(400).json({ error: "From is after To." });
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) return res.status(400).json({ error: "Pick a period of a year or less." });
+  const agent = typeof req.query.agent_id === "string" && req.query.agent_id ? req.query.agent_id : null;
+  res.json(await getRatingsDashboard(from, to, agent));
+}));
+
+// Assign / take back reviews by count (like the survey campaigns): N unassigned open reviews go to an agent, or N of an
+// agent's untouched reviews go back to the pool.
+const requireReviewAssigner = (req: any, res: any, next: any) =>
+  ["admin", "supervisor", "leader"].includes(req.user?.role) ? next() : res.status(403).json({ error: "Access denied." });
+app.get("/api/ratings/agent-load", authenticateJWT, requireReviewAssigner, asyncHandler(async (_req: any, res) => {
+  res.json(await DB.getRatingAgentLoad());
+}));
+app.post("/api/ratings/assign-count", authenticateJWT, requireReviewAssigner, asyncHandler(async (req: any, res) => {
+  const { agent_id, count } = req.body || {};
+  if (!agent_id || !(Number(count) > 0)) return res.status(400).json({ error: "Pick the agent and how many reviews." });
+  const n = await DB.assignRatingsByCount(String(agent_id), Math.min(5000, Number(count)));
+  req.auditExtra = { details: `gave ${n} review(s) to ${(await DB.getUserById(String(agent_id)))?.full_name || agent_id}` };
+  res.json({ assigned: n });
+}));
+app.post("/api/ratings/unassign-count", authenticateJWT, requireReviewAssigner, asyncHandler(async (req: any, res) => {
+  const { agent_id, count } = req.body || {};
+  if (!agent_id || !(Number(count) > 0)) return res.status(400).json({ error: "Pick the agent and how many reviews." });
+  const n = await DB.unassignRatingsByCount(String(agent_id), Math.min(5000, Number(count)));
+  req.auditExtra = { details: `took ${n} review(s) back from ${(await DB.getUserById(String(agent_id)))?.full_name || agent_id}` };
+  res.json({ unassigned: n });
+}));
+
 // Bulk status change (e.g. mark a batch of reviews "No Action Required")
 app.post("/api/ratings/bulk-status", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (!["admin", "supervisor", "leader"].includes(req.user.role))
@@ -2582,6 +2618,32 @@ app.get("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) 
   res.json(rating);
 }));
 
+// A review an agent closes (complaint recorded, no action needed, unreachable after 3 tries) is written to their Task Log
+// as a "Review" entry, like a finished survey — same type/department routing, "[auto:rating-<id>]" marker keeps it to one
+// entry per review. Reviews the upload closed by itself (4-5 stars, no comment) never get one: nobody worked on them.
+const REVIEW_CLOSE_LABEL: Record<string, string> = { resolved: "Complaint recorded", no_action_needed: "No action required", unreachable: "Unreachable (3 attempts)" };
+async function logClosedReview(user: any, rating: any, status: string): Promise<void> {
+  try {
+    const marker = `[auto:rating-${rating.id}]`;
+    const dup = await DB.query(`SELECT 1 FROM logs WHERE notes LIKE $1 LIMIT 1`, [`%${marker}%`]);
+    if (dup.length) return;
+    const isFM = user.job_title === "FM" || user.job_title === "FM Team Leader";
+    const log_type = isFM ? "call_center" : (DEPT_TO_LOGTYPE[user.department] || "call_center");
+    const now = new Date().toISOString();
+    const attempts = (rating.attempts || []).length;
+    const notes = [`Review ${rating.rating}★ · ${rating.platform_name || ""}`.trim(), REVIEW_CLOSE_LABEL[status] || status, attempts ? `${attempts} call attempt(s)` : null, rating.customer_phone || null, marker].filter(Boolean).join(" · ");
+    await DB.addLog({
+      log_type: log_type as any, department: user.department || "Call Center", activity_type: "Review", status: "Completed",
+      agent_id: user.id, agent_name: user.full_name,
+      brand: rating.brand_name || undefined, branch: rating.branch || undefined, order_number: rating.order_id || undefined,
+      aggregator: rating.platform_name || undefined, customer_name: rating.customer_name || undefined,
+      notes, duration_seconds: 0, created_at: now, updated_at: now, created_by: user.id,
+    } as any);
+  } catch (e: any) {
+    console.warn("[review-log] could not write the Task Log entry:", e?.message || e);
+  }
+}
+
 // Patch rating (status / note / assignment / customer contact)
 app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res) => {
   if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
@@ -2611,6 +2673,7 @@ app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res
     }
   }
   const updated = await DB.updateRating(req.params.id, fields);
+  if (fields.resolved_at) await logClosedReview(req.user, rating, action_status);
   res.json(updated);
 }));
 
@@ -2643,6 +2706,7 @@ app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: 
     fields.recorded_at = new Date().toISOString();
   }
   await DB.updateRating(req.params.id, fields);
+  if (fields.resolved_at) await logClosedReview(req.user, { ...rating, attempts: [...(rating.attempts || []), attempt] }, "unreachable");
   res.json(attempt);
 }));
 
@@ -4180,7 +4244,24 @@ app.post("/api/surveys/campaigns/:id/assign", authenticateJWT, asyncHandler(asyn
   const { agent_id, count } = req.body;
   if (!agent_id || !count) return res.status(400).json({ error: "agent_id and count are required." });
   const n = await DB.assignCampaignNumbers(req.params.id, agent_id, Number(count));
+  req.auditExtra = { details: `campaign ${req.params.id}: gave ${n} number(s) to ${(await DB.getUserById(agent_id))?.full_name || agent_id}` };
   res.json({ assigned: n });
+}));
+
+// Take N of an agent's pending numbers in a campaign back to the pool (the opposite of assign-by-count).
+app.post("/api/surveys/campaigns/:id/unassign", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const { agent_id, count } = req.body;
+  if (!agent_id || !(Number(count) > 0)) return res.status(400).json({ error: "agent_id and count are required." });
+  const n = await DB.unassignCampaignNumbers(req.params.id, agent_id, Number(count));
+  req.auditExtra = { details: `campaign ${req.params.id}: took ${n} number(s) back from ${(await DB.getUserById(agent_id))?.full_name || agent_id}` };
+  res.json({ unassigned: n });
+}));
+
+// Who holds how many pending numbers of a campaign, and how many are still unassigned.
+app.get("/api/surveys/campaigns/:id/agent-load", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  res.json(await DB.getCampaignAgentLoad(req.params.id));
 }));
 
 // ---- Survey Records (uploaded results) ----

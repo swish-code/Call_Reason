@@ -2152,6 +2152,38 @@ export class DB {
     return res.rowCount ?? 0;
   }
 
+  // Give N unassigned open reviews (tasks nobody has yet, oldest first) to an agent. Returns how many.
+  static async assignRatingsByCount(agentId: string, count: number): Promise<number> {
+    const { rows } = await pool.query(
+      `SELECT id FROM ratings WHERE assigned_agent_id IS NULL AND requires_action = true AND action_status = 'pending'
+       ORDER BY uploaded_at ASC LIMIT $1`, [count]);
+    if (!rows.length) return 0;
+    await pool.query("UPDATE ratings SET assigned_agent_id = $1 WHERE id = ANY($2)", [agentId, rows.map((r) => r.id)]);
+    return rows.length;
+  }
+
+  // Take N of an agent's open reviews they have not started (pending, no call attempt) back to the pool, newest first.
+  static async unassignRatingsByCount(agentId: string, count: number): Promise<number> {
+    const { rows } = await pool.query(
+      `SELECT r.id FROM ratings r WHERE r.assigned_agent_id = $1 AND r.action_status = 'pending'
+         AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id)
+       ORDER BY r.uploaded_at DESC LIMIT $2`, [agentId, count]);
+    if (!rows.length) return 0;
+    await pool.query("UPDATE ratings SET assigned_agent_id = NULL WHERE id = ANY($1)", [rows.map((r) => r.id)]);
+    return rows.length;
+  }
+
+  // Who holds how many open reviews (pending / in progress), and how many open ones have no agent.
+  static async getRatingAgentLoad(): Promise<{ unassigned: number; agents: { id: string; full_name: string; open: number; untouched: number }[] }> {
+    const { rows } = await pool.query(`
+      SELECT r.assigned_agent_id AS id, u.full_name, count(*)::int AS open,
+             count(*) FILTER (WHERE r.action_status = 'pending' AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id))::int AS untouched
+        FROM ratings r LEFT JOIN users u ON u.id = r.assigned_agent_id
+       WHERE r.requires_action = true AND r.action_status IN ('pending', 'in_progress') GROUP BY 1, 2 ORDER BY 3 DESC`);
+    const unassigned = rows.find((r) => !r.id)?.open || 0;
+    return { unassigned, agents: rows.filter((r) => r.id).map((r) => ({ id: r.id, full_name: r.full_name || "(unknown)", open: r.open, untouched: r.untouched })) };
+  }
+
   static async bulkSetRatingStatus(ids: string[], actionStatus: string): Promise<number> {
     if (!ids.length) return 0;
     const closingStatuses = ["resolved", "no_action_needed", "unreachable"];
@@ -3592,6 +3624,27 @@ export class DB {
     const ids = rows.map((r) => r.id);
     await pool.query("UPDATE survey_assignments SET assigned_agent_id = $1 WHERE id = ANY($2)", [agentId, ids]);
     return ids.length;
+  }
+
+  // Take N of an agent's pending (not started) numbers of a campaign back to the pool — the newest given first,
+  // so what they were handed last is what goes back. Returns how many went back.
+  static async unassignCampaignNumbers(campaignId: string, agentId: string, count: number): Promise<number> {
+    const { rows } = await pool.query(
+      `SELECT id FROM survey_assignments WHERE campaign_id = $1 AND assigned_agent_id = $2 AND status = 'pending'
+       ORDER BY created_at DESC LIMIT $3`, [campaignId, agentId, count]);
+    if (!rows.length) return 0;
+    await pool.query("UPDATE survey_assignments SET assigned_agent_id = NULL WHERE id = ANY($1)", [rows.map((r) => r.id)]);
+    return rows.length;
+  }
+
+  // Who holds how many pending numbers of a campaign (for the assign / take back screen), plus the unassigned pool.
+  static async getCampaignAgentLoad(campaignId: string): Promise<{ unassigned: number; agents: { id: string; full_name: string; pending: number }[] }> {
+    const { rows } = await pool.query(`
+      SELECT a.assigned_agent_id AS id, u.full_name, count(*)::int AS pending
+        FROM survey_assignments a LEFT JOIN users u ON u.id = a.assigned_agent_id
+       WHERE a.campaign_id = $1 AND a.status = 'pending' GROUP BY 1, 2 ORDER BY 3 DESC`, [campaignId]);
+    const unassigned = rows.find((r) => !r.id)?.pending || 0;
+    return { unassigned, agents: rows.filter((r) => r.id).map((r) => ({ id: r.id, full_name: r.full_name || "(unknown)", pending: r.pending })) };
   }
 
   /**

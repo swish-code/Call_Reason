@@ -118,6 +118,11 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState("");
   const [assignResult, setAssignResult] = useState<number | null>(null);
+  const [assignMode, setAssignMode] = useState<"give" | "take">("give");
+  const [load, setLoad] = useState<{ unassigned: number; agents: { id: string; full_name: string; pending: number }[] } | null>(null);
+  const fetchLoad = async (id: string) => {
+    try { const r = await apiFetch(`/api/surveys/campaigns/${id}/agent-load`); if (r.ok) setLoad(await r.json()); } catch { /* the counts are informational */ }
+  };
 
   const fetchCampaigns = useCallback(async () => {
     setLoading(true);
@@ -216,6 +221,9 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
     setAssignCount(10);
     setAssignError("");
     setAssignResult(null);
+    setAssignMode("give");
+    setLoad(null);
+    fetchLoad(c.id);
   };
 
   const handleAssign = async () => {
@@ -225,14 +233,15 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
     setAssigning(true);
     setAssignResult(null);
     try {
-      const res = await apiFetch(`/api/surveys/campaigns/${assignFor.id}/assign`, {
+      const res = await apiFetch(`/api/surveys/campaigns/${assignFor.id}/${assignMode === "give" ? "assign" : "unassign"}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: assignAgent, count: Number(assignCount) }),
       });
       const data = await res.json();
       if (!res.ok) { setAssignError(data.error || "Assignment failed."); return; }
-      setAssignResult(data.assigned ?? 0);
+      setAssignResult(assignMode === "give" ? (data.assigned ?? 0) : (data.unassigned ?? 0));
+      fetchLoad(assignFor.id);
       fetchCampaigns();
     } catch (e: any) {
       setAssignError(e.message || "Assignment error.");
@@ -636,18 +645,33 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
           <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
               <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2">
-                <Users className="w-4 h-4 text-violet-400" /> Assign Numbers
+                <Users className="w-4 h-4 text-violet-400" /> {assignMode === "give" ? "Assign Numbers" : "Take Numbers Back"}
               </h3>
               <button onClick={() => setAssignFor(null)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-1 text-xs font-bold">
+              {([["give", "Give to an agent"], ["take", "Take back from an agent"]] as const).map(([k, l]) => (
+                <button key={k} onClick={() => { setAssignMode(k); setAssignResult(null); setAssignError(""); }}
+                  className={`flex-1 py-1.5 rounded-lg transition ${assignMode === k ? "bg-violet-600 text-white" : "text-[var(--muted)] hover:text-[var(--heading)]"}`}>{l}</button>
+              ))}
+            </div>
+            {load && (
+              <div className="text-[11px] text-[var(--muted)] space-y-1">
+                <div><b className="text-[var(--heading)]">{load.unassigned}</b> pending number(s) without an agent in this campaign.</div>
+                {load.agents.length > 0 && <div className="flex flex-wrap gap-1">{load.agents.map(a => <span key={a.id} className="px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[10px]">{a.full_name}: <b>{a.pending}</b></span>)}</div>}
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-xs font-bold text-[var(--text)]">Agent</label>
               <select value={assignAgent} onChange={e => setAssignAgent(e.target.value)} className={`w-full ${selCls}`}>
                 <option value="">— Select —</option>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.full_name} ({a.role})</option>)}
+                {assignMode === "give"
+                  ? agents.map(a => <option key={a.id} value={a.id}>{a.full_name} ({a.role}){load?.agents.find(x => x.id === a.id) ? ` — has ${load.agents.find(x => x.id === a.id)!.pending} pending` : ""}</option>)
+                  : (load?.agents || []).map(a => <option key={a.id} value={a.id}>{a.full_name} — {a.pending} pending</option>)}
               </select>
             </div>
 
@@ -665,11 +689,11 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
             {assignResult !== null && (
               assignResult === 0 ? (
                 <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-xl text-xs text-amber-400 font-bold">
-                  No unassigned numbers left in this campaign — every pending number already has an agent. Reassigning to a different agent isn't done here; use the "Assign / reassign" dropdown for individual rows on the All Surveys page instead.
+                  {assignMode === "give" ? "No unassigned numbers left in this campaign — every pending number already has an agent. Take some back from an agent first, or use the \"Assign / reassign\" dropdown on the All Surveys page for single rows." : "This agent has no pending numbers in this campaign to take back (started or finished surveys stay with whoever did them)."}
                 </div>
               ) : (
                 <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">
-                  Assigned {assignResult} number(s).
+                  {assignMode === "give" ? `Assigned ${assignResult} number(s).` : `Took ${assignResult} number(s) back to the pool.`}
                 </div>
               )
             )}
@@ -683,7 +707,7 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                 disabled={assigning}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
               >
-                {assigning ? 'Assigning…' : 'Assign'}
+                {assigning ? 'Saving…' : assignMode === "give" ? 'Assign' : 'Take back'}
               </button>
             </div>
           </div>
