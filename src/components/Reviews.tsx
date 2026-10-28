@@ -492,6 +492,15 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, ratings]);
+  useEffect(() => {
+    if (!detail || detail.items || itemsById[detail.id] !== undefined) return;
+    let live = true;
+    apiFetch('/api/ratings/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [detail.id] }) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (live && d) setItemsById(prev => ({ ...prev, [detail.id]: d.items[detail.id] || null })); }).catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.id]);
   const itemsLine = (items: Rating["items"]) => (items || []).map(it => `${it.qty > 1 ? `${it.qty}× ` : ''}${it.name}${it.modifiers?.length ? ` (${it.modifiers.join(', ')})` : ''}`);
 
   // Header checkbox selects the CURRENT page; selections persist across pages
@@ -1213,6 +1222,29 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       </div>
                     )}
                   </div>
+
+                  {/* What the customer ordered (GrubTech order archive) */}
+                  {(() => {
+                    const items = detail.items ?? itemsById[detail.id];
+                    const lines = itemsLine(items || null);
+                    return (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] text-[var(--muted)] font-bold uppercase tracking-wide">Items ordered</p>
+                        {items === undefined ? <p className="text-xs text-[var(--muted)]">Looking up the order…</p>
+                          : !lines.length ? <p className="text-xs text-[var(--muted)]">{itemsOff ? "GrubTech lookup is not configured." : "Not in the GrubTech order archive (yet)."}</p>
+                          : (
+                            <ul className="p-3 bg-[var(--bg)] border border-[var(--border)] rounded-2xl text-xs text-[var(--text)] space-y-1.5">
+                              {(items || []).map((it, i) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className="font-mono font-bold text-[var(--heading)] w-8 shrink-0">{it.qty}×</span>
+                                  <span><span className="font-bold text-[var(--heading)]">{it.name}</span>{it.modifiers?.length ? <span className="text-[var(--muted)]"> — {it.modifiers.join(", ")}</span> : null}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Review text */}
                   {detail.review_text && (
