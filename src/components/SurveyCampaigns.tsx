@@ -111,8 +111,8 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
   const [numbersResult, setNumbersResult] = useState<NumbersResult | null>(null);
   const [numbersError, setNumbersError] = useState("");
 
-  // Assign modal
-  const [assignFor, setAssignFor] = useState<SurveyCampaign | null>(null);
+  // Assign / take back panel
+  const [panelId, setPanelId] = useState("");
   const [assignAgent, setAssignAgent] = useState("");
   const [assignCount, setAssignCount] = useState(10);
   const [assigning, setAssigning] = useState(false);
@@ -215,16 +215,19 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
     }
   };
 
-  const openAssign = (c: SurveyCampaign) => {
-    setAssignFor(c);
-    setAssignAgent("");
-    setAssignCount(10);
-    setAssignError("");
-    setAssignResult(null);
-    setAssignMode("give");
+  // The campaigns that can still hand out numbers; the inline panel works on one of them.
+  const assignable = useMemo(() => campaigns.filter(c => c.status !== 'cancelled' && c.status !== 'completed'), [campaigns]);
+  useEffect(() => {
+    if (assignable.length && !assignable.some(c => c.id === panelId)) setPanelId(assignable[0].id);
+  }, [assignable, panelId]);
+  useEffect(() => {
     setLoad(null);
-    fetchLoad(c.id);
-  };
+    setAssignAgent("");
+    setAssignResult(null);
+    setAssignError("");
+    if (panelId) fetchLoad(panelId);
+  }, [panelId]);
+  const assignFor = assignable.find(c => c.id === panelId) || null;
 
   const handleAssign = async () => {
     if (!assignFor) return;
@@ -309,6 +312,61 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
       {error && (
         <div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-3xl text-sm text-rose-400 flex items-center gap-2">
           <AlertCircle className="w-5 h-5" /> {error}
+        </div>
+      )}
+
+      {/* Assign / take back — always visible, like the Shakir Campaign page */}
+      {isLeader && assignFor && (
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl shadow-lg p-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1">
+              <Users className="w-4 h-4 text-violet-400" /> {assignMode === "give" ? "Assign numbers" : "Take numbers back"}
+            </div>
+            <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-0.5 text-[11px] font-bold">
+              {([["give", "Give"], ["take", "Take back"]] as const).map(([k, l]) => (
+                <button key={k} onClick={() => { setAssignMode(k); setAssignAgent(""); setAssignResult(null); setAssignError(""); }}
+                  className={`px-3 py-1.5 rounded-lg transition ${assignMode === k ? "bg-violet-600 text-white" : "text-[var(--muted)] hover:text-[var(--heading)]"}`}>{l}</button>
+              ))}
+            </div>
+            <select value={panelId} onChange={e => setPanelId(e.target.value)} className={selCls + " min-w-[14rem] max-w-xs"}>
+              {assignable.map(c => <option key={c.id} value={c.id}>{(c.brand_name || 'General')} — {c.template_name || 'no template'} · {fmtDate(c.created_at).slice(0, 10)} ({c.done_numbers ?? 0}/{c.total_numbers ?? 0})</option>)}
+            </select>
+            <span className="text-[11px] text-[var(--muted)]">
+              {assignMode === "give"
+                ? <><b className="text-[var(--heading)]">{load ? load.unassigned : "…"}</b> pending number(s) without an agent</>
+                : "Takes back only numbers the agent has not started (started or finished surveys stay with whoever did them)"}
+            </span>
+            <select value={assignAgent} onChange={e => setAssignAgent(e.target.value)} className={selCls + " min-w-[12rem]"}>
+              <option value="">— agent —</option>
+              {assignMode === "give"
+                ? agents.map(a => { const l = load?.agents.find(x => x.id === a.id); return <option key={a.id} value={a.id}>{a.full_name}{l ? ` — ${l.pending} pending` : ""}</option>; })
+                : (load?.agents || []).map(a => <option key={a.id} value={a.id}>{a.full_name} — {a.pending} pending</option>)}
+            </select>
+            <input type="number" min={1} value={assignCount} onChange={e => setAssignCount(Number(e.target.value))} className={inputCls + " w-24"} />
+            <button onClick={handleAssign} disabled={assigning || !assignAgent || !Number(assignCount)}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">
+              {assigning ? 'Saving…' : assignMode === "give" ? 'Give' : 'Take back'}
+            </button>
+          </div>
+          {load && load.agents.length > 0 && (
+            <div className="flex flex-wrap gap-1">{load.agents.map(a => <span key={a.id} className="px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[10px]">{a.full_name}: <b>{a.pending}</b></span>)}</div>
+          )}
+          {assignError && (
+            <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {assignError}
+            </div>
+          )}
+          {assignResult !== null && (
+            assignResult === 0 ? (
+              <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-xl text-xs text-amber-400 font-bold">
+                {assignMode === "give" ? "No unassigned numbers left in this campaign — every pending number already has an agent. Take some back from an agent first, or use the \"Assign / reassign\" dropdown on the All Surveys page for single rows." : "This agent has no pending numbers in this campaign to take back."}
+              </div>
+            ) : (
+              <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">
+                {assignMode === "give" ? `Assigned ${assignResult} number(s).` : `Took ${assignResult} number(s) back to the pool.`}
+              </div>
+            )
+          )}
         </div>
       )}
 
@@ -410,14 +468,6 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                         >
                           <Upload className="w-3 h-3" /> Numbers
                         </button>
-                        {isLeader && (
-                          <button
-                            onClick={() => openAssign(c)}
-                            className="px-2.5 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded-lg text-[10px] font-bold flex items-center gap-1 transition"
-                          >
-                            <Users className="w-3 h-3" /> Assign
-                          </button>
-                        )}
                         {c.status !== 'cancelled' && c.status !== 'completed' && (
                           <button
                             onClick={() => cancelCampaign(c)}
@@ -633,81 +683,6 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
               >
                 {numbersUploading ? 'Uploading…' : 'Upload'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Assign Modal */}
-      {assignFor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
-              <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2">
-                <Users className="w-4 h-4 text-violet-400" /> {assignMode === "give" ? "Assign Numbers" : "Take Numbers Back"}
-              </h3>
-              <button onClick={() => setAssignFor(null)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-1 text-xs font-bold">
-              {([["give", "Give to an agent"], ["take", "Take back from an agent"]] as const).map(([k, l]) => (
-                <button key={k} onClick={() => { setAssignMode(k); setAssignResult(null); setAssignError(""); }}
-                  className={`flex-1 py-1.5 rounded-lg transition ${assignMode === k ? "bg-violet-600 text-white" : "text-[var(--muted)] hover:text-[var(--heading)]"}`}>{l}</button>
-              ))}
-            </div>
-            {load && (
-              <div className="text-[11px] text-[var(--muted)] space-y-1">
-                <div><b className="text-[var(--heading)]">{load.unassigned}</b> pending number(s) without an agent in this campaign.</div>
-                {load.agents.length > 0 && <div className="flex flex-wrap gap-1">{load.agents.map(a => <span key={a.id} className="px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[10px]">{a.full_name}: <b>{a.pending}</b></span>)}</div>}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-[var(--text)]">Agent</label>
-              <select value={assignAgent} onChange={e => setAssignAgent(e.target.value)} className={`w-full ${selCls}`}>
-                <option value="">— Select —</option>
-                {assignMode === "give"
-                  ? agents.map(a => <option key={a.id} value={a.id}>{a.full_name} ({a.role}){load?.agents.find(x => x.id === a.id) ? ` — has ${load.agents.find(x => x.id === a.id)!.pending} pending` : ""}</option>)
-                  : (load?.agents || []).map(a => <option key={a.id} value={a.id}>{a.full_name} — {a.pending} pending</option>)}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-[var(--text)]">Count</label>
-              <input type="number" min={1} value={assignCount} onChange={e => setAssignCount(Number(e.target.value))} className={`w-full ${inputCls}`} />
-            </div>
-
-            {assignError && (
-              <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {assignError}
-              </div>
-            )}
-
-            {assignResult !== null && (
-              assignResult === 0 ? (
-                <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-xl text-xs text-amber-400 font-bold">
-                  {assignMode === "give" ? "No unassigned numbers left in this campaign — every pending number already has an agent. Take some back from an agent first, or use the \"Assign / reassign\" dropdown on the All Surveys page for single rows." : "This agent has no pending numbers in this campaign to take back (started or finished surveys stay with whoever did them)."}
-                </div>
-              ) : (
-                <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">
-                  {assignMode === "give" ? `Assigned ${assignResult} number(s).` : `Took ${assignResult} number(s) back to the pool.`}
-                </div>
-              )
-            )}
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setAssignFor(null)} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">
-                Close
-              </button>
-              <button
-                onClick={handleAssign}
-                disabled={assigning}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition"
-              >
-                {assigning ? 'Saving…' : assignMode === "give" ? 'Assign' : 'Take back'}
               </button>
             </div>
           </div>
