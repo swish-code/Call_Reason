@@ -214,7 +214,8 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   const canEdit = EDIT_ROLES.includes(role), canDelete = role === "admin";
   const [editing, setEditing] = useState<any | null>(null);
   const [rows, setRows] = useState<any[]>([]);
-  const [agents, setAgents] = useState<{ id: string; full_name: string; open: number }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; full_name: string; open: number; untouched?: number }[]>([]);
+  const [giveMode, setGiveMode] = useState<"give" | "take">("give");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -238,10 +239,11 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
 
   const give = async () => {
     setError(""); setMsg("");
-    const res = await apiFetch(`/api/offer-campaigns/${camp.id}/assign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: giveAgent, count: Number(giveCount) }) });
+    const res = await apiFetch(`/api/offer-campaigns/${camp.id}/${giveMode === "give" ? "assign" : "unassign"}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: giveAgent, count: Number(giveCount) }) });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) { setError(d.error || "Could not assign."); return; }
-    setMsg(`Gave ${d.assigned} customer(s) to ${agents.find((a) => a.id === giveAgent)?.full_name || "the agent"}.`);
+    if (!res.ok) { setError(d.error || (giveMode === "give" ? "Could not assign." : "Could not take them back.")); return; }
+    const who = agents.find((a) => a.id === giveAgent)?.full_name || "the agent";
+    setMsg(giveMode === "give" ? `Gave ${d.assigned} customer(s) to ${who}.` : (d.unassigned ? `Took ${d.unassigned} customer(s) back from ${who} — they are in the pool again.` : `${who} has no never-called customers to take back.`));
     load();
   };
   const reassign = async (id: string, agentId: string) => {
@@ -302,14 +304,26 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
         ))}
       </div>
       <div className={box + " p-4 flex flex-wrap items-end gap-3"}>
-        <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Users className="w-4 h-4 text-violet-400" /> Give customers</div>
-        <span className="text-[11px] text-[var(--muted)]"><b className="text-[var(--heading)]">{unassigned}</b> never-called customer(s) without an agent</span>
+        <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Users className="w-4 h-4 text-violet-400" /> {giveMode === "give" ? "Give customers" : "Take customers back"}</div>
+        <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-0.5 text-[11px] font-bold">
+          {([["give", "Give"], ["take", "Take back"]] as const).map(([k, l]) => (
+            <button key={k} onClick={() => { setGiveMode(k); setGiveAgent(""); setMsg(""); setError(""); }}
+              className={`px-3 py-1.5 rounded-lg transition ${giveMode === k ? "bg-violet-600 text-white" : "text-[var(--muted)] hover:text-[var(--heading)]"}`}>{l}</button>
+          ))}
+        </div>
+        <span className="text-[11px] text-[var(--muted)]">
+          {giveMode === "give"
+            ? <><b className="text-[var(--heading)]">{unassigned}</b> never-called customer(s) without an agent</>
+            : "Takes back only customers the agent has not called yet (the last ones given first)"}
+        </span>
         <select value={giveAgent} onChange={(e) => setGiveAgent(e.target.value)} className={selCls + " min-w-[12rem]"}>
           <option value="">— agent —</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.full_name} — {a.open} open</option>)}
+          {giveMode === "give"
+            ? agents.map((a) => <option key={a.id} value={a.id}>{a.full_name} — {a.open} open</option>)
+            : agents.filter((a) => (a.untouched || 0) > 0).map((a) => <option key={a.id} value={a.id}>{a.full_name} — {a.untouched} not called yet</option>)}
         </select>
         <input type="number" min="1" max="2000" value={giveCount} onChange={(e) => setGiveCount(e.target.value)} className={inputCls + " w-24"} />
-        <button onClick={give} disabled={!giveAgent || !Number(giveCount)} className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">Give</button>
+        <button onClick={give} disabled={!giveAgent || !Number(giveCount)} className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{giveMode === "give" ? "Give" : "Take back"}</button>
       </div>
 
       <div className={box + " p-4 flex flex-wrap items-end gap-3"}>

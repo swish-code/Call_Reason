@@ -298,7 +298,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
   app.get(`${B}/:id/agents`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
     res.json(await DB.query(`
       SELECT u.id, u.full_name, u.role,
-             count(oc.id) FILTER (WHERE oc.call_status IN ('not_called','no_answer','busy','call_back'))::int AS open
+             count(oc.id) FILTER (WHERE oc.call_status IN ('not_called','no_answer','busy','call_back'))::int AS open,
+             count(oc.id) FILTER (WHERE oc.call_status = 'not_called')::int AS untouched
         FROM users u LEFT JOIN offer_customers oc ON oc.assigned_agent_id = u.id AND oc.campaign_id = $1
        WHERE u.status = 'Active' AND u.role IN ('agent','leader','supervisor')
        GROUP BY u.id, u.full_name, u.role ORDER BY u.full_name`, [req.params.id]));
@@ -321,6 +322,26 @@ export function registerOfferRoutes(app: any, d: Deps) {
       [camp.id, agent.full_name, req.user.id, req.user.full_name, String(Date.now()), ids]);
     req.auditExtra = { details: `${camp.name}: gave ${ids.length} customer(s) to ${agent.full_name}`, new_value: agent.full_name };
     res.json({ assigned: ids.length });
+  }));
+
+  // Take N of an agent's never-called customers back to the pool (the opposite of Give): the ones handed over last go
+  // first. Customers the agent already called stay with them.
+  app.post(`${B}/:id/unassign`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
+    const camp = await getCampaign(req.params.id);
+    if (!camp) return res.status(404).json({ error: "Campaign not found." });
+    const count = Math.min(Math.max(Number(req.body?.count) || 0, 0), 2000);
+    const agent = (await DB.query(`SELECT id, full_name FROM users WHERE id = $1`, [req.body?.agent_id]))[0];
+    if (!agent || !count) return res.status(400).json({ error: "Pick an agent and how many customers to take back." });
+    const ids = (await DB.query(`
+      UPDATE offer_customers SET assigned_agent_id = NULL, assigned_at = NULL
+       WHERE id IN (SELECT id FROM offer_customers WHERE campaign_id = $1 AND assigned_agent_id = $2 AND call_status = 'not_called'
+                     ORDER BY assigned_at DESC NULLS LAST, uploaded_at DESC, id LIMIT $3)
+      RETURNING id`, [camp.id, agent.id, count])).map((r: any) => r.id);
+    if (ids.length) await DB.query(`INSERT INTO offer_events (id, customer_id, campaign_id, kind, details, user_id, user_name)
+      SELECT 'ofa-' || x || '-' || $5::text, x, $1, 'assign', jsonb_build_object('from', $2::text, 'to', NULL::text), $3, $4 FROM unnest($6::text[]) AS x`,
+      [camp.id, agent.full_name, req.user.id, req.user.full_name, String(Date.now()), ids]);
+    req.auditExtra = { details: `${camp.name}: took ${ids.length} customer(s) back from ${agent.full_name}`, previous_value: agent.full_name };
+    res.json({ unassigned: ids.length });
   }));
 
   // Move one customer to another agent (or to nobody) — only while they are still to be called.
