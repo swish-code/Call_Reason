@@ -1144,11 +1144,26 @@ app.get("/api/logs/dashboard", authenticateJWT, asyncHandler(async (req: any, re
 
 // History / audit trail (Team Leaders + Admin)
 app.get("/api/logs/history", authenticateJWT, requireLeaderOrAdmin, asyncHandler(async (req: any, res: any) => {
-  let logs = await DB.getAuditLogs();
-  if (req.user.role === "leader") {
-    logs = logs.filter((l) => !l.department || l.department === req.user.department);
+  // Paged on the server: the audit table grows with every click, so the page asks for one slice at a time.
+  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? String(req.query[k]) : "");
+  const where: string[] = [], vals: any[] = [];
+  if (req.user.role === "leader") { vals.push(req.user.department || ""); where.push(`(department IS NULL OR department = '' OR department = $${vals.length})`); }
+  const scope = where.join(" AND ");
+  if (q("action")) { vals.push(q("action")); where.push(`action = $${vals.length}`); }
+  if (q("search")) {
+    vals.push("%" + q("search") + "%");
+    where.push(`concat_ws(' ', operator_name, action, details, department, previous_value, new_value, related_ref) ILIKE $${vals.length}`);
   }
-  res.json(logs);
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const exporting = q("export") === "1";
+  const limit = exporting ? 50000 : Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  const offset = exporting ? 0 : Math.max(Number(req.query.offset) || 0, 0);
+  const [rows, total, actions] = await Promise.all([
+    DB.query(`SELECT * FROM audit_logs ${whereSql} ORDER BY timestamp DESC, id DESC LIMIT ${limit} OFFSET ${offset}`, vals),
+    DB.query(`SELECT count(*)::int AS n FROM audit_logs ${whereSql}`, vals),
+    DB.query(`SELECT DISTINCT action FROM audit_logs ${scope ? `WHERE ${scope}` : ""} ORDER BY 1`, scope ? [req.user.department || ""] : []),
+  ]);
+  res.json({ rows, total: total[0]?.n ?? 0, actions: actions.map((a: any) => a.action).filter(Boolean) });
 }));
 
 app.post("/api/logs", authenticateJWT, asyncHandler(async (req: any, res: any) => {
