@@ -51,6 +51,7 @@ const statusView = (s: string): { label: string; cls: string } => {
   if (s === 'unreachable' || s === 'declined') return { label: 'Not Reached', cls: 'bg-rose-500/10 text-rose-400 border-rose-500/20' };
   if (s === 'refused') return { label: 'Refused to Complete', cls: 'bg-orange-500/10 text-orange-400 border-orange-500/20' };
   if (s === 'not_interested') return { label: 'Not Interested', cls: 'bg-orange-500/10 text-orange-400 border-orange-500/20' };
+  if (s === 'cancelled') return { label: 'Order Cancelled', cls: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20' };
   if (s === 'in_progress') return { label: 'In Progress', cls: 'bg-blue-500/10 text-blue-400 border-blue-500/20' };
   return { label: 'Pending', cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
 };
@@ -234,6 +235,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           <option value="not_reached">Completed — Not Reached</option>
           <option value="refused">Refused to Complete</option>
           <option value="not_interested">Not Interested</option>
+          <option value="cancelled">Order Cancelled</option>
         </select>
         <select value={actionType} onChange={e => setActionType(e.target.value)} className={selCls}>
           <option value="">All Actions</option>
@@ -451,6 +453,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                           <option value="unreachable">Completed — Not Reached</option>
                           <option value="refused">Refused to Complete</option>
                           <option value="not_interested">Not Interested</option>
+                          <option value="cancelled">Order Cancelled</option>
                         </select>
                       ) : (
                         <span className={`px-2 py-1 rounded-lg border text-[10px] font-bold ${sv.cls}`}>{sv.label}</span>

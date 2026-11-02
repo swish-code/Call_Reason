@@ -1329,7 +1329,7 @@ export class DB {
         FROM ratings WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
       pool.query(`
         SELECT upload_batch_id AS id,
-               count(*)::int AS denominator,
+               count(*) FILTER (WHERE status <> 'cancelled')::int AS denominator,
                count(*) FILTER (WHERE status IN ('successful','unreachable','declined','refused','not_interested'))::int AS completed,
                count(*) FILTER (WHERE status = 'successful')::int AS successful
         FROM survey_assignments WHERE upload_batch_id = ANY($1) GROUP BY upload_batch_id`, [ids]),
@@ -2429,7 +2429,7 @@ export class DB {
     const { rows } = await pool.query(`
       SELECT c.*, b.brand_name, t.name AS template_name, u.full_name AS requested_by_name,
         da.full_name AS default_agent_name,
-        (SELECT COUNT(*)::int FROM survey_assignments a WHERE a.campaign_id = c.id) AS total_numbers,
+        (SELECT COUNT(*)::int FROM survey_assignments a WHERE a.campaign_id = c.id AND a.status <> 'cancelled') AS total_numbers,
         (SELECT COUNT(*)::int FROM survey_assignments a WHERE a.campaign_id = c.id AND a.status = 'successful') AS done_numbers
       FROM survey_campaigns c
       LEFT JOIN brands b ON b.id = c.brand_id
@@ -3321,6 +3321,15 @@ export class DB {
     }
   }
 
+  // The agent found the order was cancelled: the survey closes with its own status. It is not a contact (nobody was
+  // called, so no Survey Data record and no contact recency), and every report leaves it out of its totals.
+  static async cancelSurveyAssignment(assignmentId: string): Promise<any> {
+    await pool.query(
+      "UPDATE survey_assignments SET status = 'cancelled', reachability = NULL, completed_at = now() WHERE id = $1 AND status IN ('pending','in_progress')",
+      [assignmentId]);
+    return DB.getSurveyAssignmentById(assignmentId);
+  }
+
   // Manually assign (or reassign, or clear) a single survey assignment
   static async assignSurveyAssignment(assignmentId: string, agentId: string | null): Promise<any> {
     await pool.query("UPDATE survey_assignments SET assigned_agent_id = $1 WHERE id = $2", [agentId, assignmentId]);
@@ -3377,6 +3386,7 @@ export class DB {
     // from "not_reached" (never got the customer on the line at all).
     else if (filter.status === "refused") { clauses.push(`a.status = 'refused'`); }
     else if (filter.status === "not_interested") { clauses.push(`a.status = 'not_interested'`); }
+    else if (filter.status === "cancelled") { clauses.push(`a.status = 'cancelled'`); }
     if (filter.action_type) { clauses.push(`a.action_type = $${idx++}`); values.push(filter.action_type); }
     if (filter.from) { clauses.push(`a.created_at >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`a.created_at <= $${idx++}`); values.push(filter.to); }
@@ -3413,14 +3423,15 @@ export class DB {
   static async getSurveyAnalytics(f: { from: string; to: string; brandId: string | null; monthsFrom: string; monthTo: string; dayFrom: string; dayTo: string }): Promise<any> {
     const DAY = `(a.created_at AT TIME ZONE 'Asia/Kuwait')::date`;
     const COUNTS = `
-      count(*)::int AS uploaded,
+      count(*) FILTER (WHERE a.status <> 'cancelled')::int AS uploaded,
+      count(*) FILTER (WHERE a.status = 'cancelled')::int AS cancelled,
       count(*) FILTER (WHERE a.status = 'successful')::int AS reached,
       count(*) FILTER (WHERE a.status IN ('refused','not_interested'))::int AS refused,
       count(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
       count(*) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS waiting,
-      count(*) FILTER (WHERE c.survey_type = 'daily_normal')::int AS normal,
-      count(*) FILTER (WHERE c.survey_type = 'marketing_item')::int AS new_item,
-      count(*) FILTER (WHERE c.survey_type IS DISTINCT FROM 'daily_normal' AND c.survey_type IS DISTINCT FROM 'marketing_item')::int AS other`;
+      count(*) FILTER (WHERE a.status <> 'cancelled' AND c.survey_type = 'daily_normal')::int AS normal,
+      count(*) FILTER (WHERE a.status <> 'cancelled' AND c.survey_type = 'marketing_item')::int AS new_item,
+      count(*) FILTER (WHERE a.status <> 'cancelled' AND c.survey_type IS DISTINCT FROM 'daily_normal' AND c.survey_type IS DISTINCT FROM 'marketing_item')::int AS other`;
     const FROM = `FROM survey_assignments a LEFT JOIN survey_campaigns c ON c.id = a.campaign_id`;
     const brand = `($1::text IS NULL OR a.brand_id = $1)`;
     const [kpi, months, days, brandDays, brands, answers] = await Promise.all([
@@ -3475,7 +3486,7 @@ export class DB {
         GROUP BY 1 ORDER BY 2 DESC`, v),
       pool.query(`
         SELECT c.id, b.brand_name, t.name AS template_name, c.status,
-               count(a.id)::int AS total,
+               count(a.id) FILTER (WHERE a.status <> 'cancelled')::int AS total,
                count(a.id) FILTER (WHERE a.status IN ('pending','in_progress'))::int AS open,
                count(a.id) FILTER (WHERE a.status IN ${DONE})::int AS finished,
                count(a.id) FILTER (WHERE a.status = 'successful')::int AS successful,
@@ -3522,13 +3533,15 @@ export class DB {
   }
 
   static async getSurveyOverview(filter: SurveyListFilter = {}): Promise<{
-    summary: { total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number };
+    summary: { total: number; cancelled: number; reached: number; not_reached: number; refused_not_interested: number; pending: number };
     byTemplate: { template_name: string; total: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
     byAgent: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; refused_not_interested: number; pending: number }[];
   }> {
     const { where, values } = DB.surveyFilterSql(filter);
+    // A cancelled order is not workload: it stays out of the total so the buckets below still add up to it.
     const BUCKETS = `
-      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE a.status <> 'cancelled')::int AS total,
+      COUNT(*) FILTER (WHERE a.status = 'cancelled')::int AS cancelled,
       COUNT(*) FILTER (WHERE a.status = 'successful')::int AS reached,
       COUNT(*) FILTER (WHERE a.status IN ('unreachable','declined'))::int AS not_reached,
       COUNT(*) FILTER (WHERE a.status IN ('refused','not_interested'))::int AS refused_not_interested,
@@ -3563,7 +3576,7 @@ export class DB {
     const s = sum[0] || {};
     return {
       summary: {
-        total: s.total ?? 0, reached: s.reached ?? 0,
+        total: s.total ?? 0, cancelled: s.cancelled ?? 0, reached: s.reached ?? 0,
         not_reached: s.not_reached ?? 0, refused_not_interested: s.refused_not_interested ?? 0,
         pending: s.pending ?? 0,
       },

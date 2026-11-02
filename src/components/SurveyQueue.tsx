@@ -50,6 +50,7 @@ const statusLabel = (s: string) =>
   : s === 'no_answer' ? 'No Answer'
   : s === 'refused' ? 'Refused to Complete'
   : s === 'not_interested' ? 'Not Interested'
+  : s === 'cancelled' ? 'Order Cancelled'
   : s.charAt(0).toUpperCase() + s.slice(1);
 
 const statusColor = (s: string) =>
@@ -315,6 +316,27 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
       setModalError(e.message || "Update error.");
     } finally {
       setDeclinedSaving(null);
+    }
+  };
+
+  // The order itself was cancelled — nobody should be called; the survey just closes.
+  const [cancelSaving, setCancelSaving] = useState(false);
+  const markCancelled = async () => {
+    if (!workId) return;
+    if (!window.confirm("The customer's order was cancelled?\nThe survey will close and nobody will be called.")) return;
+    setModalError("");
+    setCancelSaving(true);
+    try {
+      const res = await apiFetch(`/api/surveys/assignments/${workId}/cancelled`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setModalError(data.error || "Failed to update."); return; }
+      closeWork();
+      fetchQueue();
+      fetchCapacity();
+    } catch (e: any) {
+      setModalError(e.message || "Update error.");
+    } finally {
+      setCancelSaving(false);
     }
   };
 
@@ -768,6 +790,14 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                         title="Customer was reached but was not interested in the survey"
                       >
                         {declinedSaving === 'not_interested' ? 'Saving…' : 'Not Interested'}
+                      </button>
+                      <button
+                        onClick={markCancelled}
+                        disabled={notReachedSaving || responseSaving || !!declinedSaving || cancelSaving}
+                        className="px-4 py-2 bg-zinc-600 hover:bg-zinc-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+                        title="The customer's order was cancelled — close the survey, nobody is called"
+                      >
+                        {cancelSaving ? 'Saving…' : 'Order Cancelled'}
                       </button>
                     </div>
                   </div>

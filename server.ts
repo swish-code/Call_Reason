@@ -4037,6 +4037,18 @@ app.post("/api/surveys/assignments/:id/response", authenticateJWT, asyncHandler(
   res.json(updated);
 }));
 
+// The agent opened the survey and found the customer's order was cancelled: close it, nobody is called.
+app.post("/api/surveys/assignments/:id/cancelled", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  if (a.status !== "pending" && a.status !== "in_progress") return res.status(409).json({ error: `This survey is already "${a.status}".` });
+  const updated = await DB.cancelSurveyAssignment(req.params.id);
+  await DB.endOpenWorkSessions(req.params.id, req.user.id, "cancelled", "cancelled").catch(() => {});
+  req.auditExtra = { details: `task ${a.task_no ?? "-"}, ${a.customer_phone || "-"}: order ${a.order_id || "-"} is cancelled`, related_ref: a.id };
+  res.json(updated);
+}));
+
 // View All Surveys — every assignment across campaigns, with filters (for reporting + supervision)
 // Shared by the All Surveys list and its overview so both always use the same filter set.
 const surveyListFilter = (q: any) => ({
@@ -4261,7 +4273,7 @@ app.patch("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (r
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   const { status, action_type, reachability } = req.body;
-  const validStatus = ["pending", "in_progress", "successful", "unreachable", "declined", "refused", "not_interested"];
+  const validStatus = ["pending", "in_progress", "successful", "unreachable", "declined", "refused", "not_interested", "cancelled"];
   if (status !== undefined && !validStatus.includes(status))
     return res.status(400).json({ error: "Invalid status." });
   if (action_type !== undefined && !["no_action", "complaint"].includes(action_type))
