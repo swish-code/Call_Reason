@@ -683,7 +683,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
     let wFrom = from === to ? addDays(to, -13) : from;
     if (Date.parse(to) - Date.parse(wFrom) > 91 * 86400_000) wFrom = addDays(to, -91);
     const DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kuwait')::date`;
-    const [uploads, calls, orders, byAgent, churn, customers, slots] = await Promise.all([
+    const [uploads, calls, orders, byAgent, churn, customers, slots, performance] = await Promise.all([
       DB.query(`SELECT to_char(${DAY("uploaded_at")}, 'YYYY-MM-DD') AS day, count(*)::int AS n FROM offer_customers
                  WHERE campaign_id = $1 AND ${DAY("uploaded_at")} BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, wFrom, to]),
       DB.query(`SELECT to_char(${DAY("created_at")}, 'YYYY-MM-DD') AS day, count(*)::int AS calls,
@@ -739,6 +739,17 @@ export function registerOfferRoutes(app: any, d: Deps) {
                        count(*)::int AS calls, count(*) FILTER (WHERE call_status = ANY($4))::int AS answered
                   FROM offer_events WHERE campaign_id = $1 AND kind = 'call' AND direction = 'outbound' AND ${DAY("created_at")} BETWEEN $2::date AND $3::date
                  GROUP BY 1, 2`, [camp.id, from, to, REACHED_STATUSES]),
+      // Agent performance, the way the Surveys dashboard shows it: the customers handed to each agent in the period
+      // (the day they were given; an unassigned customer counts from the day it was uploaded) and where they stand now.
+      // The buckets don't overlap, so reached + not reached + refused + pending = assigned.
+      DB.query(`SELECT oc.assigned_agent_id AS agent_id, COALESCE(u.full_name, '— Unassigned —') AS agent_name, count(*)::int AS assigned,
+                       count(*) FILTER (WHERE oc.call_status IN ('call_back','accepted','ordered'))::int AS reached,
+                       count(*) FILTER (WHERE oc.call_status IN ('no_answer','busy','wrong_number'))::int AS not_reached,
+                       count(*) FILTER (WHERE oc.call_status = 'not_interested')::int AS refused_not_interested,
+                       count(*) FILTER (WHERE oc.call_status = 'not_called')::int AS pending
+                  FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id
+                 WHERE oc.campaign_id = $1 AND ${DAY("COALESCE(oc.assigned_at, oc.uploaded_at)")} BETWEEN $2::date AND $3::date
+                 GROUP BY 1, 2 ORDER BY (oc.assigned_agent_id IS NULL), 3 DESC, 2`, [camp.id, from, to]),
     ]);
     const days: any[] = [];
     for (let day = wFrom; day <= to; day = addDays(day, 1)) {
@@ -762,7 +773,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
       if (el.state === "completed") totals.completed++;
       if (c.orders > 0) totals.redeemed++;
     }
-    res.json({ campaign: { id: camp.id, name: camp.name, steps: camp.steps, validity_days: camp.validity_days }, range: { from, to }, window: { from: wFrom, to }, days, agents: byAgent, churn, totals, slots });
+    res.json({ campaign: { id: camp.id, name: camp.name, steps: camp.steps, validity_days: camp.validity_days }, range: { from, to }, window: { from: wFrom, to }, days, agents: byAgent, churn, totals, slots,
+      performance: performance.map((r: any) => ({ ...r, completed: r.assigned - r.pending })) });
   }));
 
   // Every call of a period with its Kuwait date and time (the calls report).

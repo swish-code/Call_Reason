@@ -212,6 +212,8 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
 
           <OfferBestTime slots={d.slots || []} from={range.from} to={range.to} campId={camp.id} periodText={periodText} />
 
+          <AgentPerformance rows={d.performance || []} periodText={periodText} />
+
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
             <Agents agents={d.agents} grown={grown} periodText={periodText} />
             <Churn churn={d.churn} grown={grown} periodText={periodText} />
@@ -355,6 +357,45 @@ function Agents({ agents, grown, periodText }: { agents: any[]; grown: boolean; 
               );
             })}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The same table as the Surveys dashboard: what happened to the customers each agent was given in the period.
+function AgentPerformance({ rows, periodText }: { rows: any[]; periodText: string }) {
+  const sum = (k: string) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+  const cols = [["assigned", "Assigned", "text-blue-500"], ["completed", "Completed", "text-[var(--text)]"], ["reached", "Reached", "text-emerald-500"],
+    ["not_reached", "Not reached", "text-rose-500"], ["refused_not_interested", "Refused/NI", "text-orange-500"], ["pending", "Pending", "text-amber-500"]] as const;
+  return (
+    <div className="rounded-3xl p-6 bg-[var(--surface)] border border-[var(--border)] shadow-lg">
+      <h3 className="text-sm font-extrabold text-[var(--heading)]">Agent performance</h3>
+      <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}. The customers given to each agent in this period, and where they stand now: Reached = answered (accepted, ordered, call back later), Not reached = no answer, busy or wrong number, Pending = not called yet, Completed = called at least once.</p>
+      {!rows.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No customers were given out in this period.</div> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)] uppercase tracking-wide">
+                <th className="text-left py-2 px-2">Agent</th>
+                {cols.map(([k, l]) => <th key={k} className="text-center py-2 px-2">{l}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.agent_id ?? "unassigned"} className="border-b border-[var(--border)]/40 hover:bg-[var(--surface-2)]/30 transition">
+                  <td className="py-2 px-2 font-bold text-[var(--heading)]">{r.agent_name}</td>
+                  {cols.map(([k, , c]) => <td key={k} className={`py-2 px-2 text-center font-mono tabular-nums ${c}`}>{r[k]}</td>)}
+                </tr>
+              ))}
+              {rows.length > 1 && (
+                <tr className="font-extrabold bg-[var(--surface-2)]/40">
+                  <td className="py-2 px-2 text-[var(--heading)]">Total</td>
+                  {cols.map(([k, , c]) => <td key={k} className={`py-2 px-2 text-center font-mono tabular-nums ${c}`}>{sum(k)}</td>)}
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
