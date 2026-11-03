@@ -3,6 +3,7 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { downloadXlsx } from "../lib/xlsx.ts";
 import DncBadge from "./DncBadge.tsx";
+import { phoneOnCopy } from "./phoneCopy.ts";
 import OfferCustomerPanel, { WorkedBy } from "./OfferCustomerPanel.tsx";
 import OfferCustomerEdit from "./OfferCustomerEdit.tsx";
 import OfferDashboard from "./OfferDashboard.tsx";
@@ -129,7 +130,7 @@ function MyCalls({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpen:
               <tbody>
                 {d.rows.map((r) => (
                   <tr key={r.id} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30">
-                    <td className="py-2.5 px-4"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px]" dir="ltr">{r.phone}</div></td>
+                    <td className="py-2.5 px-4"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px]" dir="ltr" onCopy={phoneOnCopy}>{r.phone}</div></td>
                     <td className="py-2.5 px-4"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>
                       {r.colleague && <div className="text-[10px] text-amber-600 mt-1">{r.colleague.user_name || "A colleague"}: {workLabel(r.colleague)} ({fmtDT(r.colleague.created_at).slice(5)})</div>}
                     </td>
@@ -184,7 +185,7 @@ function FindCustomer({ tick, onOpen }: { tick: number; onOpen: (id: string) => 
               <div key={r.id} className={box + " p-4 flex flex-wrap items-center justify-between gap-4"}>
                 <div className="space-y-1">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-violet-400">{r.campaign_name}</div>
-                  <div className="text-base font-extrabold text-[var(--heading)]">{r.customer_name || "—"} <span className="font-mono text-sm" dir="ltr">{r.phone}</span>{res.dnc && <DncBadge />}</div>
+                  <div className="text-base font-extrabold text-[var(--heading)]">{r.customer_name || "—"} <span className="font-mono text-sm" dir="ltr" onCopy={phoneOnCopy}>{r.phone}</span>{res.dnc && <DncBadge />}</div>
                   <div className="flex flex-wrap gap-2 items-center">
                     <Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>
                     <Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>
@@ -369,7 +370,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
                   return (
                     <tr key={r.id} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30 align-top">
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">{fmtDay(r.uploaded_at)}</td>
-                      <td className="py-2.5 px-3"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px] whitespace-nowrap" dir="ltr">{r.phone}</div>{dnc.isDnc(r.phone) && <DncBadge block />}</td>
+                      <td className="py-2.5 px-3"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px] whitespace-nowrap" dir="ltr" onCopy={phoneOnCopy}>{r.phone}</div>{dnc.isDnc(r.phone) && <DncBadge block />}</td>
                       <td className="py-2.5 px-3">
                         {isOpen ? (
                           <select value={r.assigned_agent_id || ""} onChange={(e) => reassign(r.id, e.target.value)} className={selCls + " min-w-[9rem]"}>

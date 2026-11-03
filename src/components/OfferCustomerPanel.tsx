@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
+import { phoneOnCopy } from "./phoneCopy.ts";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
   kwToday, fmtDT, fmtDay, fmtDur, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler,
@@ -158,7 +159,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
             <div className="text-[10px] font-bold uppercase tracking-wider text-violet-400">{camp?.name || "Offer campaign"}</div>
             <h3 className="text-lg font-extrabold text-[var(--heading)] truncate">{c?.customer_name || "Customer"}</h3>
             <div className="flex flex-wrap items-center gap-2 mt-0.5">
-              <span className="font-mono text-sm font-bold text-[var(--heading)] select-all" dir="ltr">{c?.phone}</span>
+              <span className="font-mono text-sm font-bold text-[var(--heading)] select-all" dir="ltr" onCopy={phoneOnCopy}>{c?.phone}</span>
               {data?.dnc && <DncBadge />}
               {c && <Badge cls={CALL_STATUS[c.call_status]?.cls || ""}>{statusText(c)}</Badge>}
               {el && <Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>}
