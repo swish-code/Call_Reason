@@ -522,7 +522,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                 ))}
                 {queue.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-[var(--muted)]">Your queue is empty.</td>
+                    <td colSpan={8} className="p-8 text-center text-[var(--muted)]">Your queue is empty — numbers appear here once a leader assigns them to you.</td>
                   </tr>
                 )}
               </tbody>

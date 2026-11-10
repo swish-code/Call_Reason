@@ -541,8 +541,8 @@ export default function SurveyCampaigns({ currentUser }: SurveyCampaignsProps) {
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-[var(--text)]">Assignment Mode</label>
                     <select value={reqMode} onChange={e => setReqMode(e.target.value)} className={`w-full ${selCls}`}>
-                      <option value="open">Open</option>
-                      <option value="assigned">Assigned</option>
+                      <option value="open">Open — a leader gives the numbers to agents</option>
+                      <option value="assigned">Assigned — all numbers go to one agent</option>
                     </select>
                   </div>
                   <div className="space-y-2">
