@@ -19,6 +19,14 @@ export const CALL_STATUSES = ["not_called", "no_answer", "busy", "call_back", "w
 // A customer who did not answer two calls in a row is closed as "unreachable" and leaves the agent's list. Nobody picks
 // it as a call result — the second no-answer / busy call sets it. A leader can reopen the customer from Edit.
 const NO_ANSWER_STATUSES = ["no_answer", "busy"];
+const ORDER_TYPES = ["pickup", "delivery"];
+const NPS_FROM_STEP = 2;
+/** The NPS answer: null when not given, undefined when it is not a whole number from 1 to 10. */
+const npsOf = (v: any): number | null | undefined => {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 10 ? n : undefined;
+};
 export const REACHED_STATUSES = ["call_back", "not_interested", "accepted", "ordered"];
 const OFFER_STARTS = ["accepted", "ordered"];                                            // the customer took the offer in this call
 // What an agent picks after a call is an editable list (Configuration → Shakir Campaign, options list below). Each
@@ -281,12 +289,16 @@ export function registerOfferRoutes(app: any, d: Deps) {
     if (isDay(q("to"))) add("(oc.uploaded_at AT TIME ZONE 'Asia/Kuwait')::date <= $?::date", q("to"));
     if (q("search")) add("(oc.phone ILIKE '%' || $? || '%' OR oc.customer_name ILIKE '%' || $? || '%')", q("search"));
     // A colleague (not the customer's agent) recorded a call or an order on the customer.
+    // The customers who used one discount of the offer (20 / 30 / 50), and those with a pickup or a delivery order.
+    if (/^\d{1,3}$/.test(q("tier"))) add("EXISTS (SELECT 1 FROM offer_orders o WHERE o.customer_id = oc.id AND o.discount = $?::int)", q("tier"));
+    if (ORDER_TYPES.includes(q("order_type"))) add("EXISTS (SELECT 1 FROM offer_orders o WHERE o.customer_id = oc.id AND o.order_type = $?)", q("order_type"));
     if (q("helped") === "1") where.push(`oc.assigned_agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM offer_events e WHERE e.customer_id = oc.id AND e.kind IN ('call','order') AND e.user_id <> oc.assigned_agent_id)`);
     const rows = await DB.query(`
       SELECT oc.id, oc.phone, oc.customer_name, oc.gender, oc.extra, oc.uploaded_at, oc.uploaded_by_name, oc.assigned_agent_id, u.full_name AS agent_name,
              oc.contact_date, oc.call_status, oc.call_result, oc.attempts, oc.first_call_at, oc.last_call_at, oc.churn_reason, oc.comment,
              oc.offer_started_at, oc.offer_expires_at,
-             COALESCE((SELECT json_agg(json_build_object('id', o.id, 'step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number, 'logged_by_name', o.logged_by_name) ORDER BY o.step)
+             COALESCE((SELECT json_agg(json_build_object('id', o.id, 'step', o.step, 'discount', o.discount, 'order_date', o.order_date, 'order_number', o.order_number, 'logged_by_name', o.logged_by_name,
+                                                      'order_value', o.order_value, 'order_type', o.order_type, 'nps', o.nps) ORDER BY o.step)
                          FROM offer_orders o WHERE o.customer_id = oc.id), '[]'::json) AS orders,
              ${WORK_SQL} AS work
         FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id
@@ -624,9 +636,14 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const dup = orderNumber ? (await DB.query(`SELECT 1 FROM offer_orders WHERE campaign_id = $1 AND lower(order_number) = lower($2)`, [camp.id, orderNumber]))[0] : null;
     if (dup) return res.status(409).json({ error: `Order ${orderNumber} was already logged in this campaign.` });
     const step = el.next.step, discount = el.next.discount;
+    const orderType = ORDER_TYPES.includes(b.order_type) ? b.order_type : null;
+    if (!orderType) return res.status(400).json({ error: "Pick the order type: pickup or delivery." });
+    // The NPS question is asked with the 2nd and 3rd offer order only (the business, 2026-11-10).
+    const nps = step >= NPS_FROM_STEP ? npsOf(b.nps) : null;
+    if (nps === undefined) return res.status(400).json({ error: "The NPS answer is a number from 1 to 10." });
     try {
-      await DB.query(`INSERT INTO offer_orders (id, customer_id, campaign_id, step, discount, order_number, order_date, order_value, logged_by, logged_by_name)
-                      VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10)`, [newId("ofo"), c.id, camp.id, step, discount, orderNumber, orderDate, value, req.user.id, req.user.full_name]);
+      await DB.query(`INSERT INTO offer_orders (id, customer_id, campaign_id, step, discount, order_number, order_date, order_value, logged_by, logged_by_name, order_type, nps)
+                      VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10,$11,$12)`, [newId("ofo"), c.id, camp.id, step, discount, orderNumber, orderDate, value, req.user.id, req.user.full_name, orderType, nps]);
     } catch (e: any) {
       if (String(e?.code) === "23505") return res.status(409).json({ error: "Someone logged this discount for the customer a moment ago — refresh." });
       throw e;
@@ -638,9 +655,43 @@ export function registerOfferRoutes(app: any, d: Deps) {
         offer_expires_at = COALESCE(offer_expires_at, now() + ($2 || ' days')::interval)
       WHERE id = $1`, [c.id, String(camp.validity_days), comment]);
     await addEvent({ customerId: c.id, campaignId: camp.id, kind: "order", user: req.user, call_status: "ordered", prev_status: c.call_status, comment,
-      details: { ...(c.call_result ? { prev_result: c.call_result } : {}), step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, ...(!c.offer_started_at ? { offer_started: true } : {}) } });
-    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — order ${orderNumber || "(no number)"} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}`.trim(), new_value: `${discount}%` };
+      details: { ...(c.call_result ? { prev_result: c.call_result } : {}), step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, order_type: orderType, ...(nps !== null ? { nps } : {}), ...(!c.offer_started_at ? { offer_started: true } : {}) } });
+    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — ${orderType} order ${orderNumber || "(no number)"} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}${nps !== null ? `, NPS ${nps}` : ""}`.trim(), new_value: `${discount}%` };
     res.json(await loadCustomer(c.id));
+  }));
+
+  // Correct a logged order (leaders): its value, pickup / delivery, and the NPS answer. The discount, step and date stay.
+  app.post(`${B}/orders/:id/edit`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
+    const o = (await DB.query(`SELECT * FROM offer_orders WHERE id = $1`, [req.params.id]))[0];
+    if (!o) return res.status(404).json({ error: "Order not found." });
+    const b = req.body || {};
+    const sets: string[] = [], vals: any[] = [o.id], changes: { field: string; from: any; to: any }[] = [];
+    const col = (name: string, v: any) => { vals.push(v); sets.push(`${name} = $${vals.length}`); };
+    if (b.order_value !== undefined) {
+      const value = b.order_value === "" || b.order_value === null ? null : Number(b.order_value);
+      if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100000)) return res.status(400).json({ error: "The order value looks wrong." });
+      const old = o.order_value === null ? null : Number(o.order_value);
+      if (value !== old) { col("order_value", value); changes.push({ field: "Order value", from: old, to: value }); }
+    }
+    if (b.order_type !== undefined) {
+      const t = ORDER_TYPES.includes(b.order_type) ? b.order_type : null;
+      if (!t) return res.status(400).json({ error: "Pick the order type: pickup or delivery." });
+      if (t !== (o.order_type || null)) { col("order_type", t); changes.push({ field: "Order type", from: o.order_type, to: t }); }
+    }
+    if (b.nps !== undefined) {
+      const n = npsOf(b.nps);
+      if (n === undefined) return res.status(400).json({ error: "The NPS answer is a number from 1 to 10." });
+      if (n !== null && o.step < NPS_FROM_STEP) return res.status(400).json({ error: "The NPS question belongs to the 2nd and 3rd offer order." });
+      if (n !== (o.nps ?? null)) { col("nps", n); changes.push({ field: "NPS", from: o.nps, to: n }); }
+    }
+    if (!changes.length) return res.status(400).json({ error: "Nothing was changed." });
+    await DB.query(`UPDATE offer_orders SET ${sets.join(", ")} WHERE id = $1`, vals);
+    const c = (await DB.query(`SELECT customer_name, phone FROM offer_customers WHERE id = $1`, [o.customer_id]))[0];
+    await addEvent({ customerId: o.customer_id, campaignId: o.campaign_id, kind: "order_edit", user: req.user, details: { step: o.step, discount: o.discount, order_number: o.order_number, changes } });
+    const show = (v: any) => (v === null || v === undefined || v === "" ? "(empty)" : String(v));
+    req.auditExtra = { details: `${c?.customer_name || ""} ${c?.phone || ""} — ${o.discount}% order${o.order_number ? ` ${o.order_number}` : ""}: ${changes.map((x) => `${x.field} ${show(x.from)} → ${show(x.to)}`).join("; ")}`.trim(),
+      previous_value: changes.map((x) => show(x.from)).join("; "), new_value: changes.map((x) => show(x.to)).join("; ") };
+    res.json(await loadCustomer(o.customer_id));
   }));
 
   // Take back a wrongly logged order (leaders) — only the latest one, so the steps stay in order.
@@ -688,6 +739,9 @@ export function registerOfferRoutes(app: any, d: Deps) {
     let wFrom = from === to ? addDays(to, -13) : from;
     if (Date.parse(to) - Date.parse(wFrom) > 91 * 86400_000) wFrom = addDays(to, -91);
     const DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kuwait')::date`;
+    // The NPS answers of the period (asked with the 2nd and 3rd offer order), how many customers gave each score.
+    const npsRows = await DB.query(`SELECT nps, count(*)::int AS n FROM offer_orders
+                                     WHERE campaign_id = $1 AND nps IS NOT NULL AND order_date BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, from, to]);
     const [uploads, calls, orders, byAgent, churn, customers, slots, performance] = await Promise.all([
       DB.query(`SELECT to_char(${DAY("uploaded_at")}, 'YYYY-MM-DD') AS day, count(*)::int AS n FROM offer_customers
                  WHERE campaign_id = $1 AND ${DAY("uploaded_at")} BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, wFrom, to]),
@@ -779,7 +833,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
       if (c.orders > 0) totals.redeemed++;
     }
     res.json({ campaign: { id: camp.id, name: camp.name, steps: camp.steps, validity_days: camp.validity_days }, range: { from, to }, window: { from: wFrom, to }, days, agents: byAgent, churn, totals, slots,
-      performance: performance.map((r: any) => ({ ...r, completed: r.assigned - r.pending })) });
+      performance: performance.map((r: any) => ({ ...r, completed: r.assigned - r.pending })),
+      nps: Array.from({ length: 10 }, (_x, i) => ({ score: i + 1, n: npsRows.find((r: any) => Number(r.nps) === i + 1)?.n || 0 })) });
   }));
 
   // Every call of a period with its Kuwait date and time (the calls report).

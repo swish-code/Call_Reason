@@ -11,7 +11,14 @@ export interface Eligibility {
   next: { step: number; discount: number } | null; used: number; total: number;
   starts: string | null; expires: string | null; daysLeft: number | null;
 }
-export interface OfferOrder { id: string; step: number; discount: number; order_number: string | null; order_date: string; order_value: string | null; logged_by_name: string | null; logged_at: string }
+export interface OfferOrder { id: string; step: number; discount: number; order_number: string | null; order_date: string; order_value: string | null; logged_by_name: string | null; logged_at: string; order_type?: string | null; nps?: number | null }
+export const ORDER_TYPE_LABEL: Record<string, string> = { pickup: "Pickup", delivery: "Delivery" };
+/** The NPS question, asked with the 2nd and 3rd offer order. */
+export const NPS_FROM_STEP = 2;
+export const NPS_SCRIPT = {
+  en: "Before we end the call, I have one quick question: on a scale from 1 to 10, how likely are you to recommend us to your friends and family? (1 = not at all likely, 10 = extremely likely)",
+  ar: "قبل ما نختم المكالمة، عندي سؤال سريع: على مقياس من 1 إلى 10، ما مدى احتمالية أن حضرتك توصي بنا لأصدقائك وعائلتك؟ (1 = غير محتمل إطلاقاً، 10 = محتمل جداً)",
+};
 export interface OfferEvent {
   id: string; kind: string; direction: string | null; call_status: string | null; prev_status: string | null; churn_reason: string | null;
   comment: string | null; details: any; user_id?: string | null; user_name: string | null; created_at: string;

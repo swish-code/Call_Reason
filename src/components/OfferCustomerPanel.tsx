@@ -5,9 +5,9 @@ import DncBadge from "./DncBadge.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
-  kwToday, fmtDT, fmtDay, fmtDur, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler,
+  kwToday, fmtDT, fmtDay, fmtDur, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler, ORDER_TYPE_LABEL, NPS_FROM_STEP, NPS_SCRIPT,
 } from "../lib/offers.ts";
-import { Timer, X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw } from "lucide-react";
+import { Timer, X, AlertCircle, CheckCircle2, PhoneOutgoing, PhoneIncoming, ShoppingBag, History, FileText, Trash2, RefreshCw, Pencil } from "lucide-react";
 
 // One customer of an offer campaign: the script, the offer (what is used, what is next, until when), logging a
 // call or an order, and the full history. Opened from My calls (to make the call) and
@@ -43,6 +43,10 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
   const [orderDate, setOrderDate] = useState(kwToday());
   const [orderValue, setOrderValue] = useState("");
   const [orderNote, setOrderNote] = useState("");
+  const [orderType, setOrderType] = useState("");
+  const [nps, setNps] = useState("");
+  // correcting a logged order (leaders): its value, pickup / delivery and the NPS answer
+  const [editOrder, setEditOrder] = useState<{ id: string; step: number; value: string; type: string; nps: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -135,9 +139,18 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
     const digits = orderNo.replace(/\D/g, "");
     if (digits.length >= 8 && digits.slice(-8) === String(data?.customer.phone || "").replace(/\D/g, "").slice(-8)) { setError("That is the customer's phone number, not an order number. Type the order number, or leave it empty if there is none."); return; }
     const next = data?.eligibility.next;
-    if (!next || !window.confirm(`Log ${orderNo.trim() ? `order ${orderNo.trim()}` : "this order"} with ${next.discount}% off (${stepLabel(next.step)} order of the offer)?`)) return;
-    const ok = await post(`/api/offer-campaigns/customers/${id}/orders`, { order_number: orderNo.trim(), order_date: orderDate, order_value: orderValue === "" ? undefined : orderValue, comment: orderNote || undefined }, "Order logged.", "order");
-    if (ok) { setOrderNo(""); setOrderValue(""); setOrderNote(""); setOrderDate(kwToday()); }
+    if (!next) return;
+    if (!orderType) { setError("Pick the order type: pickup or delivery."); return; }
+    if (!window.confirm(`Log ${orderNo.trim() ? `order ${orderNo.trim()}` : "this order"} with ${next.discount}% off (${stepLabel(next.step)} order of the offer)?`)) return;
+    const ok = await post(`/api/offer-campaigns/customers/${id}/orders`, { order_number: orderNo.trim(), order_date: orderDate, order_value: orderValue === "" ? undefined : orderValue, comment: orderNote || undefined,
+      order_type: orderType, nps: next.step >= NPS_FROM_STEP && nps ? Number(nps) : undefined }, "Order logged.", "order");
+    if (ok) { setOrderNo(""); setOrderValue(""); setOrderNote(""); setOrderDate(kwToday()); setOrderType(""); setNps(""); }
+  };
+  const saveOrderEdit = async () => {
+    if (!editOrder) return;
+    if (!editOrder.type) { setError("Pick the order type: pickup or delivery."); return; }
+    const ok = await post(`/api/offer-campaigns/orders/${editOrder.id}/edit`, { order_value: editOrder.value, order_type: editOrder.type, ...(editOrder.step >= NPS_FROM_STEP ? { nps: editOrder.nps } : {}) }, "Order updated.", "order-edit");
+    if (ok) setEditOrder(null);
   };
   const removeOrder = async (o: OfferOrder) => {
     const reason = window.prompt(`Remove the ${stepLabel(o.step)} order${o.order_number ? ` ${o.order_number}` : ""} (${o.discount}%)?\nWrite why (kept in the history):`);
@@ -263,9 +276,15 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                         This is the customer's <b>{stepLabel(el.next.step)} order</b> of the offer → <b className="text-emerald-500 text-sm">{el.next.discount}% off</b>
                         {el.expires ? <> · valid until <b>{el.expires}</b> ({el.daysLeft} day{el.daysLeft === 1 ? "" : "s"} left)</> : <> · the offer starts with this order ({camp?.validity_days} days)</>}
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order number (optional — not the phone)
                           <input value={orderNo} onChange={(e) => setOrderNo(e.target.value)} dir="ltr" className={inputCls + " font-mono"} placeholder="from the POS / app" />
+                        </label>
+                        <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order type
+                          <select value={orderType} onChange={(e) => setOrderType(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+                            <option value="">— pick —</option>
+                            {Object.entries(ORDER_TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                          </select>
                         </label>
                         <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order date
                           <input type="date" value={orderDate} max={kwToday()} onChange={(e) => setOrderDate(e.target.value)} className={inputCls} />
@@ -274,6 +293,19 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                           <input type="number" min="0" step="0.001" value={orderValue} onChange={(e) => setOrderValue(e.target.value)} className={inputCls} />
                         </label>
                       </div>
+                      {el.next.step >= NPS_FROM_STEP && (
+                        <div className="p-3 rounded-xl border border-sky-500/30 bg-sky-500/5 space-y-2">
+                          <p className="text-[10px] font-bold text-sky-500 uppercase">NPS question — ask it before ending the call</p>
+                          <p dir={lang === "ar" ? "rtl" : "ltr"} className="text-[13px] leading-6 text-[var(--text)]">{NPS_SCRIPT[lang]}</p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {Array.from({ length: 10 }, (_x, i) => String(i + 1)).map((n) => (
+                              <button key={n} type="button" onClick={() => setNps(nps === n ? "" : n)} aria-pressed={nps === n}
+                                className={`w-8 h-8 rounded-lg text-xs font-extrabold border transition ${nps === n ? "bg-sky-600 border-sky-600 text-white" : "bg-[var(--bg)] border-[var(--border)] text-[var(--heading)] hover:border-sky-500/50"}`}>{n}</button>
+                            ))}
+                            <span className="text-[10px] text-[var(--muted)] ml-1">{nps ? `The customer said ${nps}` : "Leave empty if the customer did not answer"}</span>
+                          </div>
+                        </div>
+                      )}
                       <input value={orderNote} onChange={(e) => setOrderNote(e.target.value)} placeholder="Note (optional)" className={inputCls} />
                       <button onClick={saveOrder} disabled={!!busy} className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50">{busy === "order" ? "Saving…" : `Log the order with ${el.next.discount}% off`}</button>
                     </>
@@ -296,14 +328,41 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                     {(camp?.steps || []).map((d, i) => {
                       const o = data.orders.find((x) => x.step === i + 1);
                       const isLast = o && o.step === Math.max(...data.orders.map((x) => x.step));
+                      const editing = o && editOrder?.id === o.id ? editOrder : null;
                       return (
-                        <div key={i} className={`flex items-center justify-between gap-2 p-2 rounded-xl border text-[11px] ${o ? "border-emerald-500/30 bg-emerald-500/5" : el?.next?.step === i + 1 ? "border-violet-500/40 bg-violet-500/5" : "border-[var(--border)]"}`}>
-                          <span className="font-bold text-[var(--heading)]">{stepLabel(i + 1)} order · {d}%</span>
-                          {o ? (
-                            <span className="flex items-center gap-1.5 text-[var(--text)]">{o.order_number ? `#${o.order_number} · ` : ""}{fmtDay(o.order_date)}{o.order_value ? ` · ${money(o.order_value)}` : ""}<span className="text-[var(--muted)]"> · {o.logged_by_name}</span>
-                              {canManage && isLast && <button onClick={() => removeOrder(o)} title="Remove this order" className="p-1 rounded text-[var(--muted)] hover:text-rose-400"><Trash2 className="w-3 h-3" /></button>}
-                            </span>
-                          ) : <span className="text-[var(--muted)]">{el?.next?.step === i + 1 ? "next" : "—"}</span>}
+                        <div key={i} className={`p-2 rounded-xl border text-[11px] ${o ? "border-emerald-500/30 bg-emerald-500/5" : el?.next?.step === i + 1 ? "border-violet-500/40 bg-violet-500/5" : "border-[var(--border)]"}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-[var(--heading)]">{stepLabel(i + 1)} order · {d}%</span>
+                            {o ? (
+                              <span className="flex flex-wrap items-center justify-end gap-x-1.5 text-[var(--text)]">{o.order_number ? `#${o.order_number} · ` : ""}{fmtDay(o.order_date)}{o.order_type ? ` · ${ORDER_TYPE_LABEL[o.order_type] || o.order_type}` : ""}{o.order_value ? ` · ${money(o.order_value)}` : ""}{o.nps ? ` · NPS ${o.nps}` : ""}<span className="text-[var(--muted)]"> · {o.logged_by_name}</span>
+                                {canManage && <button onClick={() => setEditOrder(editing ? null : { id: o.id, step: o.step, value: o.order_value === null || o.order_value === undefined ? "" : String(Number(o.order_value)), type: o.order_type || "", nps: o.nps ? String(o.nps) : "" })} title="Edit the order value, type and NPS" className="p-1 rounded text-[var(--muted)] hover:text-violet-400"><Pencil className="w-3 h-3" /></button>}
+                                {canManage && isLast && <button onClick={() => removeOrder(o)} title="Remove this order" className="p-1 rounded text-[var(--muted)] hover:text-rose-400"><Trash2 className="w-3 h-3" /></button>}
+                              </span>
+                            ) : <span className="text-[var(--muted)]">{el?.next?.step === i + 1 ? "next" : "—"}</span>}
+                          </div>
+                          {editing && (
+                            <div className="mt-2 pt-2 border-t border-[var(--border)] flex flex-wrap items-end gap-2">
+                              <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order value (KWD)
+                                <input type="number" min="0" step="0.001" value={editing.value} onChange={(e) => setEditOrder({ ...editing, value: e.target.value })} className={inputCls + " w-28"} />
+                              </label>
+                              <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order type
+                                <select value={editing.type} onChange={(e) => setEditOrder({ ...editing, type: e.target.value })} className={inputCls + " w-28 [&>option]:bg-[var(--surface)]"}>
+                                  <option value="">— pick —</option>
+                                  {Object.entries(ORDER_TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                                </select>
+                              </label>
+                              {editing.step >= NPS_FROM_STEP && (
+                                <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">NPS (1–10)
+                                  <select value={editing.nps} onChange={(e) => setEditOrder({ ...editing, nps: e.target.value })} className={inputCls + " w-20 [&>option]:bg-[var(--surface)]"}>
+                                    <option value="">—</option>
+                                    {Array.from({ length: 10 }, (_x, k) => String(k + 1)).map((n) => <option key={n} value={n}>{n}</option>)}
+                                  </select>
+                                </label>
+                              )}
+                              <button onClick={saveOrderEdit} disabled={!!busy} className="px-3 py-2 rounded-xl text-[11px] font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{busy === "order-edit" ? "Saving…" : "Save"}</button>
+                              <button onClick={() => setEditOrder(null)} className="px-2 py-2 rounded-xl text-[11px] font-bold text-[var(--muted)] hover:text-[var(--heading)]">Cancel</button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -368,7 +427,8 @@ function EventRow({ e }: { e: OfferEvent }) {
   if (e.kind === "upload") text = "Uploaded to the campaign";
   else if (e.kind === "assign") text = d.from !== undefined ? `Moved from ${d.from || "nobody"} to ${d.to || "nobody"}` : `Assigned to ${d.to}${d.from_file ? " (from the file)" : ""}`;
   else if (e.kind === "call") text = `${e.direction === "inbound" ? "Customer called us" : "Called the customer"}: ${d.prev_result || st(e.prev_status)} → ${d.result || st(e.call_status)}${d.call_back_date ? ` (call back ${d.call_back_date})` : ""}${d.offer_started ? ` · offer started, ends ${d.expires}` : ""}${d.stays_ordered ? " (the customer stays Ordered)" : ""}`;
-  else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.offer_started ? " · offer started" : ""}`;
+  else if (e.kind === "order") text = `Order ${d.order_number ? `#${d.order_number} ` : ""}on ${d.order_date} — ${d.discount}% off (${stepLabel(d.step)} order)${d.order_type ? ` · ${ORDER_TYPE_LABEL[d.order_type] || d.order_type}` : ""}${d.order_value !== null && d.order_value !== undefined ? ` · ${money(d.order_value)}` : ""}${d.nps ? ` · NPS ${d.nps}` : ""}${d.offer_started ? " · offer started" : ""}`;
+  else if (e.kind === "order_edit") text = `Edited the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%): ${(d.changes || []).map((x: any) => `${x.field} ${x.from ?? "empty"} → ${x.to ?? "empty"}`).join("; ")}`;
   else if (e.kind === "order_removed") text = `Removed the ${stepLabel(d.step)} order${d.order_number ? ` #${d.order_number}` : ""} (${d.discount}%, logged by ${d.logged_by || "?"})${d.reverted_to ? `, customer back to ${st(d.reverted_to)}` : ""}${d.offer_cleared ? ", offer taken back" : ""}`;
   else if (e.kind === "gender") text = d.from ? `Gender changed: ${d.from} → ${d.to}` : `Gender set: ${d.to}`;
   else if (e.kind === "name") text = d.from ? `Name changed: ${d.from} → ${d.to}` : `Name added: ${d.to}`;

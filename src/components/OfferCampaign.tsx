@@ -10,7 +10,7 @@ import OfferDashboard from "./OfferDashboard.tsx";
 import { useDoNotCall } from "../lib/dnc.ts";
 import {
   OfferCampaign as Campaign, Eligibility, CALL_STATUS, OFFER_STATE, MANAGER_ROLES, kwToday, fmtDay, fmtDT, fmtTime, stepLabel, fmtExtra, statusText,
-  handlersFrom, colleagueWorked, workLabel, EDIT_ROLES,
+  handlersFrom, colleagueWorked, workLabel, EDIT_ROLES, ORDER_TYPE_LABEL, NPS_FROM_STEP,
 } from "../lib/offers.ts";
 import { Gift, PhoneOutgoing, Search, Users, UploadCloud, BarChart3, Settings2, RefreshCw, AlertCircle, CheckCircle2, Download, Filter, X, Pencil, Trash2, ListChecks, PhoneCall, UserX, Clock } from "lucide-react";
 
@@ -220,7 +220,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [f, setF] = useState({ status: "", agent: "", offer: "", from: "", to: "", search: "", helped: "" });
+  const [f, setF] = useState({ status: "", agent: "", offer: "", tier: "", order_type: "", from: "", to: "", search: "", helped: "" });
   const [giveAgent, setGiveAgent] = useState("");
   const [giveCount, setGiveCount] = useState("20");
   const [searchText, setSearchText] = useState("");
@@ -274,14 +274,16 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
     { label: "Refused / not interested", n: rows.filter((r) => r.call_status === "not_interested").length, Icon: UserX, cls: "bg-orange-500/10 text-orange-500" },
     { label: "Pending — not called yet", n: rows.filter((r) => r.call_status === "not_called").length, Icon: Clock, cls: "bg-amber-500/10 text-amber-500" },
   ];
-  const orderDate = (r: any, step: number) => fmtDay(r.orders.find((o: any) => o.step === step)?.order_date) || "";
+  const orderOf = (r: any, step: number) => r.orders.find((o: any) => o.step === step);
+  const orderDate = (r: any, step: number) => fmtDay(orderOf(r, step)?.order_date) || "";
+  const orderValue = (o: any) => (o?.order_value === null || o?.order_value === undefined ? "" : Number(o.order_value).toFixed(3));
   // The requested fields, then whatever extra columns the uploaded files had (lifetime orders, last order date…).
   const exportXlsx = () => {
     const extraKeys: string[] = [...new Set<string>(rows.flatMap((r: any) => Object.keys(r.extra || {})))];
     return downloadXlsx(
-      ["Uploaded Day", "Date of contact", "Customer Name", "Gender", "Phone number", "Call status", "1st Call Date", "1st Call Time", "Last Call Date", "Last Call Time", ...camp.steps.map((s) => `${s}% Order Date`), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
+      ["Uploaded Day", "Date of contact", "Customer Name", "Gender", "Phone number", "Call status", "1st Call Date", "1st Call Time", "Last Call Date", "Last Call Time", ...camp.steps.flatMap((s, i) => [`${s}% Order Date`, `${s}% Order ID`, `${s}% Order Type`, `${s}% Order Value`, ...(i + 1 >= NPS_FROM_STEP ? [`${s}% NPS`] : [])]), "Agent name", "Worked on by", "Colleague worked on it", "Churn Reason", "Comment", "Offer", "Offer starts", "Offer ends", ...extraKeys],
       rows.map((r) => [fmtDay(r.uploaded_at), fmtDay(r.contact_date), r.customer_name || "", r.gender === "female" ? "Female" : r.gender === "male" ? "Male" : "", r.phone, statusText(r), fmtDay(r.first_call_at), fmtTime(r.first_call_at), fmtDay(r.last_call_at), fmtTime(r.last_call_at),
-        ...camp.steps.map((_s, i) => orderDate(r, i + 1)), r.agent_name || "",
+        ...camp.steps.flatMap((_s, i) => { const o = orderOf(r, i + 1); return [orderDate(r, i + 1), o?.order_number || "", o?.order_type ? ORDER_TYPE_LABEL[o.order_type] || o.order_type : "", orderValue(o), ...(i + 1 >= NPS_FROM_STEP ? [o?.nps ?? ""] : [])]; }), r.agent_name || "",
         handlersFrom(r.work || []).map((h) => `${h.name}: ${h.actions.join(", ")}`).join(" | "), colleagueWorked(handlersFrom(r.work || []), r.assigned_agent_id) ? "Yes" : "",
         r.churn_reason || "", r.comment || "",
         OFFER_STATE[r.eligibility.state as Eligibility["state"]].label, r.eligibility.starts || "", r.eligibility.expires || "",
@@ -341,6 +343,14 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
           <option value="">Any offer state</option>
           {Object.entries(OFFER_STATE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
+        <select value={f.tier} onChange={(e) => set("tier", e.target.value)} className={selCls} title="Customers who ordered with this discount">
+          <option value="">Any offer tier</option>
+          {camp.steps.map((s) => <option key={s} value={String(s)}>Ordered with {s}%</option>)}
+        </select>
+        <select value={f.order_type} onChange={(e) => set("order_type", e.target.value)} className={selCls} title="Customers with an offer order of this type">
+          <option value="">Pickup or delivery</option>
+          {Object.entries(ORDER_TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Uploaded from<input type="date" value={f.from} max={f.to || undefined} onChange={(e) => set("from", e.target.value)} className={inputCls} /></label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">to<input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set("to", e.target.value)} className={inputCls} /></label>
         <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Name or phone…" className={inputCls + " w-44"} />
@@ -348,7 +358,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
           className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border ${f.helped ? "bg-amber-500/15 border-amber-500/40 text-amber-600" : "bg-[var(--bg)] border-[var(--border)] text-[var(--muted)] hover:text-[var(--heading)]"}`}>
           <Users className="w-3.5 h-3.5" /> A colleague worked on it
         </button>
-        {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", offer: "", from: "", to: "", search: "", helped: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
+        {Object.values(f).some(Boolean) && <button onClick={() => { setF({ status: "", agent: "", offer: "", tier: "", order_type: "", from: "", to: "", search: "", helped: "" }); setSearchText(""); }} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold text-[var(--muted)] hover:text-[var(--heading)]"><X className="w-3.5 h-3.5" /> Clear</button>}
         <button onClick={exportXlsx} disabled={!rows.length} className="ml-auto flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600/20 text-emerald-500 border border-emerald-500/30 disabled:opacity-50"><Download className="w-3.5 h-3.5" /> Excel</button>
       </div>
 
@@ -382,7 +392,12 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
                       </td>
                       <td className="py-2.5 px-3"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>{r.attempts > 0 && <div className="text-[10px] text-[var(--muted)] mt-0.5">{r.attempts} attempt(s)</div>}</td>
                       <td className="py-2.5 px-3 font-mono whitespace-nowrap">{fmtDT(r.first_call_at) || "—"}</td>
-                      {camp.steps.map((_s, i) => <td key={i} className="py-2.5 px-3 font-mono whitespace-nowrap">{orderDate(r, i + 1) || "—"}</td>)}
+                      {camp.steps.map((_s, i) => { const o = orderOf(r, i + 1); return (
+                        <td key={i} className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="font-mono">{orderDate(r, i + 1) || "—"}</div>
+                          {o && <div className="text-[10px] text-[var(--muted)]">{[o.order_number ? `#${o.order_number}` : "", o.order_type ? ORDER_TYPE_LABEL[o.order_type] || o.order_type : "", orderValue(o) ? `${orderValue(o)} KWD` : "", o.nps ? `NPS ${o.nps}` : ""].filter(Boolean).join(" · ")}</div>}
+                        </td>
+                      ); })}
                       <td className="py-2.5 px-3"><Badge cls={OFFER_STATE[el.state].cls}>{OFFER_STATE[el.state].label}</Badge>{el.expires && <div className="text-[10px] text-[var(--muted)] mt-0.5">until {el.expires}</div>}</td>
                       <td className="py-2.5 px-3 max-w-[10rem]">{r.churn_reason || <span className="text-[var(--muted)]">—</span>}</td>
                       <td className="py-2.5 px-3">

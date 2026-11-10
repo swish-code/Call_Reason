@@ -822,6 +822,9 @@ export class DB {
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS call_result TEXT;
       -- Gender (female / male), asked on the call (2026-10-27).
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS gender TEXT;
+      -- Pickup or delivery, and the NPS answer (1 to 10) asked with the 2nd and 3rd offer order (2026-11-10).
+      ALTER TABLE offer_orders ADD COLUMN IF NOT EXISTS order_type TEXT;
+      ALTER TABLE offer_orders ADD COLUMN IF NOT EXISTS nps SMALLINT;
       -- Two calls with no answer close a customer as unreachable (2026-11-10). Customers who already had two or more
       -- such calls when the rule arrived are closed here. Only calls from before the rule count, so a customer a leader
       -- reopened and who was called again since is left to the rule itself.

@@ -213,6 +213,8 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
 
           <OfferBestTime slots={d.slots || []} from={range.from} to={range.to} campId={camp.id} periodText={periodText} />
 
+          <Nps rows={d.nps || []} grown={grown} periodText={periodText} />
+
           <AgentPerformance rows={d.performance || []} periodText={periodText} />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
@@ -398,6 +400,52 @@ function AgentPerformance({ rows, periodText }: { rows: any[]; periodText: strin
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+// The NPS answers (1 to 10) asked with the 2nd and 3rd offer order: how many customers gave each score.
+function Nps({ rows, grown, periodText }: { rows: { score: number; n: number }[]; grown: boolean; periodText: string }) {
+  const total = rows.reduce((a, r) => a + r.n, 0);
+  const max = Math.max(1, ...rows.map((r) => r.n));
+  const count = (from: number, to: number) => rows.filter((r) => r.score >= from && r.score <= to).reduce((a, r) => a + r.n, 0);
+  const promoters = count(9, 10), passives = count(7, 8), detractors = count(1, 6);
+  const avg = total ? rows.reduce((a, r) => a + r.score * r.n, 0) / total : 0;
+  const score = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
+  const color = (s: number) => (s >= 9 ? "#10b981" : s >= 7 ? "#f59e0b" : "#f43f5e");
+  return (
+    <div className="rounded-3xl p-6 bg-[var(--surface)] border border-[var(--border)] shadow-lg">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-extrabold text-[var(--heading)]">NPS — how likely to recommend us (1 to 10)</h3>
+          <p className="text-[11px] text-[var(--muted)]">{periodText}, by order date. Asked with the 2nd and 3rd offer order. The number on each bar is how many customers gave that score.</p>
+        </div>
+        {total > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="px-2.5 py-1 rounded-full bg-[var(--bg)] border border-[var(--border)] text-[var(--heading)] font-bold">{total} answer{total === 1 ? "" : "s"}</span>
+            <span className="px-2.5 py-1 rounded-full bg-[var(--bg)] border border-[var(--border)] text-[var(--heading)] font-bold">Average {avg.toFixed(1)}</span>
+            <span className="px-2.5 py-1 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-500 font-extrabold" title="Promoters (9–10) minus detractors (1–6), as a share of all answers">NPS {score > 0 ? "+" : ""}{score}</span>
+          </div>
+        )}
+      </div>
+      {!total ? <div className="text-xs text-[var(--muted)] py-6 text-center">No NPS answers in this period yet.</div> : (
+        <>
+          <div className="mt-5 grid grid-cols-10 gap-1.5 sm:gap-3 items-end h-44">
+            {rows.map((r, i) => (
+              <div key={r.score} className="h-full flex flex-col items-center justify-end gap-1" title={`${r.n} customer(s) said ${r.score}`}>
+                <span className="text-[11px] font-extrabold text-[var(--heading)] tabular-nums">{r.n}</span>
+                <div className={`w-full rounded-t-lg ${GROW}`} style={{ height: grown ? `${Math.max(r.n ? 4 : 0, (r.n / max) * 78)}%` : 0, background: color(r.score), transitionDelay: `${i * 50}ms` }} />
+                <span className="text-[11px] font-bold text-[var(--muted)]">{r.score}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-[var(--text)]">
+            <span><i className="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style={{ background: "#f43f5e" }} />Detractors (1–6): <b>{detractors}</b></span>
+            <span><i className="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style={{ background: "#f59e0b" }} />Passives (7–8): <b>{passives}</b></span>
+            <span><i className="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style={{ background: "#10b981" }} />Promoters (9–10): <b>{promoters}</b></span>
+          </div>
+        </>
       )}
     </div>
   );

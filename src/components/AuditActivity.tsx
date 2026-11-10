@@ -64,6 +64,7 @@ const LABELS: [RegExp, string][] = [
   [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/delete$/, "Deleted a customer"],
   [/^POST \/api\/offer-campaigns\/customers\/[^/]+\/orders$/, "Logged an offer order"],
   [/^POST \/api\/offer-campaigns\/orders\/[^/]+\/remove$/, "Removed an offer order"],
+  [/^POST \/api\/offer-campaigns\/orders\/[^/]+\/edit$/, "Edited an offer order"],
   [/^PUT \/api\/offer-campaigns\/[^/]+$/, "Changed the campaign settings"],
 ];
 const label = (action: string) => LABELS.find(([re]) => re.test(action))?.[1] || action;
