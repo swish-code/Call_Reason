@@ -2232,12 +2232,8 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   const platforms = await DB.getPlatforms();
   const platMap = new Map(platforms.map((p) => [p.name.toLowerCase(), p.id]));
 
-  // Eligible agents for auto-assign: active Call Center agents, distributed even round-robin.
-  const allUsers = await DB.getUsers();
-  const ccAgentIds = allUsers
-    .filter((u: any) => u.role === "agent" && u.status === "Active" && u.department === "Call Center")
-    .map((u: any) => u.id);
-  let rrPointer = 0;
+  // Uploaded reviews are NOT given to agents by the upload any more (the business, 2026-11-10): they wait without an
+  // agent until a leader gives them out (Reviews → Give reviews, by count and date).
 
   const result = { total: rows.length, inserted: 0, duplicates: 0, overwritten: 0, tasks: 0, auto_closed: 0, enriched: 0, no_rating: 0, held: 0, branch_fixed: 0, branch_unmatched: 0, errors: [] as { row: number; message: string }[] };
   const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
@@ -2300,7 +2296,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       }
       // Auto-triage (no manual Status column):
       //   TASK       = has a comment (any rating) OR (rating 1-3 AND has a phone)
-      //                -> pending, auto-assigned to an agent. A commented row with no phone is
+      //                -> pending, waiting for a leader to assign it. A commented row with no phone is
       //                   STILL a task: the agent contacts the aggregator to obtain the phone.
       //   AUTO CLOSE = everything else: 4-5 with no comment, or a 1-3 with no comment and no phone
       //                -> no_action_needed, hidden from the Reviews list, counted in reports only
@@ -2333,12 +2329,7 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const brand_id = names.brand.id;
       const linkedBranch = names.match?.status === "matched" ? names.match.branch : null;
       const branchValue = linkedBranch ? linkedBranch.name : (names.rawBranch || undefined);
-      // Even round-robin across active Call Center agents (task rows only).
-      let assigned_agent_id: string | null = null;
-      if (isTask && ccAgentIds.length) {
-        assigned_agent_id = ccAgentIds[rrPointer % ccAgentIds.length];
-        rrPointer++;
-      }
+      const assigned_agent_id: string | null = null;   // a leader assigns it
 
       const outcome = await DB.upsertRating({
         brand_id, platform_id, order_id: orderId, rating: ratingVal,
@@ -2476,12 +2467,6 @@ async function runPhoneBackfill(opts: { limit: number; retriage: boolean; upload
     for (const [oid, hit] of await lookupOrders(name, ids)) hits.set(`${name}|${oid}`, hit);
   }
 
-  // Agents for re-assignment, same round-robin rule the upload path uses.
-  const ccAgentIds = (await DB.getUsers())
-    .filter((u: any) => u.role === "agent" && u.status === "Active" && u.department === "Call Center")
-    .map((u: any) => u.id);
-  let rr = 0;
-
   for (const r of pending) {
     const hit = hits.get(`${idToName.get(r.platform_id)}|${r.order_id}`);
     if (!hit?.phone) continue;
@@ -2495,7 +2480,7 @@ async function runPhoneBackfill(opts: { limit: number; retriage: boolean; upload
     if (!opts.retriage) { summary.would_retriage++; continue; }
     await DB.updateRating(r.id, {
       action_status: "pending",
-      assigned_agent_id: ccAgentIds.length ? ccAgentIds[rr++ % ccAgentIds.length] : null,
+      assigned_agent_id: null,   // reopened without an agent, like an upload — a leader gives it out
       resolved_at: null,
     });
     summary.retriaged++;
