@@ -15,13 +15,16 @@
 import { DB, WORK_DELTA_SQL } from "./db.js";
 
 export const OPEN_STATUSES = ["not_called", "no_answer", "busy", "call_back"];           // still to be called
-export const CALL_STATUSES = ["not_called", "no_answer", "busy", "call_back", "wrong_number", "not_interested", "accepted", "ordered"];
+export const CALL_STATUSES = ["not_called", "no_answer", "busy", "call_back", "wrong_number", "unreachable", "not_interested", "accepted", "ordered"];
+// A customer who did not answer two calls in a row is closed as "unreachable" and leaves the agent's list. Nobody picks
+// it as a call result — the second no-answer / busy call sets it. A leader can reopen the customer from Edit.
+const NO_ANSWER_STATUSES = ["no_answer", "busy"];
 export const REACHED_STATUSES = ["call_back", "not_interested", "accepted", "ordered"];
 const OFFER_STARTS = ["accepted", "ordered"];                                            // the customer took the offer in this call
 // What an agent picks after a call is an editable list (Configuration → Shakir Campaign, options list below). Each
 // result works like one of these built-in statuses (options.kind) — the rules above run on that, and the customer
 // also keeps the label that was picked (offer_customers.call_result).
-export const RESULT_KINDS = CALL_STATUSES.filter((s) => s !== "not_called");
+export const RESULT_KINDS = CALL_STATUSES.filter((s) => s !== "not_called" && s !== "unreachable");
 export const OFFER_RESULT_LIST = "offer_call_result";
 
 // Every call and order on a customer, oldest first, with who did it — the list shows from it who worked on the
@@ -115,7 +118,7 @@ async function setGender(c: any, raw: any, user: any): Promise<{ from: string | 
 }
 
 const CALL_STATUS_LABEL: Record<string, string> = {
-  no_answer: "No answer", busy: "Busy / switched off", call_back: "Call back later", wrong_number: "Wrong number",
+  no_answer: "No answer", busy: "Busy / switched off", call_back: "Call back later", wrong_number: "Wrong number", unreachable: "Unreachable",
   not_interested: "Not interested", accepted: "Accepted the offer", ordered: "Ordered",
 };
 
@@ -426,6 +429,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const startsOffer = OFFER_STARTS.includes(status);
     // A customer who already ordered stays "Ordered" — a later call (e.g. "accepted" again) goes in the history only.
     const keepOrdered = data.orders.length > 0 || c.call_status === "ordered";
+    // The second call in a row with no answer closes the customer as unreachable (the call itself keeps its own result).
+    const closes = direction === "outbound" && !keepOrdered && NO_ANSWER_STATUSES.includes(status) && NO_ANSWER_STATUSES.includes(c.call_status);
     const updated = (await DB.query(`
       UPDATE offer_customers SET
         call_status = CASE WHEN $11 THEN 'ordered' ELSE $2 END, call_result = CASE WHEN $11 THEN NULL ELSE $10 END,
@@ -436,14 +441,14 @@ export function registerOfferRoutes(app: any, d: Deps) {
         churn_reason = COALESCE($6, churn_reason), comment = COALESCE($7, comment),
         offer_started_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() ELSE offer_started_at END,
         offer_expires_at = CASE WHEN offer_started_at IS NULL AND $8 THEN now() + ($9 || ' days')::interval ELSE offer_expires_at END
-      WHERE id = $1 RETURNING *`, [c.id, status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days), result, keepOrdered]))[0];
+      WHERE id = $1 RETURNING *`, [c.id, closes ? "unreachable" : status, direction, req.user.id, contactDate, churn, comment, startsOffer, String(camp.validity_days), closes ? null : result, keepOrdered]))[0];
     await addEvent({ customerId: c.id, campaignId: c.campaign_id, kind: "call", user: req.user, direction, call_status: status, prev_status: c.call_status, churn_reason: churn, comment,
-      details: { ...(workSecs ? { work_seconds: workSecs } : {}), ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}), ...(keepOrdered && status !== "ordered" ? { stays_ordered: true } : {}),
+      details: { ...(workSecs ? { work_seconds: workSecs } : {}), ...(result ? { result } : {}), ...(c.call_result ? { prev_result: c.call_result } : {}), ...(keepOrdered && status !== "ordered" ? { stays_ordered: true } : {}), ...(closes ? { closed_unreachable: true } : {}),
         ...(status === "call_back" ? { call_back_date: contactDate } : {}), ...(startsOffer && !c.offer_started_at ? { offer_started: true, expires: kwDay(new Date(updated.offer_expires_at).getTime()) } : {}) } });
     const named = await setName(c, b.customer_name, req.user);
     const gendered = await setGender(c, b.gender, req.user);
     await d.logCall(req.user, { campaign: camp, customer: c, result: result || CALL_STATUS_LABEL[status] || status, direction, seconds: workSecs });
-    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${gendered ? `, gender set to ${gendered.to}` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: result || status };
+    req.auditExtra = { details: `${named ? named.to : c.customer_name || ""} ${c.phone} — ${direction} call${churn ? `, reason: ${churn}` : ""}${comment ? `, note: ${comment.slice(0, 80)}` : ""}${named ? `, name ${named.from ? `"${named.from}" → ` : "set to "}"${named.to}"` : ""}${gendered ? `, gender set to ${gendered.to}` : ""}${keepOrdered && status !== "ordered" ? ", customer stays Ordered" : ""}${closes ? ", second call with no answer — closed as Unreachable" : ""}`.trim(), previous_value: c.call_result || c.call_status, new_value: closes ? "Unreachable" : result || status };
     res.json(await loadCustomer(c.id));
   }));
 
@@ -744,7 +749,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
       // The buckets don't overlap, so reached + not reached + refused + pending = assigned.
       DB.query(`SELECT oc.assigned_agent_id AS agent_id, COALESCE(u.full_name, '— Unassigned —') AS agent_name, count(*)::int AS assigned,
                        count(*) FILTER (WHERE oc.call_status IN ('call_back','accepted','ordered'))::int AS reached,
-                       count(*) FILTER (WHERE oc.call_status IN ('no_answer','busy','wrong_number'))::int AS not_reached,
+                       count(*) FILTER (WHERE oc.call_status IN ('no_answer','busy','wrong_number','unreachable'))::int AS not_reached,
                        count(*) FILTER (WHERE oc.call_status = 'not_interested')::int AS refused_not_interested,
                        count(*) FILTER (WHERE oc.call_status = 'not_called')::int AS pending
                   FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id

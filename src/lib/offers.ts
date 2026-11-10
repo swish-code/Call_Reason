@@ -29,12 +29,14 @@ export const CALL_STATUS: Record<string, { label: string; cls: string; open?: bo
   busy: { label: "Busy / switched off", cls: "bg-rose-500/10 text-rose-500 border-rose-500/25", open: true },
   call_back: { label: "Call back later", cls: "bg-sky-500/10 text-sky-500 border-sky-500/25", open: true, reached: true },
   wrong_number: { label: "Wrong number", cls: "bg-zinc-500/10 text-zinc-500 border-zinc-500/25" },
+  unreachable: { label: "Unreachable (2 calls, no answer)", cls: "bg-zinc-500/10 text-zinc-500 border-zinc-500/25" },
   not_interested: { label: "Not interested", cls: "bg-orange-500/10 text-orange-500 border-orange-500/25", reached: true },
   accepted: { label: "Accepted the offer", cls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/25", reached: true },
   ordered: { label: "Ordered", cls: "bg-violet-500/10 text-violet-500 border-violet-500/25", reached: true },
 };
-/** What an agent can record as the result of a call (everything except "not called yet"). */
-export const RESULT_STATUSES = Object.keys(CALL_STATUS).filter((k) => k !== "not_called");
+/** What an agent can record as the result of a call (everything except "not called yet", and "unreachable", which the
+ *  second no-answer call sets by itself). */
+export const RESULT_STATUSES = Object.keys(CALL_STATUS).filter((k) => k !== "not_called" && k !== "unreachable");
 
 /** A call or order on a customer, as the list (work) and the customer screen (events) carry it. */
 export interface WorkEvent { kind: string; call_status?: string | null; user_id?: string | null; user_name?: string | null; created_at: string; details?: any }
@@ -64,8 +66,8 @@ export const statusText = (r: { call_status: string; call_result?: string | null
 
 /** What a call result can work like — shown when an admin adds one in Configuration. */
 export const RESULT_KIND_HELP: Record<string, string> = {
-  no_answer: "No answer — call again later",
-  busy: "Busy / switched off — call again later",
+  no_answer: "No answer — call again later (closed after 2 in a row)",
+  busy: "Busy / switched off — call again later (closed after 2 in a row)",
   call_back: "Call back later — asks for a date",
   wrong_number: "Wrong number — closed",
   not_interested: "Not interested — closed (reached)",

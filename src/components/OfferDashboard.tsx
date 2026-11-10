@@ -34,6 +34,7 @@ const GROUPS: { label: string; statuses: string[]; color: string }[] = [
   { label: "No answer / busy", statuses: ["no_answer", "busy"], color: "#60a5fa" },
   { label: "Not called yet", statuses: ["not_called"], color: "var(--nc)" },
   { label: "Not interested", statuses: ["not_interested"], color: "#fb7185" },
+  { label: "Unreachable (2 calls, no answer)", statuses: ["unreachable"], color: "#94a3b8" },
   { label: "Wrong number", statuses: ["wrong_number"], color: "#64748b" },
 ];
 const AVATAR = ["#7c3aed", "#0891b2", "#ea580c", "#059669", "#db2777", "#2563eb", "#ca8a04"];

@@ -822,6 +822,13 @@ export class DB {
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS call_result TEXT;
       -- Gender (female / male), asked on the call (2026-10-27).
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS gender TEXT;
+      -- Two calls with no answer close a customer as unreachable (2026-11-10). Customers who already had two or more
+      -- such calls when the rule arrived are closed here. Only calls from before the rule count, so a customer a leader
+      -- reopened and who was called again since is left to the rule itself.
+      UPDATE offer_customers oc SET call_status = 'unreachable', call_result = NULL
+       WHERE oc.call_status IN ('no_answer','busy') AND oc.last_call_at < '2026-11-11'
+         AND NOT EXISTS (SELECT 1 FROM offer_orders o WHERE o.customer_id = oc.id)
+         AND (SELECT count(*) FROM offer_events e WHERE e.customer_id = oc.id AND e.kind = 'call' AND e.direction = 'outbound' AND e.call_status IN ('no_answer','busy')) >= 2;
       -- Talabat partner-portal Order report, one row per Kuwait day (YYYY-MM-DD), uploaded each morning by
       -- the talabat-export tool. The CSV is kept gzipped, and its summary (see server/talabat.ts) beside it.
       -- A re-upload of the same day replaces it. Admin only.
