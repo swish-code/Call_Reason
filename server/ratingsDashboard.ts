@@ -6,9 +6,16 @@ import { pool } from "./db.js";
 const DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kuwait')::date`;
 const CLOSED = `('resolved','no_action_needed','unreachable')`;
 
-export async function getRatingsDashboard(from: string, to: string, agentId: string | null): Promise<any> {
+const HAS_PHONE = `(r.customer_phone IS NOT NULL AND btrim(r.customer_phone) <> '')`;
+const HAS_COMMENT = `(r.review_text IS NOT NULL AND btrim(r.review_text) <> '')`;
+// The customer was spoken to: a call was answered, or a complaint was recorded from them.
+const REACHED = `(r.action_status = 'resolved' OR EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id AND c.outcome = 'answered'))`;
+
+export async function getRatingsDashboard(from: string, to: string, agentId: string | null, platformId: string | null = null): Promise<any> {
   const P = [from, to];
-  const agentW = agentId ? `AND r.assigned_agent_id = '${agentId.replace(/'/g, "''")}'` : "";
+  const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+  // The page's filters (one agent, one aggregator) on every period number.
+  const agentW = (agentId ? `AND r.assigned_agent_id = ${lit(agentId)} ` : "") + (platformId ? `AND r.platform_id = ${lit(platformId)}` : "");
   const q = async (sql: string, params: any[] = P) => (await pool.query(sql, params)).rows;
 
   // Right now: open tasks, unaffected by the period.
@@ -33,6 +40,9 @@ export async function getRatingsDashboard(from: string, to: string, agentId: str
     SELECT count(*)::int AS uploaded, count(*) FILTER (WHERE requires_action)::int AS tasks,
            count(*) FILTER (WHERE NOT requires_action)::int AS auto_closed,
            count(*) FILTER (WHERE review_text IS NOT NULL AND btrim(review_text) <> '')::int AS with_comment,
+           count(*) FILTER (WHERE ${HAS_PHONE})::int AS with_phone,
+           count(*) FILTER (WHERE ${HAS_PHONE} AND ${HAS_COMMENT})::int AS comment_with_phone,
+           count(*) FILTER (WHERE ${HAS_PHONE} AND requires_action)::int AS tasks_with_phone,
            COALESCE(round(avg(rating)::numeric, 2), 0)::float AS avg_rating,
            count(*) FILTER (WHERE rating = 1)::int AS s1, count(*) FILTER (WHERE rating = 2)::int AS s2, count(*) FILTER (WHERE rating = 3)::int AS s3,
            count(*) FILTER (WHERE rating = 4)::int AS s4, count(*) FILTER (WHERE rating = 5)::int AS s5
@@ -48,7 +58,34 @@ export async function getRatingsDashboard(from: string, to: string, agentId: str
   const attempts = await q(`
     SELECT count(*)::int AS n, count(*) FILTER (WHERE outcome = 'answered')::int AS answered
       FROM rating_call_attempts c JOIN ratings r ON r.id = c.rating_id
-     WHERE ${DAY("c.created_at")} BETWEEN $1::date AND $2::date ${agentId ? "AND c.agent_id = $3" : ""}`, agentId ? [...P, agentId] : P);
+     WHERE ${DAY("c.created_at")} BETWEEN $1::date AND $2::date ${agentId ? "AND c.agent_id = $3" : ""} ${platformId ? `AND r.platform_id = ${lit(platformId)}` : ""}`, agentId ? [...P, agentId] : P);
+
+  // Reached or not, for the tasks of the period (each counted once): spoken to, or why not — the result of the last
+  // call, no phone to call, closed without a call, or nobody has called yet.
+  const REACH_CASE = `CASE WHEN ${REACHED} THEN 'reached'
+                WHEN lc.outcome IS NOT NULL THEN lc.outcome
+                WHEN NOT ${HAS_PHONE} THEN 'no_phone'
+                WHEN r.action_status IN ('no_action_needed','unreachable') THEN 'closed_no_call'
+                ELSE 'not_called' END`;
+  const LAST_CALL = `LEFT JOIN LATERAL (SELECT c.outcome FROM rating_call_attempts c WHERE c.rating_id = r.id ORDER BY c.created_at DESC LIMIT 1) lc ON true`;
+  const reach = await q(`
+    SELECT ${REACH_CASE} AS bucket, count(*)::int AS n
+      FROM ratings r
+      ${LAST_CALL}
+     WHERE r.requires_action AND ${DAY("r.uploaded_at")} BETWEEN $1::date AND $2::date ${agentW} GROUP BY 1 ORDER BY 2 DESC`);
+
+  // Agent performance, the way the Surveys and Shakir dashboards show it: the tasks of the period by the agent who
+  // holds them, and where they stand now. Completed + pending = assigned.
+  const performance = await q(`
+    SELECT r.assigned_agent_id AS agent_id, COALESCE(u.full_name, '— Unassigned —') AS agent_name, count(*)::int AS assigned,
+           count(*) FILTER (WHERE r.action_status IN ${CLOSED})::int AS completed,
+           count(*) FILTER (WHERE ${REACHED})::int AS reached,
+           count(*) FILTER (WHERE r.action_status = 'unreachable')::int AS not_reached,
+           count(*) FILTER (WHERE r.action_status = 'no_action_needed')::int AS no_action,
+           count(*) FILTER (WHERE r.action_status IN ('pending','in_progress'))::int AS pending
+      FROM ratings r LEFT JOIN users u ON u.id = r.assigned_agent_id
+     WHERE r.requires_action AND ${DAY("r.uploaded_at")} BETWEEN $1::date AND $2::date ${agentW}
+     GROUP BY 1, 2 ORDER BY (r.assigned_agent_id IS NULL), 3 DESC, 2`);
 
   const days = await q(`
     WITH d AS (SELECT generate_series($1::date, $2::date, '1 day')::date AS day),
@@ -66,7 +103,7 @@ export async function getRatingsDashboard(from: string, to: string, agentId: str
                        count(*) FILTER (WHERE action_status = 'no_action_needed')::int AS no_action,
                        count(*) FILTER (WHERE action_status = 'unreachable')::int AS unreachable,
                        COALESCE(round(avg(EXTRACT(EPOCH FROM (resolved_at - uploaded_at)) / 3600)::numeric, 1), 0)::float AS avg_hours
-                  FROM ratings r WHERE r.recorded_by IS NOT NULL AND ${DAY("r.resolved_at")} BETWEEN $1::date AND $2::date GROUP BY 1),
+                  FROM ratings r WHERE r.recorded_by IS NOT NULL AND ${DAY("r.resolved_at")} BETWEEN $1::date AND $2::date ${platformId ? `AND r.platform_id = ${lit(platformId)}` : ""} GROUP BY 1),
          at AS (SELECT agent_id, count(*)::int AS attempts, count(*) FILTER (WHERE outcome = 'answered')::int AS answered
                   FROM rating_call_attempts c WHERE ${DAY("c.created_at")} BETWEEN $1::date AND $2::date GROUP BY 1),
          op AS (SELECT assigned_agent_id AS agent_id, count(*)::int AS open FROM ratings
@@ -79,6 +116,7 @@ export async function getRatingsDashboard(from: string, to: string, agentId: str
 
   const platforms = await q(`
     SELECT COALESCE(p.name, '—') AS name, count(*)::int AS reviews, count(*) FILTER (WHERE requires_action)::int AS tasks,
+           count(*) FILTER (WHERE ${HAS_COMMENT})::int AS with_comment, count(*) FILTER (WHERE ${HAS_PHONE})::int AS with_phone,
            COALESCE(round(avg(rating)::numeric, 2), 0)::float AS avg, count(*) FILTER (WHERE rating <= 2)::int AS low
       FROM ratings r LEFT JOIN platforms p ON p.id = r.platform_id
      WHERE ${DAY("r.uploaded_at")} BETWEEN $1::date AND $2::date ${agentW} GROUP BY 1 ORDER BY reviews DESC`);
@@ -98,8 +136,8 @@ export async function getRatingsDashboard(from: string, to: string, agentId: str
   const results = await q(`
     SELECT r.id, r.rating, r.review_text, r.order_id, r.customer_name, r.customer_phone, r.branch, r.action_status, r.action_note,
            r.uploaded_at, r.resolved_at, b.brand_name, p.name AS platform_name, ua.full_name AS agent_name, ur.full_name AS closed_by,
-           (SELECT count(*)::int FROM rating_call_attempts c WHERE c.rating_id = r.id) AS attempts
-      FROM ratings r LEFT JOIN brands b ON b.id = r.brand_id LEFT JOIN platforms p ON p.id = r.platform_id
+           (SELECT count(*)::int FROM rating_call_attempts c WHERE c.rating_id = r.id) AS attempts, ${REACH_CASE} AS reach
+      FROM ratings r ${LAST_CALL} LEFT JOIN brands b ON b.id = r.brand_id LEFT JOIN platforms p ON p.id = r.platform_id
       LEFT JOIN users ua ON ua.id = r.assigned_agent_id LEFT JOIN users ur ON ur.id = r.recorded_by
      WHERE r.requires_action AND ${DAY("r.uploaded_at")} BETWEEN $1::date AND $2::date ${agentW}
      ORDER BY r.uploaded_at DESC LIMIT ${CAP}`);
@@ -107,6 +145,6 @@ export async function getRatingsDashboard(from: string, to: string, agentId: str
   return {
     range: { from, to }, live, liveAgents,
     period: { ...up, ...done, attempts: attempts[0]?.n || 0, answered: attempts[0]?.answered || 0 },
-    days, agents, platforms, brands, branches, results, resultsCap: CAP,
+    days, agents, platforms, brands, branches, results, resultsCap: CAP, reach, performance,
   };
 }

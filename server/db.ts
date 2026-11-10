@@ -822,6 +822,11 @@ export class DB {
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS call_result TEXT;
       -- Gender (female / male), asked on the call (2026-10-27).
       ALTER TABLE offer_customers ADD COLUMN IF NOT EXISTS gender TEXT;
+      -- A 4 or 5 star rating with no comment needs no call: the upload closes it. The ones still waiting (pending, no
+      -- call logged) from before that rule are closed the same way.
+      UPDATE ratings r SET requires_action = false, action_status = 'no_action_needed'
+       WHERE r.rating >= 4 AND (r.review_text IS NULL OR btrim(r.review_text) = '') AND r.action_status = 'pending'
+         AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id);
       -- Pickup or delivery, and the NPS answer (1 to 10) asked with the 2nd and 3rd offer order (2026-11-10).
       ALTER TABLE offer_orders ADD COLUMN IF NOT EXISTS order_type TEXT;
       ALTER TABLE offer_orders ADD COLUMN IF NOT EXISTS nps SMALLINT;
@@ -2164,11 +2169,13 @@ export class DB {
     return res.rowCount ?? 0;
   }
 
-  // Give N unassigned open reviews (tasks nobody has yet, oldest first) to an agent. Returns how many.
-  static async assignRatingsByCount(agentId: string, count: number): Promise<number> {
+  // Give N unassigned open reviews (tasks nobody has yet, oldest first) to an agent. Returns how many. With a period,
+  // only reviews dated in it (the review's own date, the one the Reviews list filters on) are given.
+  static async assignRatingsByCount(agentId: string, count: number, from?: string | null, to?: string | null): Promise<number> {
     const { rows } = await pool.query(
       `SELECT id FROM ratings WHERE assigned_agent_id IS NULL AND requires_action = true AND action_status = 'pending'
-       ORDER BY uploaded_at ASC LIMIT $1`, [count]);
+          AND ($2::text IS NULL OR order_date >= $2) AND ($3::text IS NULL OR order_date <= $3)
+       ORDER BY order_date ASC NULLS LAST, uploaded_at ASC LIMIT $1`, [count, from || null, to || null]);
     if (!rows.length) return 0;
     await pool.query("UPDATE ratings SET assigned_agent_id = $1 WHERE id = ANY($2)", [agentId, rows.map((r) => r.id)]);
     return rows.length;
@@ -2186,13 +2193,17 @@ export class DB {
   }
 
   // Who holds how many open reviews (pending / in progress), and how many open ones have no agent.
-  static async getRatingAgentLoad(): Promise<{ unassigned: number; agents: { id: string; full_name: string; open: number; untouched: number }[] }> {
+  static async getRatingAgentLoad(from?: string | null, to?: string | null): Promise<{ unassigned: number; agents: { id: string; full_name: string; open: number; untouched: number }[] }> {
     const { rows } = await pool.query(`
       SELECT r.assigned_agent_id AS id, u.full_name, count(*)::int AS open,
              count(*) FILTER (WHERE r.action_status = 'pending' AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id))::int AS untouched
         FROM ratings r LEFT JOIN users u ON u.id = r.assigned_agent_id
        WHERE r.requires_action = true AND r.action_status IN ('pending', 'in_progress') GROUP BY 1, 2 ORDER BY 3 DESC`);
-    const unassigned = rows.find((r) => !r.id)?.open || 0;
+    // With a period, the pool is the unassigned pending reviews dated in it (what "Give" would hand out).
+    const unassigned = from || to
+      ? (await pool.query(`SELECT count(*)::int AS n FROM ratings WHERE assigned_agent_id IS NULL AND requires_action = true AND action_status = 'pending'
+                             AND ($1::text IS NULL OR order_date >= $1) AND ($2::text IS NULL OR order_date <= $2)`, [from || null, to || null])).rows[0].n
+      : rows.find((r) => !r.id)?.open || 0;
     return { unassigned, agents: rows.filter((r) => r.id).map((r) => ({ id: r.id, full_name: r.full_name || "(unknown)", open: r.open, untouched: r.untouched })) };
   }
 

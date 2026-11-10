@@ -2578,7 +2578,8 @@ app.get("/api/ratings/dashboard", authenticateJWT, asyncHandler(async (req: any,
   if (from > to) return res.status(400).json({ error: "From is after To." });
   if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) return res.status(400).json({ error: "Pick a period of a year or less." });
   const agent = typeof req.query.agent_id === "string" && req.query.agent_id ? req.query.agent_id : null;
-  res.json(await getRatingsDashboard(from, to, agent));
+  const platform = typeof req.query.platform_id === "string" && req.query.platform_id ? req.query.platform_id : null;
+  res.json(await getRatingsDashboard(from, to, agent, platform));
 }));
 
 // Items of the reviews on screen: stored ones, plus a GrubTech lookup for the ones still missing (asked again after a while).
@@ -2598,14 +2599,16 @@ app.post("/api/ratings/items", authenticateJWT, asyncHandler(async (req: any, re
 // agent's untouched reviews go back to the pool.
 const requireReviewAssigner = (req: any, res: any, next: any) =>
   ["admin", "supervisor", "leader"].includes(req.user?.role) ? next() : res.status(403).json({ error: "Access denied." });
-app.get("/api/ratings/agent-load", authenticateJWT, requireReviewAssigner, asyncHandler(async (_req: any, res) => {
-  res.json(await DB.getRatingAgentLoad());
+const reviewDay = (v: any) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+app.get("/api/ratings/agent-load", authenticateJWT, requireReviewAssigner, asyncHandler(async (req: any, res) => {
+  res.json(await DB.getRatingAgentLoad(reviewDay(req.query.from), reviewDay(req.query.to)));
 }));
 app.post("/api/ratings/assign-count", authenticateJWT, requireReviewAssigner, asyncHandler(async (req: any, res) => {
   const { agent_id, count } = req.body || {};
   if (!agent_id || !(Number(count) > 0)) return res.status(400).json({ error: "Pick the agent and how many reviews." });
-  const n = await DB.assignRatingsByCount(String(agent_id), Math.min(5000, Number(count)));
-  req.auditExtra = { details: `gave ${n} review(s) to ${(await DB.getUserById(String(agent_id)))?.full_name || agent_id}` };
+  const from = reviewDay(req.body?.from), to = reviewDay(req.body?.to);
+  const n = await DB.assignRatingsByCount(String(agent_id), Math.min(5000, Number(count)), from, to);
+  req.auditExtra = { details: `gave ${n} review(s) to ${(await DB.getUserById(String(agent_id)))?.full_name || agent_id}${from || to ? ` (reviews dated ${from || "…"} to ${to || "…"})` : ""}` };
   res.json({ assigned: n });
 }));
 app.post("/api/ratings/unassign-count", authenticateJWT, requireReviewAssigner, asyncHandler(async (req: any, res) => {

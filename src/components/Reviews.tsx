@@ -358,7 +358,6 @@ export default function Reviews({ currentUser }: ReviewsProps) {
 
   // Assign / take back by count (like the survey campaigns): N unassigned open reviews to an agent, or N of an agent's
   // untouched reviews back to the pool.
-  const [countOpen, setCountOpen] = useState(false);
   const [countMode, setCountMode] = useState<"give" | "take">("give");
   const [countAgent, setCountAgent] = useState("");
   const [countN, setCountN] = useState(20);
@@ -366,20 +365,26 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [countMsg, setCountMsg] = useState("");
   const [countErr, setCountErr] = useState("");
   const [rLoad, setRLoad] = useState<{ unassigned: number; agents: { id: string; full_name: string; open: number; untouched: number }[] } | null>(null);
-  const fetchRLoad = async () => { try { const r = await apiFetch('/api/ratings/agent-load'); if (r.ok) setRLoad(await r.json()); } catch { /* informational */ } };
-  const openCount = () => { setCountOpen(true); setCountMode("give"); setCountAgent(""); setCountN(20); setCountMsg(""); setCountErr(""); setRLoad(null); fetchRLoad(); };
+  // The panel follows the list's date filter: the pool and "Give" count only the reviews dated in it.
+  const fetchRLoad = useCallback(async () => {
+    try {
+      const p = new URLSearchParams(); if (from) p.set('from', from); if (to) p.set('to', to);
+      const r = await apiFetch(`/api/ratings/agent-load?${p}`); if (r.ok) setRLoad(await r.json());
+    } catch { /* informational */ }
+  }, [from, to]);
+  useEffect(() => { if (canAssign) fetchRLoad(); }, [canAssign, fetchRLoad]);
   const saveCount = async () => {
     setCountErr(""); setCountMsg("");
     if (!countAgent) { setCountErr("Select an agent."); return; }
     setCountBusy(true);
     try {
       const res = await apiFetch(countMode === "give" ? '/api/ratings/assign-count' : '/api/ratings/unassign-count', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent_id: countAgent, count: Number(countN) }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent_id: countAgent, count: Number(countN), ...(countMode === "give" ? { from: from || undefined, to: to || undefined } : {}) }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCountErr(d.error || "Could not save."); return; }
       const n = countMode === "give" ? d.assigned : d.unassigned;
-      setCountMsg(n ? (countMode === "give" ? `Assigned ${n} review(s).` : `Took ${n} review(s) back to the pool.`) : (countMode === "give" ? "No unassigned open reviews left." : "This agent has no untouched reviews to take back."));
+      setCountMsg(n ? (countMode === "give" ? `Assigned ${n} review(s).` : `Took ${n} review(s) back to the pool.`) : (countMode === "give" ? (from || to ? "No unassigned open reviews in these dates." : "No unassigned open reviews left.") : "This agent has no untouched reviews to take back."));
       fetchRLoad(); fetchRatings();
     } finally { setCountBusy(false); }
   };
@@ -589,12 +594,6 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               </button>
             </>
           )}
-          {canAssign && (
-            <button onClick={openCount} title="Give N unassigned reviews to an agent, or take N back"
-              className="px-4 py-2.5 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/20 text-violet-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95">
-              <Users className="w-4 h-4" /> Assign by count
-            </button>
-          )}
           {isAdmin && (
             <button
               onClick={openPurge}
@@ -693,46 +692,34 @@ export default function Reviews({ currentUser }: ReviewsProps) {
         </div>
       )}
 
-      {countOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setCountOpen(false)}>
-          <div className="w-full max-w-sm bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-2xl space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <h3 className="text-sm font-extrabold text-[var(--heading)] flex items-center gap-2"><Users className="w-4 h-4 text-violet-400" /> {countMode === "give" ? "Assign reviews by count" : "Take reviews back"}</h3>
-              <button onClick={() => setCountOpen(false)} className="p-1.5 hover:bg-[var(--surface-2)] text-[var(--muted)] rounded-lg transition"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-1 text-xs font-bold">
-              {([["give", "Give to an agent"], ["take", "Take back from an agent"]] as const).map(([k, l]) => (
+      {/* Assign / take back by count — always on the page (like Shakir Campaign), following the date filter above */}
+      {canAssign && (
+        <div className="bg-[var(--surface)] border border-[var(--border)] shadow-lg rounded-3xl p-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex items-center gap-2 text-[var(--heading)] font-bold text-sm mr-1"><Users className="w-4 h-4 text-violet-400" /> {countMode === "give" ? "Give reviews" : "Take reviews back"}</div>
+            <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-0.5 text-[11px] font-bold">
+              {([["give", "Give"], ["take", "Take back"]] as const).map(([k, l]) => (
                 <button key={k} onClick={() => { setCountMode(k); setCountMsg(""); setCountErr(""); setCountAgent(""); }}
-                  className={`flex-1 py-1.5 rounded-lg transition ${countMode === k ? "bg-violet-600 text-white" : "text-[var(--muted)] hover:text-[var(--heading)]"}`}>{l}</button>
+                  className={`px-3 py-1.5 rounded-lg transition ${countMode === k ? "bg-violet-600 text-white" : "text-[var(--muted)] hover:text-[var(--heading)]"}`}>{l}</button>
               ))}
             </div>
-            {rLoad && (
-              <div className="text-[11px] text-[var(--muted)] space-y-1">
-                <div><b className="text-[var(--heading)]">{rLoad.unassigned}</b> open review(s) without an agent.</div>
-                {rLoad.agents.length > 0 && <div className="flex flex-wrap gap-1">{rLoad.agents.map(a => <span key={a.id} className="px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[10px]" title={`${a.open} open, ${a.untouched} not started yet`}>{a.full_name}: <b>{a.open}</b></span>)}</div>}
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Agent</label>
-              <select value={countAgent} onChange={e => setCountAgent(e.target.value)} className="w-full px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs">
-                <option value="">— Select —</option>
-                {countMode === "give"
-                  ? agents.map(a => <option key={a.id} value={a.id}>{a.full_name}{rLoad?.agents.find(x => x.id === a.id) ? ` — has ${rLoad.agents.find(x => x.id === a.id)!.open} open` : ""}</option>)
-                  : (rLoad?.agents || []).filter(a => a.untouched > 0).map(a => <option key={a.id} value={a.id}>{a.full_name} — {a.untouched} not started</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[var(--text)]">Count</label>
-              <input type="number" min={1} max={5000} value={countN} onChange={e => setCountN(Number(e.target.value))} className="w-full px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs" />
-              <p className="text-[10px] text-[var(--muted)]">{countMode === "give" ? "The oldest unassigned open reviews go first." : "Only reviews the agent has not started (no call attempt) go back; started ones stay with them."}</p>
-            </div>
-            {countErr && <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400">{countErr}</div>}
-            {countMsg && <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">{countMsg}</div>}
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setCountOpen(false)} className="px-4 py-2 bg-[var(--surface-2)] text-[var(--text)] rounded-xl text-xs font-bold transition">Close</button>
-              <button onClick={saveCount} disabled={countBusy} className="px-5 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition">{countBusy ? 'Saving…' : countMode === "give" ? 'Assign' : 'Take back'}</button>
-            </div>
+            <span className="text-[11px] text-[var(--muted)]">
+              {countMode === "give"
+                ? <><b className="text-[var(--heading)]">{rLoad ? rLoad.unassigned : "…"}</b> open review(s) without an agent{from || to ? <> dated <b className="text-[var(--heading)]">{from || "…"}</b> to <b className="text-[var(--heading)]">{to || "…"}</b></> : <> (all dates — set From / To in the filter above to give from one period)</>}</>
+                : "Takes back only reviews the agent has not started (no call attempt), the newest first"}
+            </span>
+            <select value={countAgent} onChange={e => setCountAgent(e.target.value)} className={selCls + " min-w-[12rem]"}>
+              <option value="">— agent —</option>
+              {countMode === "give"
+                ? agents.map(a => <option key={a.id} value={a.id}>{a.full_name}{rLoad?.agents.find(x => x.id === a.id) ? ` — has ${rLoad.agents.find(x => x.id === a.id)!.open} open` : ""}</option>)
+                : (rLoad?.agents || []).filter(a => a.untouched > 0).map(a => <option key={a.id} value={a.id}>{a.full_name} — {a.untouched} not started</option>)}
+            </select>
+            <input type="number" min={1} max={5000} value={countN} onChange={e => setCountN(Number(e.target.value))} className={inputCls + " w-24"} />
+            <button onClick={saveCount} disabled={countBusy || !countAgent || !(Number(countN) > 0)} className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{countBusy ? 'Saving…' : countMode === "give" ? 'Give' : 'Take back'}</button>
           </div>
+          {rLoad && rLoad.agents.length > 0 && <div className="flex flex-wrap gap-1">{rLoad.agents.map(a => <span key={a.id} className="px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[10px]" title={`${a.open} open, ${a.untouched} not started yet`}>{a.full_name}: <b>{a.open}</b></span>)}</div>}
+          {countErr && <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-400">{countErr}</div>}
+          {countMsg && <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-bold">{countMsg}</div>}
         </div>
       )}
 

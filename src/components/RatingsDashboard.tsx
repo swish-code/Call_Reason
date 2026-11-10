@@ -15,11 +15,13 @@ interface Data {
   range: { from: string; to: string };
   live: { unassigned: number; pending: number; in_progress: number; no_phone: number; older_3d: number };
   liveAgents: { agent: string; agent_id: string; pending: number; in_progress: number; older_3d: number }[];
-  period: { uploaded: number; tasks: number; auto_closed: number; with_comment: number; avg_rating: number; s1: number; s2: number; s3: number; s4: number; s5: number;
+  period: { uploaded: number; tasks: number; auto_closed: number; with_comment: number; with_phone: number; comment_with_phone: number; tasks_with_phone: number; avg_rating: number; s1: number; s2: number; s3: number; s4: number; s5: number;
     closed: number; resolved: number; no_action: number; unreachable: number; avg_hours: number; attempts: number; answered: number };
   days: { day: string; uploaded: number; tasks: number; closed: number }[];
   agents: { agent_id: string; agent: string; closed: number; resolved: number; no_action: number; unreachable: number; avg_hours: number; attempts: number; answered: number; open: number }[];
-  platforms: { name: string; reviews: number; tasks: number; avg: number; low: number }[];
+  platforms: { name: string; reviews: number; tasks: number; with_comment: number; with_phone: number; avg: number; low: number }[];
+  reach: { bucket: string; n: number }[];
+  performance: { agent_id: string | null; agent_name: string; assigned: number; completed: number; reached: number; not_reached: number; no_action: number; pending: number }[];
   brands: { name: string; reviews: number; tasks: number; avg: number; low: number }[];
   branches: { brand: string; name: string; reviews: number; avg: number; low: number }[];
   results: any[]; resultsCap: number;
@@ -41,6 +43,13 @@ const statusView = (s: string) =>
   : s === "in_progress" ? { label: "In progress", cls: "bg-violet-500/10 text-violet-500 border-violet-500/20" }
   : { label: "Pending", cls: "bg-amber-500/10 text-amber-500 border-amber-500/20" };
 
+// Why a customer was not reached: the result of the last call, or why there was no call.
+const REACH_LABEL: Record<string, string> = {
+  reached: "Reached", no_answer: "No answer", busy: "Busy", wrong_number: "Wrong number", declined: "Declined the call", switched_off: "Switched off", voicemail: "Voicemail",
+  no_phone: "No phone number", closed_no_call: "Closed without a call", not_called: "Not called yet",
+};
+const reachLabel = (b: string) => REACH_LABEL[b] || b.replace(/_/g, " ");
+
 const inputCls = "px-3 py-2 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-2 focus:ring-violet-500 focus:outline-none";
 const PRESETS: [string, string][] = [["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["month", "This month"]];
 
@@ -48,6 +57,9 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
   const today = kwToday();
   const [range, setRange] = useState({ from: today, to: today, preset: "today" });
   const [agent, setAgent] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [platforms, setPlatforms] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => { apiFetch("/api/platforms").then((r) => (r.ok ? r.json() : [])).then(setPlatforms).catch(() => {}); }, []);
   const [d, setD] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -60,11 +72,12 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
       setLoading(true); setError("");
       const qs = new URLSearchParams({ from: range.from, to: range.to });
       if (agent) qs.set("agent_id", agent);
+      if (platform) qs.set("platform_id", platform);
       const res = await apiFetch(`/api/ratings/dashboard?${qs}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not load the dashboard.");
       setD(await res.json());
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
-  }, [range.from, range.to, agent]);
+  }, [range.from, range.to, agent, platform]);
   useEffect(() => { load(); }, [load]);
 
   const preset = (p: string) => {
@@ -79,7 +92,11 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
   const S_DAYS: Series[] = [{ key: "uploaded", label: "Uploaded", color: CC.blue }, { key: "tasks", label: "Tasks (need a call)", color: CC.orange }, { key: "closed", label: "Closed by agents", color: CC.aqua }];
   const cats = (d?.days || []).map((x) => ({ key: x.day, label: String(Number(x.day.slice(8, 10))) }));
   const dayMap = new Map((d?.days || []).map((x) => [x.day, x]));
-  const results = (d?.results || []).filter((r) => !statusF || (statusF === "open" ? ["pending", "in_progress"].includes(r.action_status) : r.action_status === statusF));
+  const results = (d?.results || []).filter((r) => !statusF || (statusF === "open" ? ["pending", "in_progress"].includes(r.action_status) : statusF.startsWith("reach:") ? (statusF === "reach:unreached" ? r.reach !== "reached" : r.reach === statusF.slice(6)) : r.action_status === statusF));
+  const reached = d?.reach.find((x) => x.bucket === "reached")?.n || 0;
+  const unreached = (d?.reach || []).filter((x) => x.bucket !== "reached");
+  const unreachedTotal = unreached.reduce((a, x) => a + x.n, 0);
+  const platformName = platforms.find((x) => x.id === platform)?.name;
   const agentName = d?.agents.find((a) => a.agent_id === agent)?.agent || d?.liveAgents.find((a) => a.agent_id === agent)?.agent;
 
   return (
@@ -94,6 +111,12 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
         </div>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">From<input type="date" value={range.from} max={range.to} onChange={(e) => e.target.value && setRange({ ...range, from: e.target.value, preset: "" })} className={inputCls} /></label>
         <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">To<input type="date" value={range.to} min={range.from} max={today} onChange={(e) => e.target.value && setRange({ ...range, to: e.target.value, preset: "" })} className={inputCls} /></label>
+        <label className="flex flex-col gap-1 text-[10px] font-bold text-[var(--muted)]">Aggregator
+          <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={inputCls + " font-bold [&>option]:bg-[var(--surface)]"}>
+            <option value="">All aggregators</option>
+            {platforms.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+        </label>
         {agent && <button onClick={() => setAgent("")} className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-violet-500/10 border border-violet-500/30 text-violet-500"><X className="w-3.5 h-3.5" /> {agentName || "Agent"} only</button>}
         <button onClick={load} title="Refresh" className="ml-auto p-2.5 rounded-xl bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--heading)]"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
       </div>
@@ -128,7 +151,7 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
           )}
 
           {/* the period */}
-          <Section icon={Star} tone="text-amber-500" title={`Reviews — ${periodText}`} sub={`Uploaded in the period (by upload day)${agentName ? `, assigned to ${agentName}` : ""}. Closed = finished by a person in the period (by closing day).`} />
+          <Section icon={Star} tone="text-amber-500" title={`Reviews — ${periodText}`} sub={`Uploaded in the period (by upload day)${platformName ? `, ${platformName} only` : ""}${agentName ? `, assigned to ${agentName}` : ""}. Closed = finished by a person in the period (by closing day).`} />
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <Tile label="Uploaded" value={p.uploaded} icon={Star} tone="text-[var(--heading)]" hint={`avg ${p.avg_rating.toFixed(2)} ★`} />
             <Tile label="Tasks" value={p.tasks} icon={Flag} tone="text-orange-500" hint={p.uploaded ? `${pct(p.tasks, p.uploaded)}% needed a call` : undefined} />
@@ -136,6 +159,44 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
             <Tile label="Closed by agents" value={p.closed} icon={CheckCircle2} tone="text-emerald-500" hint={`avg ${hours(p.avg_hours)} after upload`} />
             <Tile label="Complaints recorded" value={p.resolved} icon={MessageSquare} tone="text-emerald-500" hint={`${p.no_action} no action · ${p.unreachable} unreachable`} />
             <Tile label="Call attempts" value={p.attempts} icon={PhoneCall} tone="text-sky-500" hint={p.attempts ? `${pct(p.answered, p.attempts)}% answered` : undefined} />
+          </div>
+
+          {/* phone numbers and reach */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+            <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
+              <h3 className="text-sm font-bold text-[var(--heading)] mb-1 flex items-center gap-2"><PhoneCall className="w-4 h-4 text-sky-500" /> Phone number available</h3>
+              <p className="text-[11px] text-[var(--muted)] mb-3">{periodText}{platformName ? ` · ${platformName}` : ""}. How many records came with a phone number we can call.</p>
+              <div className="text-3xl font-extrabold text-[var(--heading)] tabular-nums">{pct(p.with_phone, p.uploaded)}%</div>
+              <div className="mt-3 space-y-2.5">
+                {([["Ratings (all records)", p.with_phone, p.uploaded], ["Reviews (with a comment)", p.comment_with_phone, p.with_comment], ["Tasks (need a call)", p.tasks_with_phone, p.tasks]] as [string, number, number][]).map(([l, a, b]) => (
+                  <div key={l} className="text-xs">
+                    <div className="flex justify-between gap-2"><span className="text-[var(--text)]">{l}</span><span className="tabular-nums text-[var(--muted)]"><b className="text-[var(--heading)]">{a.toLocaleString()}</b> of {b.toLocaleString()} · {pct(a, b)}%</span></div>
+                    <div className="h-2 bg-[var(--surface-2)] rounded-full overflow-hidden mt-1"><div className="h-full rounded-full bg-sky-500" style={{ width: `${pct(a, b)}%` }} /></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
+              <h3 className="text-sm font-bold text-[var(--heading)] mb-1 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Reached customers</h3>
+              <p className="text-[11px] text-[var(--muted)] mb-3">Of the {p.tasks.toLocaleString()} task(s) uploaded in the period: the customer answered a call, or a complaint was recorded.</p>
+              <div className="text-3xl font-extrabold text-emerald-500 tabular-nums">{pct(reached, p.tasks)}%</div>
+              <div className="text-xs text-[var(--muted)] mt-1"><b className="text-[var(--heading)]">{reached.toLocaleString()}</b> reached · <b className="text-[var(--heading)]">{unreachedTotal.toLocaleString()}</b> not reached{p.tasks_with_phone ? ` · ${pct(reached, p.tasks_with_phone)}% of the tasks that have a phone` : ""}</div>
+              <div className="h-2.5 bg-[var(--surface-2)] rounded-full overflow-hidden mt-3"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct(reached, p.tasks)}%` }} /></div>
+            </div>
+            <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
+              <h3 className="text-sm font-bold text-[var(--heading)] mb-1 flex items-center gap-2"><PhoneOff className="w-4 h-4 text-rose-500" /> Not reached — by reason</h3>
+              <p className="text-[11px] text-[var(--muted)] mb-3">The result of the last call, or why nobody called. Click a reason to see those reviews below.</p>
+              {!unreached.length ? <div className="text-xs text-[var(--muted)] py-4 text-center">Everyone was reached.</div> : (
+                <div className="space-y-2">
+                  {unreached.map((x) => (
+                    <button key={x.bucket} onClick={() => setStatusF(statusF === "reach:" + x.bucket ? "" : "reach:" + x.bucket)} className={`w-full text-left text-xs rounded-lg px-2 py-1 transition ${statusF === "reach:" + x.bucket ? "bg-rose-500/10 ring-1 ring-rose-500/40" : "hover:bg-[var(--surface-2)]/60"}`}>
+                      <div className="flex justify-between gap-2"><span className="text-[var(--text)] font-bold">{reachLabel(x.bucket)}</span><span className="tabular-nums text-[var(--muted)]"><b className="text-[var(--heading)]">{x.n.toLocaleString()}</b> · {pct(x.n, unreachedTotal)}%</span></div>
+                      <div className="h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden mt-1"><div className="h-full rounded-full bg-rose-500" style={{ width: `${pct(x.n, unreachedTotal)}%` }} /></div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
@@ -161,6 +222,41 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
                 })}
               </div>
             </div>
+          </div>
+
+          {/* agent performance — the same table as the Surveys and Shakir dashboards */}
+          <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
+            <h3 className="text-sm font-bold text-[var(--heading)] mb-1 flex items-center gap-2"><Users className="w-4 h-4 text-violet-400" /> Agent Performance</h3>
+            <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}{platformName ? ` · ${platformName}` : ""}. The tasks uploaded in the period, by the agent who holds them, and where they stand now. Completed + Pending = Assigned. Reached = the customer answered or a complaint was recorded.</p>
+            {!d.performance.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No tasks in this period.</div> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[720px]">
+                  <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
+                    <th className="text-left py-2 px-2">Agent</th><th className="text-center py-2 px-2">Assigned</th><th className="text-center py-2 px-2">Completed</th><th className="text-center py-2 px-2">Reached</th>
+                    <th className="text-center py-2 px-2">Not reached</th><th className="text-center py-2 px-2">No action required</th><th className="text-center py-2 px-2">Pending</th>
+                  </tr></thead>
+                  <tbody>
+                    {d.performance.map((a) => (
+                      <tr key={a.agent_id ?? "unassigned"} className="border-b border-[var(--border)]/40">
+                        <td className={`py-2 px-2 font-bold ${a.agent_id ? "text-[var(--heading)]" : "text-amber-500"}`}>{a.agent_name}</td>
+                        <td className="py-2 px-2 text-center tabular-nums font-bold">{a.assigned}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{a.completed}<span className="text-[10px] text-[var(--muted)]"> ({pct(a.completed, a.assigned)}%)</span></td>
+                        <td className="py-2 px-2 text-center tabular-nums text-emerald-500">{a.reached}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-rose-500">{a.not_reached}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-[var(--muted)]">{a.no_action}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-amber-500 font-bold">{a.pending}</td>
+                      </tr>
+                    ))}
+                    {d.performance.length > 1 && (() => { const t = (k: "assigned" | "completed" | "reached" | "not_reached" | "no_action" | "pending") => d.performance.reduce((x, a) => x + a[k], 0); return (
+                      <tr className="font-extrabold text-[var(--heading)] bg-[var(--surface-2)]/40">
+                        <td className="py-2 px-2">Total</td><td className="py-2 px-2 text-center tabular-nums">{t("assigned")}</td><td className="py-2 px-2 text-center tabular-nums">{t("completed")}</td><td className="py-2 px-2 text-center tabular-nums">{t("reached")}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{t("not_reached")}</td><td className="py-2 px-2 text-center tabular-nums">{t("no_action")}</td><td className="py-2 px-2 text-center tabular-nums">{t("pending")}</td>
+                      </tr>
+                    ); })()}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* agents */}
@@ -197,7 +293,22 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
 
           {/* platforms and brands */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-            <PerfTable icon={Store} title="By platform" rows={d.platforms} />
+            <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
+              <h3 className="text-sm font-bold text-[var(--heading)] mb-3 flex items-center gap-2"><Store className="w-4 h-4 text-blue-400" /> By aggregator <span className="font-normal text-[var(--muted)] text-[11px]">— click one to filter the page</span></h3>
+              {!d.platforms.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No reviews in this period.</div> : (
+                <table className="w-full text-xs">
+                  <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]"><th className="text-left py-2">Aggregator</th><th className="text-center py-2" title="Every record">Ratings</th><th className="text-center py-2" title="Records with a comment">Reviews</th><th className="text-center py-2">With phone</th><th className="text-center py-2">Tasks</th><th className="text-center py-2" title="1–2 star reviews">Low</th><th className="text-center py-2">Avg ★</th></tr></thead>
+                  <tbody>{d.platforms.map((b) => { const id = platforms.find((x) => x.name === b.name)?.id; return (
+                    <tr key={b.name} onClick={() => id && setPlatform(platform === id ? "" : id)} className={`border-b border-[var(--border)]/40 ${id ? "cursor-pointer hover:bg-[var(--surface-2)]/50" : ""} ${id && platform === id ? "bg-violet-500/10" : ""}`}>
+                      <td className="py-2 font-bold text-[var(--heading)]">{b.name}</td><td className="py-2 text-center tabular-nums font-bold">{b.reviews}</td><td className="py-2 text-center tabular-nums">{b.with_comment}</td>
+                      <td className="py-2 text-center tabular-nums text-sky-500">{b.with_phone}<span className="text-[10px] text-[var(--muted)]"> ({pct(b.with_phone, b.reviews)}%)</span></td>
+                      <td className="py-2 text-center tabular-nums text-orange-500">{b.tasks}</td><td className="py-2 text-center tabular-nums text-rose-500">{b.low}</td>
+                      <td className={`py-2 text-center tabular-nums font-bold ${starColor(b.avg)}`}>{b.avg.toFixed(2)}</td>
+                    </tr>
+                  ); })}</tbody>
+                </table>
+              )}
+            </div>
             <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
               <h3 className="text-sm font-bold text-[var(--heading)] mb-3 flex items-center gap-2"><Building2 className="w-4 h-4 text-blue-400" /> By brand <span className="font-normal text-[var(--muted)] text-[11px]">— click a brand for its branches</span></h3>
               {!d.brands.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No reviews in this period.</div> : (
@@ -237,6 +348,11 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
               </div>
               <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={inputCls + " ml-auto font-bold"}>
                 <option value="">All</option><option value="open">Still open</option><option value="resolved">Complaint recorded</option><option value="no_action_needed">No action required</option><option value="unreachable">Unreachable</option>
+                <optgroup label="Not reached — by reason">
+                  <option value="reach:unreached">All not reached</option>
+                  {unreached.map((x) => <option key={x.bucket} value={"reach:" + x.bucket}>{reachLabel(x.bucket)}</option>)}
+                </optgroup>
+                <option value="reach:reached">Reached</option>
               </select>
             </div>
             {!results.length ? <div className="p-8 text-center text-xs text-[var(--muted)]">Nothing here for this period.</div> : (
@@ -293,22 +409,5 @@ const Tile = ({ label, value, icon: Icon, tone, hint }: { label: string; value: 
       <h3 className="text-xl font-bold text-[var(--heading)] tracking-tight tabular-nums">{value.toLocaleString()}</h3>
       {hint && <p className="text-[10px] text-[var(--muted)] leading-tight">{hint}</p>}
     </div>
-  </div>
-);
-const PerfTable = ({ icon: Icon, title, rows }: { icon: any; title: string; rows: { name: string; reviews: number; tasks: number; avg: number; low: number }[] }) => (
-  <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
-    <h3 className="text-sm font-bold text-[var(--heading)] mb-3 flex items-center gap-2"><Icon className="w-4 h-4 text-blue-400" /> {title}</h3>
-    {!rows.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No reviews in this period.</div> : (
-      <table className="w-full text-xs">
-        <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]"><th className="text-left py-2">Name</th><th className="text-center py-2">Reviews</th><th className="text-center py-2">Tasks</th><th className="text-center py-2" title="1–2 star reviews">Low</th><th className="text-center py-2">Avg ★</th></tr></thead>
-        <tbody>{rows.map((b) => (
-          <tr key={b.name} className="border-b border-[var(--border)]/40">
-            <td className="py-2 font-bold text-[var(--heading)]">{b.name}</td><td className="py-2 text-center tabular-nums">{b.reviews}</td>
-            <td className="py-2 text-center tabular-nums text-orange-500">{b.tasks}</td><td className="py-2 text-center tabular-nums text-rose-500">{b.low}</td>
-            <td className={`py-2 text-center tabular-nums font-bold ${starColor(b.avg)}`}>{b.avg.toFixed(2)}</td>
-          </tr>
-        ))}</tbody>
-      </table>
-    )}
   </div>
 );
