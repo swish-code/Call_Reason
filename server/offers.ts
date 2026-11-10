@@ -636,8 +636,9 @@ export function registerOfferRoutes(app: any, d: Deps) {
     const dup = orderNumber ? (await DB.query(`SELECT 1 FROM offer_orders WHERE campaign_id = $1 AND lower(order_number) = lower($2)`, [camp.id, orderNumber]))[0] : null;
     if (dup) return res.status(409).json({ error: `Order ${orderNumber} was already logged in this campaign.` });
     const step = el.next.step, discount = el.next.discount;
+    // The screen makes the agent pick pickup or delivery. A screen that was open since before the field existed does not
+    // send it: the order is still logged (a leader can add the type afterwards), never refused.
     const orderType = ORDER_TYPES.includes(b.order_type) ? b.order_type : null;
-    if (!orderType) return res.status(400).json({ error: "Pick the order type: pickup or delivery." });
     // The NPS question is asked with the 2nd and 3rd offer order only (the business, 2026-11-10).
     const nps = step >= NPS_FROM_STEP ? npsOf(b.nps) : null;
     if (nps === undefined) return res.status(400).json({ error: "The NPS answer is a number from 1 to 10." });
@@ -656,7 +657,7 @@ export function registerOfferRoutes(app: any, d: Deps) {
       WHERE id = $1`, [c.id, String(camp.validity_days), comment]);
     await addEvent({ customerId: c.id, campaignId: camp.id, kind: "order", user: req.user, call_status: "ordered", prev_status: c.call_status, comment,
       details: { ...(c.call_result ? { prev_result: c.call_result } : {}), step, discount, order_number: orderNumber, order_date: orderDate, order_value: value, order_type: orderType, ...(nps !== null ? { nps } : {}), ...(!c.offer_started_at ? { offer_started: true } : {}) } });
-    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — ${orderType} order ${orderNumber || "(no number)"} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}${nps !== null ? `, NPS ${nps}` : ""}`.trim(), new_value: `${discount}%` };
+    req.auditExtra = { details: `${c.customer_name || ""} ${c.phone} — ${orderType || ""} order ${orderNumber || "(no number)"} on ${orderDate} with ${discount}% (discount ${step} of ${el.total})${value !== null ? `, value ${value}` : ""}${nps !== null ? `, NPS ${nps}` : ""}`.trim(), new_value: `${discount}%` };
     res.json(await loadCustomer(c.id));
   }));
 
