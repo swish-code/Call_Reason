@@ -215,6 +215,9 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   const canEdit = EDIT_ROLES.includes(role), canDelete = role === "admin";
   const [editing, setEditing] = useState<any | null>(null);
   const [rows, setRows] = useState<any[]>([]);
+  // The table shows one page at a time (the tiles above and the Excel export still cover every matching customer).
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
   const [agents, setAgents] = useState<{ id: string; full_name: string; open: number; untouched?: number }[]>([]);
   const [giveMode, setGiveMode] = useState<"give" | "take">("give");
   const [loading, setLoading] = useState(true);
@@ -226,6 +229,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   const [searchText, setSearchText] = useState("");
   useEffect(() => { const t = setTimeout(() => setF((p) => ({ ...p, search: searchText })), 300); return () => clearTimeout(t); }, [searchText]);
 
+  const filterKey = useRef("");
   const load = useCallback(async () => {
     try {
       setLoading(true); setError("");
@@ -233,6 +237,8 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
       const [r, a] = await Promise.all([apiFetch(`/api/offer-campaigns/${camp.id}/customers?${qs}`), apiFetch(`/api/offer-campaigns/${camp.id}/agents`)]);
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Could not load the customers.");
       setRows((await r.json()).rows);
+      setPage((pg) => (filterKey.current === JSON.stringify(f) ? pg : 1));   // a refresh keeps the page, a new filter starts at the first
+      filterKey.current = JSON.stringify(f);
       if (a.ok) setAgents(await a.json());
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   }, [camp.id, f]);
@@ -265,6 +271,21 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
     load();
   };
 
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const curPage = Math.min(page, pages);
+  const pageRows = rows.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  const pager = rows.length > PAGE_SIZE && (
+    <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--muted)]">
+      <span>{((curPage - 1) * PAGE_SIZE + 1).toLocaleString()}–{Math.min(curPage * PAGE_SIZE, rows.length).toLocaleString()} of {rows.length.toLocaleString()} customer(s)</span>
+      <div className="flex items-center gap-1.5">
+        <button onClick={() => setPage(1)} disabled={curPage === 1} className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] font-bold disabled:opacity-40 hover:text-[var(--heading)]">First</button>
+        <button onClick={() => setPage(curPage - 1)} disabled={curPage === 1} className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] font-bold disabled:opacity-40 hover:text-[var(--heading)]">Previous</button>
+        <span className="px-2 font-bold text-[var(--heading)]">Page {curPage} / {pages}</span>
+        <button onClick={() => setPage(curPage + 1)} disabled={curPage === pages} className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] font-bold disabled:opacity-40 hover:text-[var(--heading)]">Next</button>
+        <button onClick={() => setPage(pages)} disabled={curPage === pages} className="px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] font-bold disabled:opacity-40 hover:text-[var(--heading)]">Last</button>
+      </div>
+    </div>
+  );
   const unassigned = rows.filter((r) => !r.assigned_agent_id && r.call_status === "not_called").length;
   // Summary of the customers below (it follows the filters): called at least once, spoke to the customer, said no, not called yet.
   const tiles = [
@@ -364,7 +385,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
 
       <Err text={error} /><Ok text={msg} />
       <div className={box + " overflow-hidden"}>
-        <div className="px-4 py-3 text-xs text-[var(--muted)] border-b border-[var(--border)]">{loading ? "Loading…" : `${rows.length.toLocaleString()} customer(s)`}</div>
+        <div className="px-4 py-3 text-xs text-[var(--muted)] border-b border-[var(--border)]">{loading ? "Loading…" : `${rows.length.toLocaleString()} customer(s)${rows.length > PAGE_SIZE ? ` — ${PAGE_SIZE} per page` : ""}`}</div>
         {!loading && !rows.length ? <div className="p-8 text-center text-xs text-[var(--muted)]">No customers match.</div> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -374,7 +395,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
                 <th className="text-left py-3 px-3">Offer</th><th className="text-left py-3 px-3">Churn reason</th><th />
               </tr></thead>
               <tbody>
-                {rows.map((r) => {
+                {pageRows.map((r) => {
                   const el: Eligibility = r.eligibility;
                   const isOpen = CALL_STATUS[r.call_status]?.open;
                   return (
@@ -412,6 +433,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
                 })}
               </tbody>
             </table>
+            <div className="border-t border-[var(--border)]">{pager}</div>
           </div>
         )}
       </div>
