@@ -365,6 +365,7 @@ export interface SurveyAssignment {
   order_date?: string | null;
   platform_label?: string | null;
   item_kind?: string | null; // "old item" / "new item"
+  order_status?: string | null; // as the uploaded sheet gives it, e.g. "Cancelled"
   assigned_agent_id?: string | null;
   agent_name?: string;
   attempt_count: number;

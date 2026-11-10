@@ -3376,7 +3376,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   // Customers who asked not to be called again are never queued (matched on the last 8 digits).
   const dncByKey = new Map<string, any>((await DB.listDnc()).map((r: any) => [r.phone_key, r]));
   const candidates: { phone: string; segment: string | null; brand_id: string | null; item_name: string | null;
-    order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null }[] = [];
+    order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null; order_status: string | null }[] = [];
   // Kuwait numbers arrive as 965XXXXXXXX (11 digits); the queue and the duplicate checks use the
   // 8-digit form, so normalise or the same customer would never be detected as a duplicate.
   const kwPhone = (raw: string): string => {
@@ -3472,6 +3472,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
       order_date: orderDateOf(pick(rows[i], "Order date", "Order Date")),
       platform_label: pick(rows[i], "Platform") || null,
       item_kind: pick(rows[i], "Survey Type") || null,
+      order_status: pick(rows[i], "Order Status", "Order status", "Status", "Order State") || null,
     });
   }
 
@@ -3480,7 +3481,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
   const counts = await DB.getPendingCountsByDate();
   const assignedAgent = campaign.assignment_mode === "assigned" ? (campaign.default_agent_id || null) : null;
   const toInsert: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment: string | null; item_name: string | null;
-    order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null }[] = [];
+    order_id: string | null; customer_name: string | null; branch: string | null; order_date: string | null; platform_label: string | null; item_kind: string | null; order_status: string | null }[] = [];
   let offset = 0;
   const byDay = new Map<string, number>();
   for (const cand of candidates) {
@@ -3489,7 +3490,7 @@ app.post("/api/survey-campaigns/:id/numbers", authenticateJWT, asyncHandler(asyn
     counts.set(date, (counts.get(date) || 0) + 1);
     byDay.set(date, (byDay.get(date) || 0) + 1);
     toInsert.push({ campaign_id: campaign.id, brand_id: cand.brand_id, customer_phone: cand.phone, assigned_agent_id: assignedAgent, scheduled_date: date, segment: cand.segment, item_name: cand.item_name,
-      order_id: cand.order_id, customer_name: cand.customer_name, branch: cand.branch, order_date: cand.order_date, platform_label: cand.platform_label, item_kind: cand.item_kind });
+      order_id: cand.order_id, customer_name: cand.customer_name, branch: cand.branch, order_date: cand.order_date, platform_label: cand.platform_label, item_kind: cand.item_kind, order_status: cand.order_status });
   }
   const uploadBatchId = "upl-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
   result.inserted = await DB.addSurveyAssignments(toInsert, uploadBatchId);

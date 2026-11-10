@@ -650,6 +650,8 @@ export class DB {
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS order_date TEXT;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS platform_label TEXT;
       ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS item_kind TEXT;
+      -- The order's status as the uploaded sheet gives it (e.g. Cancelled), shown to the agent before they call (2026-11-10).
+      ALTER TABLE survey_assignments ADD COLUMN IF NOT EXISTS order_status TEXT;
       ALTER TABLE survey_records ADD COLUMN IF NOT EXISTS upload_batch_id TEXT;
       -- Audit page: why rows of an upload were skipped or rejected. skip_breakdown is
       -- {reason: count}; issue_rows is one entry per skipped/rejected row (row number,
@@ -3095,7 +3097,7 @@ export class DB {
   }
 
   static async addSurveyAssignments(rows: { campaign_id: string; brand_id: string | null; customer_phone: string; assigned_agent_id: string | null; scheduled_date: string; segment?: string | null; item_name?: string | null;
-    order_id?: string | null; customer_name?: string | null; branch?: string | null; order_date?: string | null; platform_label?: string | null; item_kind?: string | null }[], uploadBatchId?: string | null): Promise<number> {
+    order_id?: string | null; customer_name?: string | null; branch?: string | null; order_date?: string | null; platform_label?: string | null; item_kind?: string | null; order_status?: string | null }[], uploadBatchId?: string | null): Promise<number> {
     if (!rows.length) return 0;
     const client = await pool.connect();
     try {
@@ -3104,10 +3106,10 @@ export class DB {
         const a = rows[i];
         const id = "sasg-" + Date.now() + "-" + i + "-" + Math.floor(Math.random() * 999);
         await client.query(
-          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at,upload_batch_id,item_name,order_id,customer_name,branch,order_date,platform_label,item_kind)
-           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now(),$8,$9,$10,$11,$12,$13,$14,$15)`,
+          `INSERT INTO survey_assignments (id,campaign_id,brand_id,customer_phone,assigned_agent_id,attempt_count,status,scheduled_date,segment,created_at,upload_batch_id,item_name,order_id,customer_name,branch,order_date,platform_label,item_kind,order_status)
+           VALUES ($1,$2,$3,$4,$5,0,'pending',$6,$7,now(),$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
           [id, a.campaign_id, a.brand_id, a.customer_phone, a.assigned_agent_id, a.scheduled_date, a.segment || null, uploadBatchId ?? null, a.item_name || null,
-           a.order_id || null, a.customer_name || null, a.branch || null, a.order_date || null, a.platform_label || null, a.item_kind || null]
+           a.order_id || null, a.customer_name || null, a.branch || null, a.order_date || null, a.platform_label || null, a.item_kind || null, a.order_status || null]
         );
       }
       await client.query("COMMIT");

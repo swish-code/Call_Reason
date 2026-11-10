@@ -66,6 +66,9 @@ const selCls = inputCls + " font-bold [&>option]:bg-[var(--surface)]";
 
 interface AnswerState { question_id: string; answer_value: string; answered: boolean; }
 
+// The order's status comes from the uploaded sheet in the source's own words (Cancelled, Canceled, ملغي…).
+const isCancelledOrder = (s?: string | null) => !!s && /cancel|ملغ|الغ|إلغ|rejected|void/i.test(s);
+
 export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
   const [queue, setQueue] = useState<SurveyAssignment[]>([]);
   const [todaySuccess, setTodaySuccess] = useState(0);
@@ -496,6 +499,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                     <td className="p-4">
                       <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}</div>{dnc.isDnc(q.customer_phone) && <DncBadge block />}
                       {(q.customer_name || q.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[q.customer_name, q.order_id].filter(Boolean).join(' · ')}</div>}
+                      {isCancelledOrder(q.order_status) && <div className="mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/10 border border-rose-500/30 text-rose-500">Order cancelled</div>}
                     </td>
                     <td className="p-4 text-[var(--text)]">{q.brand_name || <span className="text-[var(--muted)]">—</span>}</td>
                     <td className="p-4 text-[var(--heading)] font-bold max-w-[320px]">
@@ -548,6 +552,12 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                     {assignment?.item_name && (
                       <p className="mt-1 text-xs font-bold text-amber-400">Ask about: {assignment.item_name}{assignment.item_kind ? ` (${assignment.item_kind})` : ''}</p>
                     )}
+                    {isCancelledOrder(assignment?.order_status) && (
+                      <div className="mt-2 p-3 rounded-xl border-2 border-rose-500 bg-rose-600/15 text-rose-400 text-xs font-bold">
+                        This order was CANCELLED ({assignment!.order_status}). Do not call the customer — press "Order Cancelled" below to close this survey.
+                      </div>
+                    )}
+                    {assignment?.order_status && !isCancelledOrder(assignment.order_status) && <p className="mt-1 text-[11px] text-[var(--muted)]">Order status: {assignment.order_status}</p>}
                     {(assignment?.customer_name || assignment?.order_id || assignment?.branch || assignment?.order_date) && (
                       <p className="mt-1 text-[11px] text-[var(--muted)]">
                         {[assignment.customer_name, assignment.order_id && `Order ${assignment.order_id}`, assignment.branch, assignment.platform_label, assignment.order_date && `Ordered ${assignment.order_date}`].filter(Boolean).join(' · ')}
