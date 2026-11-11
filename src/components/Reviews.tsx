@@ -5,6 +5,7 @@ import { useDoNotCall } from "../lib/dnc.ts";
 import DncBadge from "./DncBadge.tsx";
 import NamesToFix from "./NamesToFix.tsx";
 import RatingsDashboard from "./RatingsDashboard.tsx";
+import { phoneOnCopy } from "./phoneCopy.ts";
 import FeedbackDashboard from "./FeedbackDashboard.tsx";
 import {
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download, Users, BarChart2, LayoutList,
@@ -765,23 +766,19 @@ export default function Reviews({ currentUser }: ReviewsProps) {
               <thead className="bg-[var(--bg)] text-[var(--muted)] font-bold border-b border-[var(--border)]">
                 <tr>
                   {canAssign && (
-                    <th className="p-4">
+                    <th className="px-2.5 py-3">
                       <input type="checkbox" checked={pageAllSelected} onChange={toggleSelectPage} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" title="Select this page" />
                     </th>
                   )}
-                  <th className="p-4">Date</th>
-                  <th className="p-4">Source</th>
-                  <th className="p-4">Customer</th>
-                  <th className="p-4">Rate</th>
-                  <th className="p-4">Review</th>
-                  <th className="p-4" title={itemsOff ? "GrubTech lookup is not configured (GRUBTECH_LOOKUP_URL / _TOKEN)" : "What the customer ordered, from the GrubTech order archive"}>Items</th>
-                  <th className="p-4">Served By</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4">Closed</th>
-                  <th className="p-4 text-center">Flag</th>
-                  <th className="p-4">Uploaded By</th>
-                  {!isAgent && <th className="p-4">Assigned To</th>}
-                  <th className="p-4 text-center">Actions</th>
+                  <th className="px-2.5 py-3">Source · date</th>
+                  <th className="px-2.5 py-3">Customer</th>
+                  <th className="px-2.5 py-3">Rate</th>
+                  <th className="px-2.5 py-3">Review</th>
+                  <th className="px-2.5 py-3" title={itemsOff ? "GrubTech lookup is not configured (GRUBTECH_LOOKUP_URL / _TOKEN)" : "What the customer ordered, from the GrubTech order archive"}>Items</th>
+                  <th className="px-2.5 py-3" title="Who served the customer, and who uploaded the review">Served · uploaded by</th>
+                  <th className="px-2.5 py-3">Status</th>
+                  {!isAgent && <th className="px-2.5 py-3">Assigned To</th>}
+                  <th className="px-2.5 py-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -790,40 +787,40 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                     onClick={(e) => { if (!(e.target as HTMLElement).closest('button,input,a,select,label')) openDetail(r); }}
                     className={`hover:bg-[var(--surface-2)]/40 transition align-middle cursor-pointer ${selected.includes(r.id) ? 'bg-violet-500/5' : ''}`}>
                     {canAssign && (
-                      <td className="p-4">
+                      <td className="px-2.5 py-3">
                         <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} className="w-4 h-4 rounded accent-violet-600 cursor-pointer" />
                       </td>
                     )}
-                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.order_date || r.uploaded_at)}</td>
-                    <td className="p-4">
+                    <td className="px-2.5 py-3">
                       <div className="space-y-0.5">
                         <div className="font-bold text-[var(--heading)]">{r.brand_name}</div>
                         <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">{r.platform_name}</span>
-                        <div className="font-mono text-[10px] text-[var(--muted)]">#{r.order_id}</div>
+                        <div className="font-mono text-[10px] text-[var(--muted)] break-all">#{r.order_id}</div>
+                        <div className="font-mono text-[10px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.order_date || r.uploaded_at)}</div>
                       </div>
                     </td>
                     {/* Customer phone/name — filled on upload or by Fill Phones; blank means
                         the scraper never saw this order (Keeta masks the number within hours). */}
-                    <td className="p-4 whitespace-nowrap">
+                    <td className="px-2.5 py-3 whitespace-nowrap">
                       {r.customer_phone ? (
                         <div className="space-y-0.5">
-                          <div className="font-mono text-[12px] font-bold text-[var(--heading)] select-all" dir="ltr">{r.customer_phone}</div>
+                          <div className="font-mono text-[12px] font-bold text-[var(--heading)] select-all" dir="ltr" onCopy={phoneOnCopy}>{r.customer_phone}</div>
                           {dnc.isDnc(r.customer_phone) && <DncBadge block />}
-                          {r.customer_name && <div className="text-[10px] text-[var(--muted)] max-w-[140px] truncate" title={r.customer_name}>{r.customer_name}</div>}
+                          {r.customer_name && <div className="text-[10px] text-[var(--muted)] max-w-[110px] truncate" title={r.customer_name}>{r.customer_name}</div>}
                         </div>
                       ) : (
                         <span className="text-[var(--muted)]" title="No phone yet — retried automatically every hour">—</span>
                       )}
                     </td>
-                    <td className="p-4"><Stars n={r.rating} /></td>
-                    <td className="p-4 max-w-[180px]">
+                    <td className="px-2.5 py-3"><Stars n={r.rating} /></td>
+                    <td className="px-2.5 py-3 max-w-[200px]">
                       {r.review_text ? (
-                        <span title={r.review_text} className="text-[11px] text-[var(--text)] line-clamp-2">
-                          {r.review_text.length > 60 ? r.review_text.slice(0, 60) + '…' : r.review_text}
+                        <span title={r.review_text} dir="auto" className="text-[11px] text-[var(--text)] line-clamp-3 break-words">
+                          {r.review_text.length > 110 ? r.review_text.slice(0, 110) + '…' : r.review_text}
                         </span>
                       ) : <span className="text-[var(--muted)]">—</span>}
                     </td>
-                    <td className="p-4 max-w-[220px]">
+                    <td className="px-2.5 py-3 max-w-[180px]">
                       {(() => {
                         const items = itemsById[r.id];
                         if (items === undefined) return <span className="text-[var(--muted)] text-[10px]">…</span>;
@@ -837,42 +834,41 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                         );
                       })()}
                     </td>
-                    <td className="p-4 text-[var(--muted)]">{r.served_by || r.filled_by || '—'}</td>
-                    <td className="p-4">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${statusColor(r.action_status)}`}>
-                        {statusLabel(r.action_status)}
-                      </span>
+                    <td className="px-2.5 py-3 text-[11px] max-w-[110px]">
+                      <div className="text-[var(--text)] truncate" title={`Served by ${r.served_by || r.filled_by || '—'}`}>{r.served_by || r.filled_by || '—'}</div>
+                      <div className="text-[10px] text-[var(--muted)] truncate" title={`Uploaded by ${r.uploaded_by_name || '—'}`}>↑ {r.uploaded_by_name || '—'}</div>
                     </td>
-                    <td className="p-4 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap" title={r.recorded_by_name ? `Closed by ${r.recorded_by_name}` : r.resolved_at ? "Closed by the upload (no comment to handle)" : ""}>{r.resolved_at ? fmtDate(r.resolved_at) : "—"}</td>
-                    <td className="p-4 text-center">
-                      {(() => {
-                        const closed = ['resolved', 'no_action_needed', 'unreachable'].includes(r.action_status);
-                        if (closed) return <span className="text-emerald-400 text-base" title="Handled">✓</span>;
-                        if (r.requires_action) return <span className="text-rose-400 text-base" title="Requires Action">🚩</span>;
-                        return <span className="text-[var(--muted)]">—</span>;
-                      })()}
+                    <td className="px-2.5 py-3">
+                      <div className="flex items-center gap-1.5 whitespace-nowrap">
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-extrabold border ${statusColor(r.action_status)}`}>
+                          {statusLabel(r.action_status)}
+                        </span>
+                        {['resolved', 'no_action_needed', 'unreachable'].includes(r.action_status)
+                          ? <span className="text-emerald-400" title="Handled">✓</span>
+                          : r.requires_action ? <span className="text-rose-400" title="Requires Action">🚩</span> : null}
+                      </div>
+                      {r.resolved_at && <div className="font-mono text-[10px] text-[var(--muted)] mt-1 whitespace-nowrap" title={r.recorded_by_name ? `Closed by ${r.recorded_by_name}` : "Closed by the upload (no comment to handle)"}>closed {fmtDate(r.resolved_at)}</div>}
                     </td>
-                    <td className="p-4 text-[var(--muted)] text-[11px]">{r.uploaded_by_name || '—'}</td>
                     {!isAgent && (
-                      <td className="p-4 text-[11px]">
+                      <td className="px-2.5 py-3 text-[11px]">
                         {r.agent_name
                           ? <span className="inline-block px-2 py-0.5 rounded-full font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">{r.agent_name}</span>
                           : <span className="text-[var(--muted)]">—</span>}
                       </td>
                     )}
-                    <td className="p-4 text-center">
-                      <div className="flex items-center justify-center gap-2">
+                    <td className="px-2.5 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
                         {canAssign && (
                           <button
                             onClick={() => openAssign(r)}
-                            className="px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded-xl text-[11px] font-bold transition"
+                            className="px-2 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded-xl text-[11px] font-bold transition"
                           >
                             Assign
                           </button>
                         )}
                         <button
                           onClick={() => openDetail(r)}
-                          className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-[11px] font-bold transition"
+                          className="px-2 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-[11px] font-bold transition"
                         >
                           Open
                         </button>
@@ -891,7 +887,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                 ))}
                 {ratings.length === 0 && (
                   <tr>
-                    <td colSpan={12 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
+                    <td colSpan={8 + (isAgent ? 0 : 1) + (canAssign ? 1 : 0)} className="p-8 text-center text-[var(--muted)]">No reviews found.</td>
                   </tr>
                 )}
               </tbody>
