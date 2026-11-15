@@ -6,7 +6,7 @@ import DncBadge from "./DncBadge.tsx";
 import NamesToFix from "./NamesToFix.tsx";
 import RatingsDashboard from "./RatingsDashboard.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
-import OtherContacts from "./OtherContacts.tsx";
+import OtherContacts, { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
 import FeedbackDashboard from "./FeedbackDashboard.tsx";
 import {
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download, Users, BarChart2, LayoutList,
@@ -492,6 +492,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const totalPages = Math.max(1, Math.ceil(ratings.length / PAGE_SIZE));
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = ratings.slice(pageStart, pageStart + PAGE_SIZE);
+  const contactFlags = useContactFlags("reviews", paged.map((r) => ({ id: r.id, phone: r.customer_phone })));
 
   // Items of the reviews on this page (what the customer ordered), from the GrubTech order archive. Asked per page;
   // the server keeps what it finds, so a row is looked up once.
@@ -821,6 +822,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                         <div className="space-y-0.5">
                           <div className="font-mono text-[12px] font-bold text-[var(--heading)] select-all" dir="ltr" onCopy={phoneOnCopy}>{r.customer_phone}</div>
                           {dnc.isDnc(r.customer_phone) && <DncBadge block />}
+                          <ContactFlagBadge flag={contactFlags[r.id]} />
                           {r.customer_name && <div className="text-[10px] text-[var(--muted)] max-w-[110px] truncate" title={r.customer_name}>{r.customer_name}</div>}
                         </div>
                       ) : (

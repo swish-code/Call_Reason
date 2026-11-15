@@ -44,3 +44,38 @@ export default function OtherContacts({ phone, source, id }: { phone?: string | 
     </div>
   );
 }
+
+// ---- the mark beside a number in a list (queue / my calls / reviews): the same warning, before the record is opened ----
+export interface ContactFlag { waiting: string[]; called: { source: string; at: string; by: string | null; result: string | null }[] }
+
+/** Asks once per list on screen which of its numbers are also in other call lists. */
+export function useContactFlags(source: ContactSource, rows: { id: string; phone?: string | null }[]): Record<string, ContactFlag> {
+  const [flags, setFlags] = useState<Record<string, ContactFlag>>({});
+  const sig = rows.map((r) => r.id + ":" + (r.phone || "")).join("|");
+  useEffect(() => {
+    const items = rows.filter((r) => r.phone).map((r) => ({ id: r.id, phone: String(r.phone) }));
+    if (!items.length) { setFlags({}); return; }
+    let alive = true;
+    apiFetch("/api/phone-contacts/flags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, items }) })
+      .then((r) => (r.ok ? r.json() : null)).then((x) => { if (alive && x) setFlags(x.flags || {}); }).catch(() => { /* extra information only */ });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, sig]);
+  return flags;
+}
+
+export function ContactFlagBadge({ flag }: { flag?: ContactFlag }) {
+  if (!flag || (!flag.called.length && !flag.waiting.length)) return null;
+  const last = flag.called[0];
+  const lines = [
+    ...flag.called.map((c) => `Called ${fmtDT(c.at)}${c.by ? ` by ${c.by}` : ""} in ${SOURCE_LABEL[c.source] || c.source}${c.result ? ` — ${resultText(c.result)}` : ""}`),
+    ...flag.waiting.map((w) => `Waiting for a call in ${SOURCE_LABEL[w] || w}`),
+  ];
+  return (
+    <div title={lines.join("\n")} className="mt-1 inline-flex items-start gap-1 px-2 py-0.5 rounded-lg text-[10px] leading-snug font-extrabold bg-amber-500/15 border border-amber-500/50 text-amber-600 max-w-[210px] whitespace-normal">
+      <AlertTriangle className="w-3 h-3 shrink-0 mt-px" />
+      <span>{last ? `Called ${fmtDT(last.at).slice(5)} · ${SOURCE_LABEL[last.source] || last.source}` : `Also in ${flag.waiting.map((w) => SOURCE_LABEL[w] || w).join(" + ")}`}
+      {last && flag.waiting.length > 0 ? ` · also waiting in ${flag.waiting.map((w) => SOURCE_LABEL[w] || w).join(" + ")}` : ""}</span>
+    </div>
+  );
+}

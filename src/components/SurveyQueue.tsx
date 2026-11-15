@@ -3,7 +3,7 @@ import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacit
 import { apiFetch } from "../lib/api.ts";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import { useDoNotCall } from "../lib/dnc.ts";
-import OtherContacts from "./OtherContacts.tsx";
+import OtherContacts, { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
 import DncBadge from "./DncBadge.tsx";
 import {
   ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox, Timer, ChevronDown,
@@ -72,6 +72,7 @@ const isCancelledOrder = (s?: string | null) => !!s && /cancel|ملغ|الغ|إ�
 
 export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
   const [queue, setQueue] = useState<SurveyAssignment[]>([]);
+  const contactFlags = useContactFlags("surveys", queue.map((q) => ({ id: q.id, phone: q.customer_phone })));
   const [todaySuccess, setTodaySuccess] = useState(0);
   const [dailyLimit, setDailyLimit] = useState(0);
   const [capacity, setCapacity] = useState<DailyCapacity[]>([]);
@@ -499,6 +500,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                   <tr key={q.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
                     <td className="p-4">
                       <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}</div>{dnc.isDnc(q.customer_phone) && <DncBadge block />}
+                      <div><ContactFlagBadge flag={contactFlags[q.id]} /></div>
                       {(q.customer_name || q.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[q.customer_name, q.order_id].filter(Boolean).join(' · ')}</div>}
                       {isCancelledOrder(q.order_status) && <div className="mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/10 border border-rose-500/30 text-rose-500">Order cancelled</div>}
                     </td>

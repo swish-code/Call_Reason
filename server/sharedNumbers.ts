@@ -83,3 +83,27 @@ export async function getOtherContacts(phone: string, except: { source: string; 
      ORDER BY contacted_at DESC NULLS LAST, created_at DESC LIMIT 20`, [key, except.source, except.id])).rows;
   return { key, days: RECENT_CALL_DAYS, items: rows.map((r: any) => ({ source: r.source, id: r.id, label: r.label, status: r.status, open: r.open, agent: r.agent, contacted_at: r.contacted_at, result: r.result, contacted_by: r.contacted_by })) };
 }
+
+/** The same check for a whole list at once (the mark beside each number in a queue): per record, in which other lists
+ *  the number is still waiting and where it was called in the last days. Records with nothing are left out. */
+export async function getOtherContactFlags(source: string, items: { id: string; phone: string }[]): Promise<Record<string, { waiting: string[]; called: { source: string; at: string; by: string | null; result: string | null }[] }>> {
+  const keyed = items.map((i) => ({ id: String(i.id), key: String(i.phone || "").replace(/\D/g, "").slice(-8) })).filter((i) => i.key.length === 8);
+  if (!keyed.length) return {};
+  const keys = [...new Set(keyed.map((i) => i.key))];
+  const rows = (await pool.query(`
+    WITH e AS (${entriesSql({ reviews: `AND ${KEY("r.customer_phone")} = ANY($1)`, surveys: `AND ${KEY("a.customer_phone")} = ANY($1)`, shakir: `AND oc.phone_key = ANY($1)` })})
+    SELECT source, id, key, open, contacted_at, contacted_by, result FROM e
+     WHERE open OR contacted_at >= now() - interval '${RECENT_CALL_DAYS} days'`, [keys])).rows;
+  const byKey = new Map<string, any[]>();
+  for (const r of rows) { if (!byKey.has(r.key)) byKey.set(r.key, []); byKey.get(r.key)!.push(r); }
+  const out: Record<string, any> = {};
+  for (const it of keyed) {
+    const others = (byKey.get(it.key) || []).filter((r) => !(r.source === source && r.id === it.id));
+    if (!others.length) continue;
+    const called = others.filter((r) => r.contacted_at).sort((a, b) => new Date(b.contacted_at).getTime() - new Date(a.contacted_at).getTime())
+      .map((r) => ({ source: r.source, at: new Date(r.contacted_at).toISOString(), by: r.contacted_by || null, result: r.result || null }));
+    const waiting = [...new Set(others.filter((r) => r.open && !r.contacted_at).map((r) => r.source))];
+    out[it.id] = { waiting, called };
+  }
+  return out;
+}

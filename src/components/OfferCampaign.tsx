@@ -4,6 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import { downloadXlsx } from "../lib/xlsx.ts";
 import DncBadge from "./DncBadge.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
+import { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
 import OfferCustomerPanel, { WorkedBy } from "./OfferCustomerPanel.tsx";
 import OfferCustomerEdit from "./OfferCustomerEdit.tsx";
 import OfferDashboard from "./OfferDashboard.tsx";
@@ -98,6 +99,7 @@ export default function OfferCampaignPage({ currentUser }: { currentUser: User }
 // ---------------------------------------------------------------- My calls (the agent's list)
 function MyCalls({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpen: (id: string) => void }) {
   const [d, setD] = useState<{ rows: any[]; later: number; today: { calls: number; reached: number } } | null>(null);
+  const contactFlags = useContactFlags("shakir", (d?.rows || []).map((r) => ({ id: r.id, phone: r.phone })));
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     try {
@@ -130,7 +132,7 @@ function MyCalls({ camp, tick, onOpen }: { camp: Campaign; tick: number; onOpen:
               <tbody>
                 {d.rows.map((r) => (
                   <tr key={r.id} className="border-b border-[var(--border)]/40 last:border-0 hover:bg-[var(--surface-2)]/30">
-                    <td className="py-2.5 px-4"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px]" dir="ltr" onCopy={phoneOnCopy}>{r.phone}</div></td>
+                    <td className="py-2.5 px-4"><div className="font-bold text-[var(--heading)]">{r.customer_name || "—"}</div><div className="font-mono text-[11px]" dir="ltr" onCopy={phoneOnCopy}>{r.phone}</div><ContactFlagBadge flag={contactFlags[r.id]} /></td>
                     <td className="py-2.5 px-4"><Badge cls={CALL_STATUS[r.call_status]?.cls || ""}>{statusText(r)}</Badge>
                       {r.colleague && <div className="text-[10px] text-amber-600 mt-1">{r.colleague.user_name || "A colleague"}: {workLabel(r.colleague)} ({fmtDT(r.colleague.created_at).slice(5)})</div>}
                     </td>

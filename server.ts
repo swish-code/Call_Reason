@@ -16,7 +16,7 @@ import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
 import { registerOfferRoutes, OFFER_RESULT_LIST, RESULT_KINDS } from "./server/offers.js";
-import { getSharedNumbers, getOtherContacts } from "./server/sharedNumbers.js";
+import { getSharedNumbers, getOtherContacts, getOtherContactFlags } from "./server/sharedNumbers.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3826,6 +3826,15 @@ app.get("/api/phone-contacts", authenticateJWT, asyncHandler(async (req: any, re
   const source = String(req.query.source || ""), id = String(req.query.id || "");
   if (!["reviews", "surveys", "shakir"].includes(source) || !id) return res.status(400).json({ error: "source and id are required." });
   res.json(await getOtherContacts(String(req.query.phone || ""), { source, id }));
+}));
+
+// The same check for the numbers of a list on screen (the mark beside each number in a queue).
+app.post("/api/phone-contacts/flags", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const source = String(req.body?.source || "");
+  if (!["reviews", "surveys", "shakir"].includes(source)) return res.status(400).json({ error: "source is required." });
+  const items = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 600).map((i: any) => ({ id: String(i?.id || ""), phone: String(i?.phone || "") })).filter((i: any) => i.id);
+  res.json({ flags: await getOtherContactFlags(source, items) });
 }));
 
 registerOfferRoutes(app, { authenticateJWT, asyncHandler, XLSX, pick, normalisePhone, isLeaderLevel, OPS_ROLES, logCall: logShakirCall });
