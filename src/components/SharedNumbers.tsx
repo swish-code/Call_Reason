@@ -30,6 +30,7 @@ export default function SharedNumbers({ currentUser: _u }: { currentUser: User }
   const [scope, setScope] = useState("");       // "", three, two, open2, open1
   const [pair, setPair] = useState("");         // a source that must be among them
   const [search, setSearch] = useState("");
+  const [agent, setAgent] = useState("");       // an agent who holds one of the number's open records
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<string | null>(null);
 
@@ -42,7 +43,7 @@ export default function SharedNumbers({ currentUser: _u }: { currentUser: User }
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
   }, [days]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [scope, pair, search, days]);
+  useEffect(() => { setPage(1); }, [scope, pair, search, days, agent]);
 
   const all = d?.numbers || [];
   const rows = useMemo(() => {
@@ -51,8 +52,10 @@ export default function SharedNumbers({ currentUser: _u }: { currentUser: User }
     return all.filter((n) =>
       (!scope || (scope === "three" ? n.sources.length === 3 : scope === "two" ? n.sources.length === 2 : scope === "open2" ? n.open_sources.length >= 2 : n.open_sources.length >= 1)) &&
       (!pair || n.sources.includes(pair)) &&
+      (!agent || n.entries.some((e) => e.open && e.agent === agent)) &&
       (!text || (q.length >= 3 && n.phone.replace(/\D/g, "").includes(q)) || (n.name || "").toLowerCase().includes(text)));
-  }, [all, scope, pair, search]);
+  }, [all, scope, pair, search, agent]);
+  const agentNames = useMemo(() => [...new Set(all.flatMap((n) => n.entries.filter((e) => e.open && e.agent).map((e) => e.agent as string)))].sort(), [all]);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const cur = Math.min(page, pages);
   const shown = rows.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
@@ -117,6 +120,10 @@ export default function SharedNumbers({ currentUser: _u }: { currentUser: User }
         <select value={pair} onChange={(e) => setPair(e.target.value)} className={selCls}>
           <option value="">Any list</option>
           {SOURCES.map((s) => <option key={s} value={s}>Includes {SOURCE_LABEL[s]}</option>)}
+        </select>
+        <select value={agent} onChange={(e) => setAgent(e.target.value)} className={selCls} title="Numbers this agent still has to call">
+          <option value="">Any agent</option>
+          {agentNames.map((a) => <option key={a} value={a}>Open with {a}</option>)}
         </select>
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Phone or name…" className={inputCls + " w-48"} />
         <span className="ml-auto text-xs text-[var(--muted)]">{loading && !d ? "Loading…" : `${rows.length.toLocaleString()} number(s)`}</span>
