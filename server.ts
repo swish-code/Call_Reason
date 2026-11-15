@@ -4467,7 +4467,8 @@ async function startServer() {
   try { const seeded = await seedNameRegistry(); if (seeded.brandsTouched || seeded.branchesTouched) console.log(`[names] aliases added: ${seeded.brandsTouched} brand(s), ${seeded.branchesTouched} branch(es)`);
     const again = await rematchUnmatched(); if (again) console.log(`[names] ${again} stored review(s) matched to their branch`); }
   catch (e: any) { console.error("[names] alias seed failed (matching still works with what is stored):", e.message); }
-  registerNameRoutes(app, { auth: authenticateJWT, manage: requireAdminOrSupervisor, adminOnly: (req: any, res: any, next: any) => (req.user?.role === "admin" ? next() : res.status(403).json({ error: "Admins only." })), triage: triageRating });
+  const nameAdminOnly = (req: any, res: any, next: any) => (req.user?.role === "admin" ? next() : res.status(403).json({ error: "Admins only." }));   // Names to fix: the admin only (the business, 2026-11-15)
+  registerNameRoutes(app, { auth: authenticateJWT, manage: nameAdminOnly, adminOnly: nameAdminOnly, triage: triageRating });
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

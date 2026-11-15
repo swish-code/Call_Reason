@@ -93,8 +93,8 @@ export function registerNameRoutes(app: any, d: Deps) {
     }
     const b2 = cat.brands.find((b) => b.id === brand.id)!;
     const held = (await pool.query(`SELECT id, row_data FROM rating_held_rows WHERE status = 'open' AND ${SQL_NORM("raw_brand")} = $1`, [normalize(rawClean)])).rows as any[];
-    const agents = (await DB.getUsers()).filter((u: any) => u.role === "agent" && u.status === "Active" && u.department === "Call Center").map((u: any) => u.id);
-    let imported = 0, already = 0, ptr = 0, unmatched = 0;
+    // The released reviews wait without an agent, like any upload since 2026-11-10 — a leader gives them out.
+    let imported = 0, already = 0, unmatched = 0;
     for (const h of held) {
       const f = h.row_data;
       const m = f.raw_branch ? matchBranch(f.raw_branch, b2, cat.branches.get(b2.id) || [], cat.neverAutoLink.get(b2.id) || []) : null;
@@ -102,7 +102,7 @@ export function registerNameRoutes(app: any, d: Deps) {
       const t = d.triage(f.rating, f.review_text, f.customer_phone || "");
       const outcome = await DB.upsertRating({
         brand_id: b2.id, platform_id: f.platform_id, order_id: f.order_id, rating: f.rating, review_text: f.review_text, customer_phone: f.customer_phone,
-        requires_action: t.requires_action, action_status: t.action_status, assigned_agent_id: t.isTask && agents.length ? agents[ptr++ % agents.length] : null,
+        requires_action: t.requires_action, action_status: t.action_status, assigned_agent_id: null,
         uploaded_by: f.uploaded_by, order_date: f.order_date, customer_name: f.customer_name, branch: linked ? linked.name : f.raw_branch,
         filled_by: f.filled_by, following_date: f.following_date, surveyed_by: f.surveyed_by, complaint_type: f.complaint_type,
         complaint_cases: f.complaint_cases, complaint_status: f.complaint_status, served_by: f.served_by,

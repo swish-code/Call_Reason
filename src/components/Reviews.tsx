@@ -557,7 +557,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text)]">
       {canSeeDash && <ReviewTabs tab={tab} setTab={setTab} />}
-      {['admin', 'supervisor'].includes(currentUser.role) && <NamesToFix refreshKey={uploadResult?.total ?? 0} onChanged={fetchRatings} />}
+      {isAdmin && <NamesToFix refreshKey={uploadResult?.total ?? 0} onChanged={fetchRatings} />}
       {/* Header */}
       <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
