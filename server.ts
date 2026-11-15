@@ -2727,7 +2727,9 @@ app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: 
   // Auto-update status
   const newAttemptNumber = attemptsCount + 1;
   const fields: any = { action_status: "in_progress" };
-  if (outcome !== "answered" && newAttemptNumber >= 3) {
+  // Three calls without an answer close the review as unreachable. "Without phone number" closes it at once: there is
+  // nobody to call again.
+  if (outcome === "no_phone" || (outcome !== "answered" && newAttemptNumber >= 3)) {
     fields.action_status = "unreachable";
     fields.resolved_at = new Date().toISOString();
     fields.recorded_by = req.user.id;

@@ -97,7 +97,7 @@ const recordOf = (r: Row): string => recordLines(r).join(" | ");
 
 // ---- Plain-language sentence for each action (the raw request text stays in the tooltip) ----
 const pretty = (v: string) => { const t = v.replace(/_/g, " ").trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
-const OUTCOME: Record<string, string> = { busy: "line busy", no_answer: "no answer", wrong_number: "wrong number", declined: "customer declined", answered: "customer answered", switched_off: "phone switched off", voicemail: "voicemail" };
+const OUTCOME: Record<string, string> = { busy: "line busy", no_answer: "no answer", wrong_number: "wrong number", declined: "customer declined", answered: "customer answered", switched_off: "phone switched off", voicemail: "voicemail", no_phone: "without phone number" };
 const kv = (details: string | null, key: string): string => {
   const m = String(details || "").match(new RegExp("(?:^|, )" + key + "=([^,]*)"));
   return m ? m[1].trim() : "";

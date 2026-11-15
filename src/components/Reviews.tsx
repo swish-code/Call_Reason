@@ -36,7 +36,7 @@ interface Rating {
 interface CallAttempt {
   id: string; rating_id: string; agent_id?: string; agent_name?: string;
   attempt_number: number;
-  outcome: 'no_answer' | 'answered' | 'wrong_number' | 'busy' | 'declined';
+  outcome: 'no_answer' | 'answered' | 'wrong_number' | 'busy' | 'declined' | 'no_phone';
   note?: string; created_at: string;
 }
 interface UploadResult {
@@ -105,6 +105,7 @@ const outcomeLabel = (o: string) =>
   : o === 'answered' ? 'Answered'
   : o === 'wrong_number' ? 'Wrong Number'
   : o === 'busy' ? 'Busy'
+  : o === 'no_phone' ? 'Without phone number'
   : 'Declined';
 
 const outcomeColor = (o: string) =>
@@ -1296,6 +1297,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                           <option value="wrong_number">Wrong Number</option>
                           <option value="busy">Busy</option>
                           <option value="declined">Declined</option>
+                          <option value="no_phone">Without phone number</option>
                         </select>
                         <textarea
                           value={attemptNote}
