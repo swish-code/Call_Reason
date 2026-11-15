@@ -2386,6 +2386,9 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
   res.json(result);
 }));
 
+// The digits of a phone typed in a search box (at least 3, so one stray digit does not match everything).
+const phoneDigits = (v: any): string | undefined => { const d = String(typeof v === "string" ? v : "").replace(/\D/g, ""); return d.length >= 3 ? d.slice(-15) : undefined; };
+
 // List ratings with filters. Agents only ever see ratings assigned to them.
 app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
   const isAgent = req.user.role === "agent";
@@ -2410,6 +2413,7 @@ app.get("/api/ratings", authenticateJWT, asyncHandler(async (req: any, res) => {
     has_comment: has_comment === "true" ? true : has_comment === "false" ? false : undefined,
     from: from as string || undefined,
     to: to as string || undefined,
+    phone: phoneDigits(req.query.phone),
     limit: Math.min(Number(req.query.limit) || 5000, 20000),
   });
   res.json(ratings);
@@ -2789,7 +2793,11 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
   // roles (Reviews isn't part of their module at all; only its own page is
   // hidden from them, but this endpoint has no such implicit UI gate).
   if (req.user.role === "agent" || OPS_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
-  const rows = await DB.getAllRatingsForExport();
+  const day = (v: any) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+  const id = (v: any) => (typeof v === "string" && v ? v : undefined);
+  const f = { from: day(req.query.from), to: day(req.query.to), brand_id: id(req.query.brand_id), platform_id: id(req.query.platform_id), phone: phoneDigits(req.query.phone) };
+  const filtered = Object.values(f).some(Boolean);
+  const rows = await DB.getAllRatingsForExport(f);
   const header = [
     "Date", "Brand", "Platform", "Order ID", "Customer Name", "Customer Phone", "Branch",
     "Rating", "Review Text", "Items", "Status", "Requires Action", "Assigned Agent", "Action Note",
@@ -2834,13 +2842,13 @@ app.get("/api/reports/all-reviews", authenticateJWT, asyncHandler(async (req: an
   for (let i = 2; i <= aoa.length; i++) {
     const dateCell = ws[`A${i}`];
     if (dateCell && dateCell.t === "n") dateCell.z = "yyyy-mm-dd";
-    const upCell = ws[`P${i}`];
+    const upCell = ws[`Q${i}`];
     if (upCell && upCell.t === "n") upCell.z = "yyyy-mm-dd hh:mm";
   }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Reviews");
   const file = XLSX.write(wb, { type: "base64", bookType: "xlsx", cellDates: true });
-  res.json({ filename: `all_reviews_${new Date().toISOString().slice(0, 10)}.xlsx`, file, rows: rows.length });
+  res.json({ filename: filtered ? `reviews_${f.from || "start"}_to_${f.to || "today"}.xlsx` : `all_reviews_${new Date().toISOString().slice(0, 10)}.xlsx`, file, rows: rows.length });
 }));
 
 // Team Leader KPI dashboard — per Team Leader task counts, and (once Agents are

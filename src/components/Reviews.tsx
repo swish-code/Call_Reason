@@ -149,6 +149,10 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const [commentFilter, setCommentFilter] = useState(""); // "", "with", "without"
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  // Phone search: what is typed, and (a moment later) what is asked from the server.
+  const [phoneText, setPhoneText] = useState("");
+  const [phoneQ, setPhoneQ] = useState("");
+  useEffect(() => { const t = window.setTimeout(() => setPhoneQ(phoneText.replace(/\D/g, "").length >= 3 ? phoneText.replace(/\D/g, "") : ""), 400); return () => window.clearTimeout(t); }, [phoneText]);
 
   // Modals
   const [showUpload, setShowUpload] = useState(false);
@@ -204,8 +208,9 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     if (commentFilter) p.set('has_comment', commentFilter === 'with' ? 'true' : 'false');
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    if (phoneQ) p.set('phone', phoneQ);
     return p.toString();
-  }, [brandId, platformId, actionStatus, assigned, requiresAction, ratingFilter, commentFilter, from, to]);
+  }, [brandId, platformId, actionStatus, assigned, requiresAction, ratingFilter, commentFilter, from, to, phoneQ]);
 
   const fetchRatings = useCallback(async () => {
     setLoading(true);
@@ -279,10 +284,16 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   };
 
   const [exportingAll, setExportingAll] = useState(false);
+  const exportFiltered = !!(from || to || brandId || platformId || phoneQ);
   const handleExportAll = async () => {
     setExportingAll(true);
     try {
-      const res = await apiFetch('/api/reports/all-reviews');
+      // The export follows the date, brand, platform and phone filters of the list (every status, auto-closed ones too).
+      const p = new URLSearchParams();
+      if (from) p.set('from', from); if (to) p.set('to', to);
+      if (brandId) p.set('brand_id', brandId); if (platformId) p.set('platform_id', platformId);
+      if (phoneQ) p.set('phone', phoneQ);
+      const res = await apiFetch(`/api/reports/all-reviews?${p}`);
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Export failed.'); return; }
       downloadBase64(data.file, data.filename);
@@ -565,10 +576,10 @@ export default function Reviews({ currentUser }: ReviewsProps) {
             <button
               onClick={handleExportAll}
               disabled={exportingAll}
-              title="Download every review in the system as an Excel file"
+              title={exportFiltered ? "Download the reviews of the dates / brand / platform / phone picked below as an Excel file (every status)" : "Download every review in the system as an Excel file — pick dates below to export only those"}
               className="px-4 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 border border-emerald-500/20 text-emerald-400 font-bold rounded-2xl text-xs flex items-center gap-1.5 transition active:scale-95"
             >
-              <Download className="w-4 h-4" /> {exportingAll ? 'Exporting…' : 'Export All'}
+              <Download className="w-4 h-4" /> {exportingAll ? 'Exporting…' : exportFiltered ? 'Export filtered' : 'Export All'}
             </button>
           )}
           {canUpload && (
@@ -676,6 +687,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
         )}
         <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} title="From" />
         <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} title="To" />
+        <input value={phoneText} onChange={e => setPhoneText(e.target.value)} dir="ltr" inputMode="numeric" placeholder="Search by phone…" title="Type at least 3 digits of the customer's phone"
+          className={inputCls + " w-44 font-mono"} />
         <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-[var(--text)] font-bold">
           <input
             type="checkbox"

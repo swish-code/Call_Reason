@@ -1990,7 +1990,16 @@ export class DB {
    * (no_action_needed) rows too, matching what the Feedback Dashboard's
    * "Total Reviews" count already includes.
    */
-  static async getAllRatingsForExport(): Promise<any[]> {
+  static async getAllRatingsForExport(filter: { from?: string; to?: string; brand_id?: string; platform_id?: string; phone?: string } = {}): Promise<any[]> {
+    // The same date (the review's own date), brand, platform and phone filters as the Reviews list, when they are set.
+    const clauses: string[] = [], values: any[] = [];
+    const add = (sql: string, v: any) => { values.push(v); clauses.push(sql.replace("$?", "$" + values.length)); };
+    if (filter.from) add("r.order_date >= $?", filter.from);
+    if (filter.to) add("r.order_date <= $?", filter.to);
+    if (filter.brand_id) add("r.brand_id = $?", filter.brand_id);
+    if (filter.platform_id) add("r.platform_id = $?", filter.platform_id);
+    if (filter.phone) add("regexp_replace(COALESCE(r.customer_phone, ''), '[^0-9]', '', 'g') LIKE '%' || $? || '%'", filter.phone);
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const { rows } = await pool.query(`
       SELECT r.*,
         b.brand_name, p.name AS platform_name,
@@ -2001,9 +2010,10 @@ export class DB {
       LEFT JOIN platforms p ON p.id = r.platform_id
       LEFT JOIN users ua ON ua.id = r.assigned_agent_id
       LEFT JOIN users uu ON uu.id = r.uploaded_by
+      ${where}
       ORDER BY r.uploaded_at DESC
       LIMIT 500000
-    `);
+    `, values);
     return rows;
   }
 
@@ -2011,7 +2021,7 @@ export class DB {
     brand_id?: string; platform_id?: string; action_status?: string;
     requires_action?: boolean; assigned?: string; assigned_agent_id?: string;
     min_rating?: number; max_rating?: number; has_comment?: boolean;
-    from?: string; to?: string; limit?: number; offset?: number;
+    from?: string; to?: string; limit?: number; offset?: number; phone?: string;
   } = {}): Promise<any[]> {
     const clauses: string[] = [];
     const values: any[] = [];
@@ -2034,6 +2044,8 @@ export class DB {
     // filtering by that would be useless for narrowing down reviews.
     if (filter.from) { clauses.push(`r.order_date >= $${idx++}`); values.push(filter.from); }
     if (filter.to) { clauses.push(`r.order_date <= $${idx++}`); values.push(filter.to); }
+    // Phone search: digits only on both sides, so spaces, "+965" or dashes in either don't matter.
+    if (filter.phone) { clauses.push(`regexp_replace(COALESCE(r.customer_phone, ''), '[^0-9]', '', 'g') LIKE '%' || $${idx++} || '%'`); values.push(filter.phone); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const lim = filter.limit || 100;
     const off = filter.offset || 0;
