@@ -16,6 +16,7 @@ import TaskPool from "./components/TaskPool.tsx";
 import Reviews from "./components/Reviews.tsx";
 import Surveys from "./components/Surveys.tsx";
 import OfferCampaignPage from "./components/OfferCampaign.tsx";
+import SharedNumbers from "./components/SharedNumbers.tsx";
 import ChangePassword from "./components/ChangePassword.tsx";
 import OpsTasks from "./components/OpsTasks.tsx";
 import OpsTaskTypes from "./components/OpsTaskTypes.tsx";
@@ -23,6 +24,7 @@ import DeliveryPlatforms from "./components/DeliveryPlatforms.tsx";
 import { apiFetch } from "./lib/api.ts";
 import {
   Gift,
+  Users,
   Phone,
   PhoneCall,
   ClipboardList,
@@ -66,7 +68,7 @@ import {
   ShoppingBag
 } from "lucide-react";
 
-type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "talabat" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "offers" | "feedbackdash" | "opstasks" | "opstasktypes";
+type ActivePage = "dashboard" | "reports" | "performance" | "teamleaderkpi" | "talabat" | "users" | "configuration" | "audit" | "newlog" | "logs" | "history" | "tasks" | "tracker" | "recurring" | "pool" | "mytasks" | "reviews" | "surveys" | "offers" | "sharednumbers" | "feedbackdash" | "opstasks" | "opstasktypes";
 
 // Which collapsible sidebar group each page belongs to (standalone pages omitted)
 const PAGE_GROUP: Record<string, string> = {
@@ -436,6 +438,7 @@ export default function App() {
       { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: !isOpsRole },
       { page: "surveys", label: "Surveys", icon: MessageSquare, visible: !isOpsRole },
       { page: "offers", label: "Shakir Campaign", icon: Gift, visible: !isOpsRole && !isMarketing },
+      { page: "sharednumbers", label: "Shared Numbers", icon: Users, visible: notAgent },
     ] },
     { type: "group", key: "operations", label: "Operations", icon: Building2, items: [
       { page: "opstasks", label: "Tasks", icon: Building2, visible: isOpsRole || isAdmin },
@@ -619,6 +622,7 @@ export default function App() {
               {activePage === "reviews" && "Ratings & Reviews"}
               {activePage === "surveys" && "Surveys"}
               {activePage === "offers" && "Shakir Campaign"}
+              {activePage === "sharednumbers" && "Shared Numbers"}
             </h1>
           </div>
 
@@ -741,6 +745,9 @@ export default function App() {
           )}
           {activePage === "offers" && !isOpsRole && !isMarketing && (
             <OfferCampaignPage currentUser={currentUser} />
+          )}
+          {activePage === "sharednumbers" && notAgent && (
+            <SharedNumbers currentUser={currentUser} />
           )}
           {activePage === "opstasks" && (isOpsRole || isAdmin) && (
             <OpsTasks currentUser={currentUser} />

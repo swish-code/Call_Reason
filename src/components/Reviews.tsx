@@ -6,6 +6,7 @@ import DncBadge from "./DncBadge.tsx";
 import NamesToFix from "./NamesToFix.tsx";
 import RatingsDashboard from "./RatingsDashboard.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
+import OtherContacts from "./OtherContacts.tsx";
 import FeedbackDashboard from "./FeedbackDashboard.tsx";
 import {
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download, Users, BarChart2, LayoutList,
@@ -1254,6 +1255,8 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       </div>
                     </div>
                   )}
+
+                  <OtherContacts phone={detail.customer_phone} source="reviews" id={detail.id} />
 
                   {/* Call Attempts */}
                   <div className="space-y-3 border-t border-[var(--border)] pt-4">

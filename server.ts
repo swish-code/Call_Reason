@@ -16,6 +16,7 @@ import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
 import { registerOfferRoutes, OFFER_RESULT_LIST, RESULT_KINDS } from "./server/offers.js";
+import { getSharedNumbers, getOtherContacts } from "./server/sharedNumbers.js";
 import { roleDefaultLevel, EXECUTIVE_LEVEL, USER_TYPES } from "./src/types.js";
 
 dotenv.config();
@@ -3813,6 +3814,20 @@ app.get("/api/talabat-reports/:day/download", authenticateJWT, requireAdmin, asy
 }));
 
 // ---- Offer campaigns (Shakir win-back and later ones) — see server/offers.ts ----
+// One customer in several call lists (Ratings & Reviews, Surveys, Shakir Campaign) — read-only, see server/sharedNumbers.ts.
+// The report is for team leaders and up. The per-number check is for everyone who calls customers.
+app.get("/api/shared-numbers", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const days = [10, 30, 60, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+  res.json(await getSharedNumbers(days));
+}));
+app.get("/api/phone-contacts", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const source = String(req.query.source || ""), id = String(req.query.id || "");
+  if (!["reviews", "surveys", "shakir"].includes(source) || !id) return res.status(400).json({ error: "source and id are required." });
+  res.json(await getOtherContacts(String(req.query.phone || ""), { source, id }));
+}));
+
 registerOfferRoutes(app, { authenticateJWT, asyncHandler, XLSX, pick, normalisePhone, isLeaderLevel, OPS_ROLES, logCall: logShakirCall });
 
 // Daily capacity for the next 7 days

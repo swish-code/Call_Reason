@@ -3,6 +3,7 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
+import OtherContacts from "./OtherContacts.tsx";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
   kwToday, fmtDT, fmtDay, fmtDur, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler, ORDER_TYPE_LABEL, NPS_FROM_STEP, NPS_SCRIPT,
@@ -189,6 +190,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
           <div className="p-10 text-center text-xs text-[var(--muted)]">{error ? <span className="text-rose-400">{error}</span> : "Loading…"}</div>
         ) : (
           <div className="p-5 space-y-4">
+            <OtherContacts phone={c?.phone} source="shakir" id={c?.id} />
             {data.dnc && (
               <div className="p-4 rounded-2xl border-2 border-rose-500 bg-rose-600/15 text-rose-300 text-xs">
                 <b className="text-sm">DO NOT CALL THIS CUSTOMER.</b> They asked us not to contact them again{data.dnc.reason ? ` (${data.dnc.reason})` : ""}. You can still help them if they call us.

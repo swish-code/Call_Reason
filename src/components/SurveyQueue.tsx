@@ -3,6 +3,7 @@ import { User, SurveyAssignment, SurveyQuestion, SurveyCallAttempt, DailyCapacit
 import { apiFetch } from "../lib/api.ts";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import { useDoNotCall } from "../lib/dnc.ts";
+import OtherContacts from "./OtherContacts.tsx";
 import DncBadge from "./DncBadge.tsx";
 import {
   ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox, Timer, ChevronDown,
@@ -552,6 +553,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                     {assignment?.item_name && (
                       <p className="mt-1 text-xs font-bold text-amber-400">Ask about: {assignment.item_name}{assignment.item_kind ? ` (${assignment.item_kind})` : ''}</p>
                     )}
+                    {assignment && <div className="mt-2"><OtherContacts phone={assignment.customer_phone} source="surveys" id={assignment.id} /></div>}
                     {isCancelledOrder(assignment?.order_status) && (
                       <div className="mt-2 p-3 rounded-xl border-2 border-rose-500 bg-rose-600/15 text-rose-400 text-xs font-bold">
                         This order was CANCELLED ({assignment!.order_status}). Do not call the customer — press "Order Cancelled" below to close this survey.
