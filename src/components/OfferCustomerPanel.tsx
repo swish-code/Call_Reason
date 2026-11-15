@@ -4,6 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import DncBadge from "./DncBadge.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
 import OtherContacts from "./OtherContacts.tsx";
+import { useCancelledOrders, cancelledOf, CancelledOrderBadge } from "./OrderStatus.tsx";
 import {
   OfferCampaign, OfferCustomer, OfferOrder, OfferEvent, Eligibility, CALL_STATUS, OFFER_STATE,
   kwToday, fmtDT, fmtDay, fmtDur, fillScript, stepLabel, fmtExtra, statusText, useOfferLists, handlersFrom, type Handler, ORDER_TYPE_LABEL, NPS_FROM_STEP, NPS_SCRIPT,
@@ -159,6 +160,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
     await post(`/api/offer-campaigns/orders/${o.id}/remove`, { reason: reason.trim() }, "Order removed.", "remove");
   };
 
+  const cancelledOrders = useCancelledOrders((data?.orders || []).map((o) => o.order_number));
   const c = data?.customer;
   const el = data?.eligibility;
   const camp = data?.campaign;
@@ -342,6 +344,7 @@ export default function OfferCustomerPanel({ id, mode, currentUser, canManage, o
                               </span>
                             ) : <span className="text-[var(--muted)]">{el?.next?.step === i + 1 ? "next" : "—"}</span>}
                           </div>
+                          {o && <CancelledOrderBadge info={cancelledOf(cancelledOrders, o.order_number)} />}
                           {editing && (
                             <div className="mt-2 pt-2 border-t border-[var(--border)] flex flex-wrap items-end gap-2">
                               <label className="text-[10px] font-bold text-[var(--muted)] space-y-1 block">Order value (KWD)

@@ -4,6 +4,7 @@ import { apiFetch } from "../lib/api.ts";
 import { fmtDur, fmtDurLong } from "../lib/duration.ts";
 import { useDoNotCall } from "../lib/dnc.ts";
 import OtherContacts, { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
+import { useCancelledOrders, cancelledOf, CancelledOrderBadge, CancelledOrderBanner } from "./OrderStatus.tsx";
 import DncBadge from "./DncBadge.tsx";
 import {
   ListChecks, RefreshCw, X, AlertCircle, Phone, CheckCircle2, Target, Inbox, Timer, ChevronDown,
@@ -73,6 +74,7 @@ const isCancelledOrder = (s?: string | null) => !!s && /cancel|ملغ|الغ|إ�
 export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
   const [queue, setQueue] = useState<SurveyAssignment[]>([]);
   const contactFlags = useContactFlags("surveys", queue.map((q) => ({ id: q.id, phone: q.customer_phone })));
+  const cancelledOrders = useCancelledOrders(queue.map((q) => q.order_id));
   const [todaySuccess, setTodaySuccess] = useState(0);
   const [dailyLimit, setDailyLimit] = useState(0);
   const [capacity, setCapacity] = useState<DailyCapacity[]>([]);
@@ -500,6 +502,7 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                   <tr key={q.id} className="hover:bg-[var(--surface-2)]/40 transition align-middle">
                     <td className="p-4">
                       <div className="font-mono text-[var(--heading)] font-bold">{q.customer_phone}</div>{dnc.isDnc(q.customer_phone) && <DncBadge block />}
+                      {!isCancelledOrder(q.order_status) && <div><CancelledOrderBadge info={cancelledOf(cancelledOrders, q.order_id)} /></div>}
                       <div><ContactFlagBadge flag={contactFlags[q.id]} /></div>
                       {(q.customer_name || q.order_id) && <div className="text-[10px] text-[var(--muted)] mt-0.5">{[q.customer_name, q.order_id].filter(Boolean).join(' · ')}</div>}
                       {isCancelledOrder(q.order_status) && <div className="mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/10 border border-rose-500/30 text-rose-500">Order cancelled</div>}
@@ -556,6 +559,9 @@ export default function SurveyQueue({ currentUser }: SurveyQueueProps) {
                       <p className="mt-1 text-xs font-bold text-amber-400">Ask about: {assignment.item_name}{assignment.item_kind ? ` (${assignment.item_kind})` : ''}</p>
                     )}
                     {assignment && <div className="mt-2"><OtherContacts phone={assignment.customer_phone} source="surveys" id={assignment.id} /></div>}
+                    {assignment && !isCancelledOrder(assignment.order_status) && cancelledOf(cancelledOrders, assignment.order_id) && (
+                      <div className="mt-2"><CancelledOrderBanner info={cancelledOf(cancelledOrders, assignment.order_id)} orderNo={assignment.order_id} how={'press "Order Cancelled" below to close this survey.'} /></div>
+                    )}
                     {isCancelledOrder(assignment?.order_status) && (
                       <div className="mt-2 p-3 rounded-xl border-2 border-rose-500 bg-rose-600/15 text-rose-400 text-xs font-bold">
                         This order was CANCELLED ({assignment!.order_status}). Do not call the customer — press "Order Cancelled" below to close this survey.

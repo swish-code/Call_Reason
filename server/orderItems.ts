@@ -74,3 +74,47 @@ export async function fillRatingItems(ids: string[]): Promise<Record<string, Ord
 /** One line of text per order: "2× Beef Shawarma (Regular, Extra garlic) · Pepsi". */
 export const itemsText = (items: OrderItem[] | null | undefined) =>
   (items || []).map((it) => `${it.qty > 1 ? `${it.qty}× ` : ""}${it.name}${it.modifiers.length ? ` (${it.modifiers.join(", ")})` : ""}`).join(" · ");
+
+// ---- cancelled / rejected orders, from the same archive ----
+// GrubTech_Web exposes  POST <url>/api/order-status?token=…  { orders: [no, …] }  → { orders: { [no]: { status, group:
+// "completed" | "canceled" | "rejected" | "open", reason, stage, … } } }. Only numbers it holds are answered.
+export interface CancelledOrder { group: "canceled" | "rejected"; reason?: string; stage?: string }
+const STATUS_CACHE_MS = 3 * 60_000;   // a queue on screen asks again on every refresh — the archive is asked at most this often per order
+const statusCache = new Map<string, { at: number; info: CancelledOrder | null }>();
+
+/** The cancelled / rejected ones among these order numbers. Never throws: the archive being down means no marks this round. */
+export async function fetchCancelledOrders(orderNos: string[]): Promise<Record<string, CancelledOrder>> {
+  const out: Record<string, CancelledOrder> = {};
+  const src = source();
+  const unique = [...new Set(orderNos.map((s) => String(s ?? "").trim()).filter(Boolean))].slice(0, 1200);
+  if (!src || !unique.length) return out;
+  const now = Date.now();
+  const ask: string[] = [];
+  for (const no of unique) {
+    const c = statusCache.get(no);
+    if (c && now - c.at < STATUS_CACHE_MS) { if (c.info) out[no] = c.info; } else ask.push(no);
+  }
+  for (let i = 0; i < ask.length; i += 500) {
+    const chunk = ask.slice(i, i + 500);
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(`${src.url}/api/order-status?token=${encodeURIComponent(src.token)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orders: chunk }), signal: ctl.signal,
+      });
+      if (!res.ok) { console.warn(`[order-status] GrubTech lookup returned ${res.status}`); continue; }
+      const body: any = await res.json();
+      for (const no of chunk) {
+        const o = body?.orders?.[no];
+        const info: CancelledOrder | null = o && (o.group === "canceled" || o.group === "rejected")
+          ? { group: o.group, ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}), ...(o.stage ? { stage: String(o.stage) } : {}) } : null;
+        statusCache.set(no, { at: now, info });
+        if (info) out[no] = info;
+      }
+    } catch (e: any) {
+      console.warn(`[order-status] GrubTech lookup failed: ${e?.message || e}`);
+    } finally { clearTimeout(timer); }
+  }
+  if (statusCache.size > 20000) for (const [k, v] of statusCache) if (now - v.at > STATUS_CACHE_MS) statusCache.delete(k);
+  return out;
+}

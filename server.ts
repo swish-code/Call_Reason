@@ -10,7 +10,7 @@ import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRati
 import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
 import { registerNameRoutes } from "./server/nameRoutes.js";
 import { getRatingsDashboard } from "./server/ratingsDashboard.js";
-import { fillRatingItems, itemsConfigured, itemsText } from "./server/orderItems.js";
+import { fetchCancelledOrders, fillRatingItems, itemsConfigured, itemsText } from "./server/orderItems.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
@@ -3826,6 +3826,14 @@ app.get("/api/phone-contacts", authenticateJWT, asyncHandler(async (req: any, re
   const source = String(req.query.source || ""), id = String(req.query.id || "");
   if (!["reviews", "surveys", "shakir"].includes(source) || !id) return res.status(400).json({ error: "source and id are required." });
   res.json(await getOtherContacts(String(req.query.phone || ""), { source, id }));
+}));
+
+// Which of these order numbers were cancelled or rejected, from the GrubTech order archive (the red mark the agent sees
+// before calling). Read-only, and nothing closes by itself.
+app.post("/api/orders/cancelled", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const orders = (Array.isArray(req.body?.orders) ? req.body.orders : []).slice(0, 1200).map((v: any) => String(v ?? "").trim()).filter(Boolean);
+  res.json({ cancelled: await fetchCancelledOrders(orders), configured: itemsConfigured() });
 }));
 
 // The same check for the numbers of a list on screen (the mark beside each number in a queue).

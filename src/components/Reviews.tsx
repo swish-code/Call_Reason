@@ -6,6 +6,7 @@ import DncBadge from "./DncBadge.tsx";
 import NamesToFix from "./NamesToFix.tsx";
 import RatingsDashboard from "./RatingsDashboard.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
+import { useCancelledOrders, cancelledOf, CancelledOrderBadge, CancelledOrderBanner } from "./OrderStatus.tsx";
 import OtherContacts, { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
 import FeedbackDashboard from "./FeedbackDashboard.tsx";
 import {
@@ -493,6 +494,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const pageStart = (page - 1) * PAGE_SIZE;
   const paged = ratings.slice(pageStart, pageStart + PAGE_SIZE);
   const contactFlags = useContactFlags("reviews", paged.map((r) => ({ id: r.id, phone: r.customer_phone })));
+  const cancelledOrders = useCancelledOrders([...paged.map((r) => r.order_id), detail?.order_id]);
 
   // Items of the reviews on this page (what the customer ordered), from the GrubTech order archive. Asked per page;
   // the server keeps what it finds, so a row is looked up once.
@@ -812,6 +814,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                         <div className="font-bold text-[var(--heading)]">{r.brand_name}</div>
                         <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">{r.platform_name}</span>
                         <div className="font-mono text-[10px] text-[var(--muted)] break-all">#{r.order_id}</div>
+                        <CancelledOrderBadge info={cancelledOf(cancelledOrders, r.order_id)} />
                         <div className="font-mono text-[10px] text-[var(--muted)] whitespace-nowrap">{fmtDate(r.order_date || r.uploaded_at)}</div>
                       </div>
                     </td>
@@ -1258,6 +1261,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                     </div>
                   )}
 
+                  <CancelledOrderBanner info={cancelledOf(cancelledOrders, detail.order_id)} orderNo={detail.order_id} how={'close this review with "No Action Required".'} />
                   <OtherContacts phone={detail.customer_phone} source="reviews" id={detail.id} />
 
                   {/* Call Attempts */}
