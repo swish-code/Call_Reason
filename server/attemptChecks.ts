@@ -53,6 +53,10 @@ const blank = (): Status => ({ lastRunAt: null, lastError: null, lastChecked: 0,
 export const attemptStatus: Record<AttemptSource, Status> = { ratings: blank(), offers: blank() };
 
 const RECHECK_HOURS = 36;
+// The employee's own call to that number found only AFTER the entry was saved ("called_later"): looked for up to this
+// long after it. A "no call" is therefore looked at again until this much time has passed.
+const LATER_HOURS = 12;
+const LATER_MS = LATER_HOURS * 3600_000;
 const SMALL_RUN_MIN = 10, MIN_GLOBAL_MATCH = 0.2, OTHER_AGENT_MIN = 5, OTHER_AGENT_SHARE = 0.8, NO_MATCH_AT_ALL_MIN = 10;
 
 /** Entries of a period that still need a verdict (never checked, or a "not confirmed" taken too early). */
@@ -61,7 +65,7 @@ async function pending(source: AttemptSource, fromISO: string, toISO: string, fo
   const { rows } = await pool.query(`${b.sql}
      AND l.user_id IS NOT NULL AND ${b.at} >= $1 AND ${b.at} <= $2
      AND ( k.ref_id IS NULL
-           OR (k.result <> 'answered' AND k.checked_at < ${b.at} + interval '1 hour'
+           OR (k.result <> 'answered' AND k.checked_at < ${b.at} + (CASE WHEN k.result = 'no_call' THEN interval '${LATER_HOURS} hours' ELSE interval '1 hour' END)
                AND ($3::boolean OR (${b.at} > now() - interval '${RECHECK_HOURS} hours' AND k.checked_at < now() - interval '19 minutes'))) )
    ORDER BY ${b.at} DESC LIMIT 2500`, [fromISO, toISO, force]);
   return rows;
@@ -102,7 +106,7 @@ export async function runAttemptCallChecks(source: AttemptSource, opts: { mode: 
     const phones = new Set<string>();
     for (const it of items) {
       const w = surveyWindow("successful", new Date(it.at).getTime());
-      from = Math.min(from, w.from); to = Math.max(to, w.to);
+      from = Math.min(from, w.from); to = Math.max(to, w.to + LATER_MS);
       const k = last8(it.phone); if (k) phones.add(k);
     }
     const ans = await askSwipr(from, Math.min(to, now + LOOKAHEAD_MS), [...phones]);
@@ -129,8 +133,17 @@ export async function runAttemptCallChecks(source: AttemptSource, opts: { mode: 
         const atMs = new Date(it.at).getTime();
         if (!last8(it.phone)) continue;             // no usable number: nothing to look for, never a "no call"
         // "successful" = the short window (two hours before the entry), whatever the outcome that was logged.
-        const j = judgeSurvey(index, { phone: it.phone, status: "successful", completedMs: atMs, agentId: g.agentId });
-        if (j.result === "no_call" && (now - atMs < PENDING_GRACE_MS || copyTo < atMs + LOOKAHEAD_MS)) continue;
+        let j: any = judgeSurvey(index, { phone: it.phone, status: "successful", completedMs: atMs, agentId: g.agentId });
+        if (j.result === "no_call") {
+          // No call of theirs before the entry — did they call that number afterwards? (logged first, dialled later)
+          const later = (index.get(last8(it.phone)!) || [])
+            .filter((c) => c.agentId === g.agentId && c.ts > atMs + LOOKAHEAD_MS && c.ts <= atMs + LATER_MS && !/internal/i.test(c.direction))
+            .sort((a, b) => a.ts - b.ts);
+          if (later.length) {
+            j = { result: "called_later", talk: later[0].answered ? later[0].talk : 0, calls: later.length, call_id: later[0].id, call_time: later[0].ts,
+              direction: later[0].direction || null, xontel_agent: later[0].agentName, relation: "same" };
+          } else if (now - atMs < PENDING_GRACE_MS || copyTo < atMs + LOOKAHEAD_MS) continue;
+        }
         rows.push({ id: it.id, ...j, reached: !!it.reached });
       }
       const noCall = rows.filter((r) => r.reached && r.result === "no_call");
@@ -169,7 +182,7 @@ export async function getAttemptVerification(source: AttemptSource, fromISO: str
   let extra = "";
   if (source === "offers" && campaignId) { params.push(campaignId); extra = ` AND c.campaign_id = $3`; }
   const { rows } = await pool.query(`${b.sql} AND ${b.at} >= $1 AND ${b.at} <= $2${extra} ORDER BY ${b.at} DESC LIMIT 20000`, params);
-  const zero = () => ({ reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, pending: 0, unlinked: 0, notReached: 0, notReachedNoCall: 0 });
+  const zero = () => ({ reached: 0, confirmed: 0, short: 0, unanswered: 0, noCall: 0, later: 0, pending: 0, unlinked: 0, notReached: 0, notReachedNoCall: 0, notReachedLater: 0 });
   const sum = zero();
   const byAgent = new Map<string, any>();
   const flagged: any[] = [];
@@ -177,25 +190,29 @@ export async function getAttemptVerification(source: AttemptSource, fromISO: str
     let g = byAgent.get(r.agent_name);
     if (!g) { g = { agent: r.agent_name, linked: !!r.linked, ...zero() }; byAgent.set(r.agent_name, g); }
     const talk = Number(r.talk_seconds) || 0;
-    const flag = (kind: string) => { if (flagged.length < 300) flagged.push({ id: r.id, at: r.at, agent: r.agent_name, phone: r.phone, ref: r.ref, outcome: r.outcome, kind, talk, call_time: r.call_time, by: r.agent_relation === "other" ? r.xontel_agent : null }); };
+    // Minutes between saving the entry and the employee's call, for a call found only afterwards.
+    const afterMin = r.result === "called_later" && r.call_time ? Math.max(1, Math.round((new Date(r.call_time).getTime() - new Date(r.at).getTime()) / 60_000)) : null;
+    const flag = (kind: string) => { if (flagged.length < 300) flagged.push({ id: r.id, at: r.at, agent: r.agent_name, phone: r.phone, ref: r.ref, outcome: r.outcome, kind, talk, call_time: r.call_time, after_min: afterMin, by: r.agent_relation === "other" ? r.xontel_agent : null }); };
     const add = (k: keyof ReturnType<typeof zero>) => { sum[k]++; g[k]++; };
     if (!r.reached) {
       add("notReached");
       // "No answer" was logged, yet the employee's XonTel user never dialled that number.
       if (r.linked && r.result === "no_call") { add("notReachedNoCall"); flag("not_dialled"); }
+      else if (r.linked && r.result === "called_later") { add("notReachedLater"); flag("called_later"); }
       continue;
     }
     add("reached");
     if (!r.linked) add("unlinked");
     else if (!r.result) add("pending");
     else if (r.result === "no_call") { add("noCall"); flag("no_call"); }
+    else if (r.result === "called_later") { add("later"); flag("called_later"); }
     else if (r.result === "unanswered") { add("unanswered"); flag("unanswered"); }
     else if (talk < MIN_TALK_SECONDS) { add("short"); flag("short"); }
     else add("confirmed");
   }
   const agents = [...byAgent.values()].map((g) => {
     const judged = g.reached - g.pending - g.unlinked;
-    return { ...g, suspectPct: judged ? Math.round(((g.noCall + g.unanswered + g.short) / judged) * 100) : null };
+    return { ...g, suspectPct: judged ? Math.round(((g.noCall + g.later + g.unanswered + g.short) / judged) * 100) : null };
   }).sort((a, b) => (b.suspectPct ?? -1) - (a.suspectPct ?? -1) || b.reached - a.reached);
   return { configured: xontelConfigured(), minTalkSeconds: MIN_TALK_SECONDS, status: { ...attemptStatus[source] }, summary: sum, agents, flagged, total: rows.length };
 }

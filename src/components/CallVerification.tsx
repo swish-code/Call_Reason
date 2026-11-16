@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/api.ts";
-import { ShieldCheck, RefreshCw, CheckCircle2, Timer, PhoneOff, Ban, Hourglass, Users, PhoneMissed } from "lucide-react";
+import { ShieldCheck, RefreshCw, CheckCircle2, Timer, PhoneOff, Ban, Hourglass, Users, PhoneMissed, History } from "lucide-react";
+const afterText = (m: number) => (m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`);
 
 // Call verification for Ratings & Reviews and the Shakir Campaign: for every call an employee logged, is there a call
 // from their own XonTel user to that customer's number? Team Leaders, Supervisors and Admins only — the server answers
 // 403 to everyone else and this section then shows nothing.
 
-type Sum = { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; pending: number; unlinked: number; notReached: number; notReachedNoCall: number };
-interface Flag { id: string; at: string; agent: string; phone: string; ref: string | null; outcome: string; kind: "no_call" | "unanswered" | "short" | "not_dialled"; talk: number; call_time: string | null; by: string | null }
+type Sum = { reached: number; confirmed: number; short: number; unanswered: number; noCall: number; later: number; pending: number; unlinked: number; notReached: number; notReachedNoCall: number; notReachedLater: number };
+interface Flag { id: string; at: string; agent: string; phone: string; ref: string | null; outcome: string; kind: "no_call" | "called_later" | "unanswered" | "short" | "not_dialled"; talk: number; call_time: string | null; after_min: number | null; by: string | null }
 interface Data {
   configured: boolean; minTalkSeconds: number; total: number;
   status: { lastRunAt: string | null; lastError: string | null; lastChecked: number; lastWritten: number; running: boolean; warnings: string[] };
@@ -19,6 +20,7 @@ const fmt = (ts?: string | null) => (ts ? new Date(new Date(ts).getTime() + KW_M
 const words = (s: string) => s.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 const KIND: Record<Flag["kind"], { label: string; cls: string }> = {
   no_call: { label: "No call found", cls: "text-rose-500 bg-rose-500/10 border-rose-500/40" },
+  called_later: { label: "Called after logging", cls: "text-orange-500 bg-orange-500/10 border-orange-500/40" },
   unanswered: { label: "Dialled, not answered", cls: "text-amber-500 bg-amber-500/10 border-amber-500/40" },
   short: { label: "Short call", cls: "text-amber-500 bg-amber-500/10 border-amber-500/40" },
   not_dialled: { label: "Logged without dialling", cls: "text-rose-500 bg-rose-500/10 border-rose-500/40" },
@@ -88,7 +90,7 @@ export default function CallVerification({ source, from, to, campaignId, what }:
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-extrabold text-[var(--heading)] flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-emerald-400" /> Call verification</h3>
-          <p className="text-xs text-[var(--muted)] mt-0.5">For every {what} an employee logged, the XonTel call records are searched for a call made by that employee's own XonTel user to the customer's number in the two hours before it was saved. A call by another employee does not count. Visible to Team Leaders, Supervisors and Admins only.</p>
+          <p className="text-xs text-[var(--muted)] mt-0.5">For every {what} an employee logged, the XonTel call records are searched for a call made by that employee's own XonTel user to the customer's number in the two hours before it was saved. A call by another employee does not count. "Called after logging" = their call to that number exists, but only after the entry was saved. Visible to Team Leaders, Supervisors and Admins only.</p>
         </div>
         {d.configured && (
           <button onClick={verify} disabled={busy || d.status.running}
@@ -103,12 +105,13 @@ export default function CallVerification({ source, from, to, campaignId, what }:
         <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-500 font-bold">XonTel is not connected to this system yet — no calls are checked and nothing is flagged.</div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card label="Reached claims" value={s.reached} icon={Users} tone="text-[var(--heading)]" hint="logged as spoken to" />
             <Card label="Call confirmed" value={s.confirmed} icon={CheckCircle2} tone="text-emerald-400" />
             <Card label="Short call" value={s.short} icon={Timer} tone="text-amber-400" hint={`answered, under ${d.minTalkSeconds}s`} />
             <Card label="Not answered" value={s.unanswered} icon={PhoneOff} tone="text-amber-400" hint="dialled, nobody picked up" />
-            <Card label="No call found" value={s.noCall} icon={Ban} tone="text-rose-400" hint="no call to that number" />
+            <Card label="No call found" value={s.noCall} icon={Ban} tone="text-rose-400" hint="no call from them to that number" />
+            <Card label="Called after logging" value={s.later + s.notReachedLater} icon={History} tone="text-orange-400" hint="their call came only after the entry" />
             <Card label="Logged, not dialled" value={s.notReachedNoCall} icon={PhoneMissed} tone="text-rose-400" hint={`of ${s.notReached} "no answer" entries`} />
             <Card label="Still checking" value={s.pending + s.unlinked} icon={Hourglass} tone="text-zinc-400" hint={s.unlinked ? `${s.unlinked} by employees with no XonTel link` : "checked every 10 min"} />
           </div>
@@ -123,7 +126,7 @@ export default function CallVerification({ source, from, to, campaignId, what }:
                 <table className="w-full text-xs">
                   <thead><tr className="text-[10px] text-[var(--muted)] font-bold border-b border-[var(--border)]">
                     <th className="text-left py-2 px-2">Employee</th><th className="text-center py-2 px-2">Reached claims</th><th className="text-center py-2 px-2">Confirmed</th>
-                    <th className="text-center py-2 px-2">Short call</th><th className="text-center py-2 px-2">Not answered</th><th className="text-center py-2 px-2">No call found</th>
+                    <th className="text-center py-2 px-2">Short call</th><th className="text-center py-2 px-2">Not answered</th><th className="text-center py-2 px-2">No call found</th><th className="text-center py-2 px-2" title="Their call to that number was found only after the entry was saved">Called after logging</th>
                     <th className="text-center py-2 px-2" title={'"No answer" entries with no call from their XonTel user'}>Logged, not dialled</th>
                     <th className="text-center py-2 px-2">Checking</th><th className="text-center py-2 px-2" title="Share of judged reached claims that are short, not answered or without a call">Suspect</th>
                   </tr></thead>
@@ -136,6 +139,7 @@ export default function CallVerification({ source, from, to, campaignId, what }:
                         <td className="py-2 px-2 text-center tabular-nums">{dash(a.short, "text-amber-500", "short", a.agent)}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{dash(a.unanswered, "text-amber-500", "unanswered", a.agent)}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{dash(a.noCall, "text-rose-500", "no_call", a.agent)}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.later + a.notReachedLater, "text-orange-500", "called_later", a.agent)}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{dash(a.notReachedNoCall, "text-rose-500", "not_dialled", a.agent)}</td>
                         <td className="py-2 px-2 text-center tabular-nums text-[var(--muted)]">{a.pending + a.unlinked || "–"}</td>
                         <td className={`py-2 px-2 text-center tabular-nums font-bold ${a.suspectPct ? (a.suspectPct >= 30 ? "text-rose-500" : "text-amber-500") : "text-emerald-500"}`}>{a.suspectPct == null ? "–" : `${a.suspectPct}%`}</td>
@@ -156,7 +160,7 @@ export default function CallVerification({ source, from, to, campaignId, what }:
               </button>
               {open && (
                 <div className="flex flex-wrap items-center gap-2 mt-3">
-                  {([["", "All"], ["not_dialled", "Logged, not dialled"], ["no_call", "No call found"], ["unanswered", "Not answered"], ["short", "Short call"]] as const).map(([k, label]) => {
+                  {([["", "All"], ["not_dialled", "Logged, not dialled"], ["no_call", "No call found"], ["called_later", "Called after logging"], ["unanswered", "Not answered"], ["short", "Short call"]] as const).map(([k, label]) => {
                     const n = d.flagged.filter((f) => (!k || f.kind === k) && (!pick.agent || f.agent === pick.agent)).length;
                     return (
                       <button key={k} onClick={() => setPick({ ...pick, kind: k })} disabled={!n && pick.kind !== k}
@@ -188,7 +192,8 @@ export default function CallVerification({ source, from, to, campaignId, what }:
                           <td className="py-2 px-2"><span className="font-mono">{f.phone}</span>{f.ref && <span className="ml-2 text-[10px] text-[var(--muted)]" dir="auto">{f.ref}</span>}</td>
                           <td className="py-2 px-2">{words(f.outcome)}</td>
                           <td className="py-2 px-2">
-                            <span className={`inline-block px-2 py-0.5 rounded-full border text-[10px] font-extrabold whitespace-nowrap ${KIND[f.kind].cls}`}>{KIND[f.kind].label}{f.kind === "short" ? ` · ${f.talk}s` : ""}</span>
+                            <span className={`inline-block px-2 py-0.5 rounded-full border text-[10px] font-extrabold whitespace-nowrap ${KIND[f.kind].cls}`}>{KIND[f.kind].label}{f.kind === "short" ? ` · ${f.talk}s` : ""}{f.kind === "called_later" && f.after_min ? ` · ${afterText(f.after_min)} later` : ""}</span>
+                            {f.kind === "called_later" && <span className="ml-2 text-[10px] text-[var(--muted)]">{f.call_time ? `call at ${fmt(f.call_time).slice(11)}` : ""}{f.talk ? ` · talked ${f.talk}s` : " · not answered"}</span>}
                             {f.by && <span className="ml-2 text-[10px] text-[var(--muted)]">called by {f.by}{f.call_time ? ` at ${fmt(f.call_time).slice(11)}` : ""}</span>}
                           </td>
                         </tr>
