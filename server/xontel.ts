@@ -335,7 +335,7 @@ export async function runSurveyCallChecks(opts: { mode: "auto" | "manual"; fromI
     else if (now - ans.syncedAt > STALE_COPY_MS) warnings.push(`Swipr last read XonTel's calls at ${kwTime(ans.syncedAt)} (Kuwait time)${ans.lastError ? ` — ${ans.lastError}` : ""}. Surveys saved after that wait; nothing is recorded as "no call" for them`);
 
     const links = await syncLinks(ans.agents);
-    for (const l of links.stale) warnings.push(`XonTel user "${l.xontel_agent_name || l.xontel_agent_id}" is not on XonTel any more (or the name is not unique) — link that employee again; not judged`);
+    if (links.stale.length) warnings.push(`${links.stale.length} linked XonTel user(s) had no call in Swipr's copy in the last 3 weeks, so their employees are not judged: ${links.stale.map((l) => l.xontel_agent_name || l.xontel_agent_id).join(", ")}. They are picked up again by themselves once that user makes a call — link the employee again only if their XonTel user name changed`);
 
     // One group per linked employee.
     const groups = new Map<string, { agentId: string; name: string; items: { s: any; completedMs: number }[] }>();
