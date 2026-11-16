@@ -29,7 +29,11 @@ export default function CallVerification({ source, from, to, campaignId, what }:
   const [hidden, setHidden] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  // Which entries the list below shows: one kind and / or one employee (set by clicking a number in the table).
+  const [pick, setPick] = useState<{ kind: Flag["kind"] | ""; agent: string }>({ kind: "", agent: "" });
+  const listRef = useRef<HTMLDivElement>(null);
+  const show = (kind: Flag["kind"] | "", agent = "") => { setPick({ kind, agent }); setOpen(true); setTimeout(() => listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
@@ -73,7 +77,11 @@ export default function CallVerification({ source, from, to, campaignId, what }:
       </div>
     </div>
   );
-  const dash = (n: number, cls: string) => (n ? <span className={`font-bold ${cls}`}>{n}</span> : <span className="text-[var(--muted)]">–</span>);
+  // A number in the table opens the entries behind it.
+  const dash = (n: number, cls: string, kind?: Flag["kind"], agent?: string) => (!n ? <span className="text-[var(--muted)]">–</span>
+    : kind ? <button onClick={() => show(kind, agent)} title="Show these entries" className={`font-bold underline decoration-dotted underline-offset-2 hover:opacity-70 ${cls}`}>{n}</button>
+    : <span className={`font-bold ${cls}`}>{n}</span>);
+  const shown = d.flagged.filter((f) => (!pick.kind || f.kind === pick.kind) && (!pick.agent || f.agent === pick.agent));
 
   return (
     <div className="space-y-4">
@@ -125,10 +133,10 @@ export default function CallVerification({ source, from, to, campaignId, what }:
                         <td className="py-2 px-2 font-bold text-[var(--heading)]">{a.agent}{!a.linked && <span className="ml-2 text-[10px] font-normal text-[var(--muted)]">no XonTel link</span>}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{a.reached}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{dash(a.confirmed, "text-emerald-500")}</td>
-                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.short, "text-amber-500")}</td>
-                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.unanswered, "text-amber-500")}</td>
-                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.noCall, "text-rose-500")}</td>
-                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.notReachedNoCall, "text-rose-500")}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.short, "text-amber-500", "short", a.agent)}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.unanswered, "text-amber-500", "unanswered", a.agent)}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.noCall, "text-rose-500", "no_call", a.agent)}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{dash(a.notReachedNoCall, "text-rose-500", "not_dialled", a.agent)}</td>
                         <td className="py-2 px-2 text-center tabular-nums text-[var(--muted)]">{a.pending + a.unlinked || "–"}</td>
                         <td className={`py-2 px-2 text-center tabular-nums font-bold ${a.suspectPct ? (a.suspectPct >= 30 ? "text-rose-500" : "text-amber-500") : "text-emerald-500"}`}>{a.suspectPct == null ? "–" : `${a.suspectPct}%`}</td>
                       </tr>
@@ -141,11 +149,29 @@ export default function CallVerification({ source, from, to, campaignId, what }:
           </div>
 
           {d.flagged.length > 0 && (
-            <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
+            <div ref={listRef} className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl scroll-mt-4">
               <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 text-sm font-bold text-[var(--heading)]">
-                <Ban className="w-4 h-4 text-rose-400" /> Entries to look at <span className="text-xs font-normal text-[var(--muted)]">{d.flagged.length}{d.flagged.length >= 300 ? "+" : ""}</span>
+                <Ban className="w-4 h-4 text-rose-400" /> Entries to look at <span className="text-xs font-normal text-[var(--muted)]">{shown.length}{shown.length !== d.flagged.length ? ` of ${d.flagged.length}` : ""}{d.flagged.length >= 300 ? "+" : ""}</span>
                 <span className="ml-auto text-xs text-[var(--muted)]">{open ? "Hide" : "Show"}</span>
               </button>
+              {open && (
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  {([["", "All"], ["not_dialled", "Logged, not dialled"], ["no_call", "No call found"], ["unanswered", "Not answered"], ["short", "Short call"]] as const).map(([k, label]) => {
+                    const n = d.flagged.filter((f) => (!k || f.kind === k) && (!pick.agent || f.agent === pick.agent)).length;
+                    return (
+                      <button key={k} onClick={() => setPick({ ...pick, kind: k })} disabled={!n && pick.kind !== k}
+                        className={`px-3 py-1.5 rounded-full border text-[11px] font-bold transition disabled:opacity-40 ${pick.kind === k ? "bg-emerald-600 border-emerald-600 text-white" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--heading)]"}`}>
+                        {label} · {n}
+                      </button>
+                    );
+                  })}
+                  {pick.agent && (
+                    <button onClick={() => setPick({ ...pick, agent: "" })} className="px-3 py-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/10 text-emerald-500 text-[11px] font-bold" title="Show every employee">
+                      {pick.agent} ✕
+                    </button>
+                  )}
+                </div>
+              )}
               {open && (
                 <div className="overflow-x-auto mt-3">
                   <table className="w-full text-xs">
@@ -154,7 +180,8 @@ export default function CallVerification({ source, from, to, campaignId, what }:
                       <th className="text-left py-2 px-2">Logged as</th><th className="text-left py-2 px-2">What XonTel shows</th>
                     </tr></thead>
                     <tbody>
-                      {d.flagged.map((f) => (
+                      {!shown.length && <tr><td colSpan={5} className="py-4 text-center text-[var(--muted)]">Nothing of this kind in the period.</td></tr>}
+                      {shown.map((f) => (
                         <tr key={f.id} className="border-b border-[var(--border)]">
                           <td className="py-2 px-2 tabular-nums whitespace-nowrap">{fmt(f.at)}</td>
                           <td className="py-2 px-2 font-bold text-[var(--heading)]">{f.agent}</td>
