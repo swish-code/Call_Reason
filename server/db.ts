@@ -880,6 +880,17 @@ export class DB {
         summary JSONB NOT NULL,
         uploaded_at TIMESTAMPTZ DEFAULT now()
       );
+      -- Talabat's "Ratings and reviews" report of one day (one row per review), pulled the morning after and once
+      -- more three days later. summary.rows holds the reviews.
+      CREATE TABLE IF NOT EXISTS talabat_reviews (
+        report_day TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        csv_gz BYTEA NOT NULL,
+        csv_bytes INTEGER NOT NULL,
+        review_count INTEGER NOT NULL,
+        summary JSONB NOT NULL,
+        uploaded_at TIMESTAMPTZ DEFAULT now()
+      );
       -- Keeta's daily Download-center "Order data" report (by completion date), kept as gzipped CSV like Talabat's.
       CREATE TABLE IF NOT EXISTS keeta_reports (
         report_day TEXT PRIMARY KEY,
@@ -2863,6 +2874,28 @@ export class DB {
        RETURNING (xmax = 0) AS inserted`,
       [r.day, r.fileName, r.csvGz, r.csvBytes, r.orderCount, JSON.stringify(r.summary)]);
     return !!rows[0]?.inserted;
+  }
+
+  /** Saves one day's Ratings and reviews; a re-pull of the same day replaces it. True when the day was new. */
+  static async saveTalabatReviews(r: { day: string; fileName: string; csvGz: Buffer; csvBytes: number; reviewCount: number; summary: any }): Promise<boolean> {
+    const { rows } = await pool.query(
+      `INSERT INTO talabat_reviews (report_day, file_name, csv_gz, csv_bytes, review_count, summary, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6, now())
+       ON CONFLICT (report_day) DO UPDATE SET file_name = EXCLUDED.file_name, csv_gz = EXCLUDED.csv_gz, csv_bytes = EXCLUDED.csv_bytes,
+         review_count = EXCLUDED.review_count, summary = EXCLUDED.summary, uploaded_at = now()
+       RETURNING (xmax = 0) AS inserted`,
+      [r.day, r.fileName, r.csvGz, r.csvBytes, r.reviewCount, JSON.stringify(r.summary)]);
+    return !!rows[0]?.inserted;
+  }
+
+  /** The reviews of a period (each row tagged with the day it was pulled for), the days received in it, and the first / last day held at all. */
+  static async getTalabatReviews(from: string, to: string): Promise<{ days: any[]; rows: any[]; first_day: string | null; last_day: string | null }> {
+    const { rows: days } = await pool.query(
+      `SELECT report_day, review_count, uploaded_at, summary->'rows' AS rows FROM talabat_reviews WHERE report_day >= $1 AND report_day <= $2 ORDER BY report_day DESC`, [from, to]);
+    const { rows: span } = await pool.query(`SELECT min(report_day) AS first_day, max(report_day) AS last_day FROM talabat_reviews`);
+    const out: any[] = [];
+    for (const d of days) for (const r of (d.rows || [])) out.push({ day: d.report_day, ...r });
+    return { days: days.map((d) => ({ report_day: d.report_day, review_count: d.review_count, uploaded_at: d.uploaded_at })), rows: out, first_day: span[0]?.first_day ?? null, last_day: span[0]?.last_day ?? null };
   }
 
   /** Every day's refund totals, newest first — without the per-order rows. */

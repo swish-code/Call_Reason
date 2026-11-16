@@ -300,6 +300,37 @@ export function readTalabatFacts(csv: Buffer, day: string): PlatformFact[] {
 }
 
 /** The upload body may arrive gzipped (the tool compresses it) or as plain CSV. */
+// ---- Ratings and reviews (the report builder's "Ratings and reviews" export: one row per review) ----
+// Columns as Talabat sends them (checked on a real export, Oct 2026): Date | Restaurant name | Vendor ID | Order ID |
+// Rating | Review text. There is no customer phone number in it.
+export interface TalabatReviewRow { date: string; store: string; brand: string; vendor_id: string; order_id: string; rating: number; text: string }
+export interface TalabatReviewsSummary { reviews: number; low: number; with_text: number; rating_sum: number; rows: TalabatReviewRow[] }
+
+/** Parses one day's Ratings and reviews file. Throws TalabatReportError when it is not that report. A file with no rows is a day without reviews. */
+export function readReviews(csv: Buffer): { summary: TalabatReviewsSummary; columns: string[] } {
+  const text = csv.toString("utf8").replace(/^\uFEFF/, "");
+  const rows = parseCsv(text).filter((r) => r.length > 1 || (r[0] || "").trim());
+  if (!rows.length) throw new TalabatReportError("The file is empty.");
+  const columns = rows[0].map((h) => h.trim());
+  const idx = new Map(columns.map((h, i) => [h.toLowerCase(), i]));
+  const g = (r: string[], name: string) => { const i = idx.get(name.toLowerCase()); return i === undefined ? "" : (r[i] || "").trim(); };
+  const missing = ["Restaurant name", "Order ID", "Rating"].filter((n) => !idx.has(n.toLowerCase()));
+  if (missing.length) throw new TalabatReportError(`Not a Talabat Ratings and reviews report — missing column(s): ${missing.join(", ")}.`);
+  const s: TalabatReviewsSummary = { reviews: 0, low: 0, with_text: 0, rating_sum: 0, rows: [] };
+  for (const r of rows.slice(1)) {
+    const rating = Math.round(Number(g(r, "Rating")));
+    const order_id = g(r, "Order ID");
+    if (!order_id || !(rating >= 1 && rating <= 5)) continue;       // a row without a rating is not a review
+    const store = g(r, "Restaurant name");
+    const review = g(r, "Review text");
+    s.rows.push({ date: g(r, "Date").slice(0, 10), store, brand: brandOf(store), vendor_id: g(r, "Vendor ID"), order_id, rating, text: review });
+    s.reviews++; s.rating_sum += rating;
+    if (rating <= 3) s.low++;
+    if (review) s.with_text++;
+  }
+  return { summary: s, columns };
+}
+
 export function plainCsv(body: Buffer): Buffer {
   return body.length > 2 && body[0] === 0x1f && body[1] === 0x8b ? gunzipSync(body) : body;
 }

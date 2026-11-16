@@ -14,7 +14,7 @@ import { fetchCancelledOrders, fillRatingItems, itemsConfigured, itemsText } fro
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { runAttemptCallChecks, getAttemptVerification, attemptStatus, ATTEMPT_SOURCES, type AttemptSource } from "./server/attemptChecks.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
-import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
+import { readReport, readDeductions, readReviews, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
 import { registerOfferRoutes, OFFER_RESULT_LIST, RESULT_KINDS } from "./server/offers.js";
 import { getSharedNumbers, getOtherContacts, getOtherContactFlags } from "./server/sharedNumbers.js";
@@ -3557,7 +3557,7 @@ app.post("/api/talabat-reports/upload",
     if (!TALABAT_DAY.test(day)) return res.status(400).json({ error: "day must be YYYY-MM-DD." });
     if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Send the CSV as the request body (text/csv or application/gzip)." });
     const kind = String(req.query.kind || "orders");
-    if (!["orders", "deductions", "keeta-orders", "keeta-refunds", "foodics"].includes(kind)) return res.status(400).json({ error: "kind must be orders, deductions, keeta-orders, keeta-refunds or foodics." });
+    if (!["orders", "deductions", "reviews", "keeta-orders", "keeta-refunds", "foodics"].includes(kind)) return res.status(400).json({ error: "kind must be orders, deductions, reviews, keeta-orders, keeta-refunds or foodics." });
     let csv: Buffer;
     try { csv = plainCsv(req.body); } catch { return res.status(400).json({ error: "The gzip body could not be read." }); }
     if (kind === "foodics") {
@@ -3593,6 +3593,17 @@ app.post("/api/talabat-reports/upload",
       await DB.upsertPlatformRefunds("keeta", list);
       console.log(`[keeta] refunds pulled ${day}: ${list.length} orders (${list.filter((r) => r.partial).length} partial)`);
       return res.json({ ok: true, day, kind, refunds: list.length, partial: list.filter((r) => r.partial).length });
+    }
+    if (kind === "reviews") {
+      let rev;
+      try { rev = readReviews(csv); } catch (e: any) {
+        if (e instanceof TalabatReportError) return res.status(422).json({ error: e.message });
+        throw e;
+      }
+      const s = rev.summary;
+      const created = await DB.saveTalabatReviews({ day, fileName: `talabat-reviews_${day}.csv`, csvGz: gzip(csv), csvBytes: csv.length, reviewCount: s.reviews, summary: s });
+      console.log(`[talabat] ${created ? "saved" : "replaced"} reviews ${day}: ${s.reviews} reviews, ${s.low} with 1-3 stars`);
+      return res.json({ ok: true, day, kind, created, reviews: s.reviews, low: s.low, with_text: s.with_text });
     }
     if (kind === "deductions") {
       let ded;
@@ -3772,6 +3783,14 @@ app.get("/api/platforms/daily", authenticateJWT, requireAdmin, asyncHandler(asyn
 
 app.get("/api/talabat-reports", authenticateJWT, requireAdmin, asyncHandler(async (_req, res) => {
   res.json(await DB.listTalabatReports());
+}));
+
+// Ratings and reviews (Talabat's own report): the reviews of a period.
+app.get("/api/talabat-reports/reviews", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+  const from = String(req.query.from || ""), to = String(req.query.to || req.query.from || "");
+  if (!TALABAT_DAY.test(from) || !TALABAT_DAY.test(to) || to < from) return res.status(400).json({ error: "from and to must be YYYY-MM-DD." });
+  if ((Date.parse(to) - Date.parse(from)) / 86400_000 > 92) return res.status(400).json({ error: "Pick at most 3 months at a time." });
+  res.json(await DB.getTalabatReviews(from, to));
 }));
 
 // Partial refunds: every day's totals, then one day with its orders, then that day's raw file.

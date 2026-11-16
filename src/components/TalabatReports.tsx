@@ -3,7 +3,8 @@ import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import TalabatOrders, { type OrdersPreset } from "./TalabatOrders.tsx";
 import TalabatRefunds from "./TalabatRefunds.tsx";
-import { ShoppingBag, Download, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, Clock, Store, RefreshCw, LayoutDashboard, ListOrdered, Undo2 } from "lucide-react";
+import TalabatReviews from "./TalabatReviews.tsx";
+import { Star, ShoppingBag, Download, ChevronLeft, ChevronRight, AlertCircle, CheckCircle2, Clock, Store, RefreshCw, LayoutDashboard, ListOrdered, Undo2 } from "lucide-react";
 
 // Talabat partner-portal Order report (every store, one row per order). The talabat-export tool on the office PC
 // downloads it each morning after 06:00 Kuwait time and uploads it here; the server keeps the CSV and a summary of
@@ -175,7 +176,7 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
   const [error, setError] = useState("");
   const [day, setDay] = useState("");
   const [busy, setBusy] = useState("");
-  const [tab, setTab] = useState<"overview" | "orders" | "refunds">("overview");
+  const [tab, setTab] = useState<"overview" | "orders" | "refunds" | "reviews">("overview");
   const [preset, setPreset] = useState<OrdersPreset | undefined>();
   const showOrders = (p: Omit<OrdersPreset, "nonce">) => { setPreset({ ...p, nonce: Date.now() }); setTab("orders"); };
 
@@ -276,7 +277,7 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
           </div>
 
           <div className="flex items-center gap-1 p-1 bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-lg w-fit" role="tablist">
-            {([["overview", "Overview", LayoutDashboard], ["orders", `Orders · ${num(s.orders)}`, ListOrdered], ["refunds", "Partial refunds", Undo2]] as const).map(([k, label, Icon]) => (
+            {([["overview", "Overview", LayoutDashboard], ["orders", `Orders · ${num(s.orders)}`, ListOrdered], ["refunds", "Partial refunds", Undo2], ["reviews", "Ratings & Reviews", Star]] as const).map(([k, label, Icon]) => (
               <button key={k} role="tab" aria-selected={tab === k} onClick={() => { if (k === "orders") setPreset(undefined); setTab(k); }}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition ${tab === k ? "text-white shadow-md" : "text-[var(--muted)] hover:text-[var(--heading)] hover:bg-[var(--surface-2)]"}`}
                 style={tab === k ? { background: "var(--t-orange)" } : undefined}>
@@ -287,6 +288,8 @@ export default function TalabatReports({ currentUser }: { currentUser: User }) {
 
           {tab === "orders" ? (
             <TalabatOrders day={cur.report_day} version={cur.uploaded_at} preset={preset} />
+          ) : tab === "reviews" ? (
+            <TalabatReviews initialDay={cur.report_day} />
           ) : tab === "refunds" ? (
             <TalabatRefunds initialDay={cur.report_day} orderDays={new Set(reports.map((r) => r.report_day))}
               dayOrders={(d) => byDay.get(d)?.order_count}
