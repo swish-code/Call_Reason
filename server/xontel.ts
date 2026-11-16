@@ -27,12 +27,12 @@ const CALLS_KEY = process.env.SWIPR_CALLS_KEY || "";
 export const MIN_TALK_SECONDS = Number(process.env.SURVEY_MIN_TALK_SECONDS || 30);
 const REACHED_LOOKBACK_MS = 2 * 3600_000;          // a completed survey follows its call by minutes
 const NOT_REACHED_LOOKBACK_MS = 24 * 3600_000;     // unanswered attempts can be spread over the day
-const LOOKAHEAD_MS = 15 * 60_000;                  // a call may be logged just after the save
-const PENDING_GRACE_MS = 30 * 60_000;              // before this, "no call" may just be a late record
+export const LOOKAHEAD_MS = 15 * 60_000;                  // a call may be logged just after the save
+export const PENDING_GRACE_MS = 30 * 60_000;              // before this, "no call" may just be a late record
 const RECHECK_WINDOW_HOURS = 36;
 const KW_OFFSET_MS = 3 * 3600_000;
 // Swipr reads XonTel every 5 minutes. A copy older than this is reported as a warning.
-const STALE_COPY_MS = 45 * 60_000;
+export const STALE_COPY_MS = 45 * 60_000;
 
 export const xontelConfigured = () => !!(CALLS_URL && CALLS_KEY);
 
@@ -65,7 +65,7 @@ export function toCall(r: any): CdrCall | null {
 }
 
 /** The calls to / from these customer numbers in a time window, plus Swipr's XonTel users and how fresh its copy is. */
-async function askSwipr(fromTs: number, toTs: number, phones: string[], timeoutMs = 60_000): Promise<SwiprAnswer> {
+export async function askSwipr(fromTs: number, toTs: number, phones: string[], timeoutMs = 60_000): Promise<SwiprAnswer> {
   if (!xontelConfigured()) throw new Error("Swipr is not connected — set SWIPR_CALLS_URL and SWIPR_CALLS_KEY");
   let res: Response;
   try {
@@ -216,7 +216,7 @@ export function planLinks(links: Link[], agents: XontelAgent[]): LinkPlan {
 }
 
 /** Applies the plan (moves follow their name; stale ids are parked as "old:<id>") and returns the trusted links. */
-async function syncLinks(agents: XontelAgent[]): Promise<{ valid: Map<string, string>; moved: number; stale: Link[] }> {
+export async function syncLinks(agents: XontelAgent[]): Promise<{ valid: Map<string, string>; moved: number; stale: Link[] }> {
   const links = await DB.getXontelLinks();
   // An empty list means Swipr has no recent calls at all — nothing can be concluded about any link.
   if (!agents.length) return { valid: new Map(), moved: 0, stale: [] };
@@ -230,7 +230,7 @@ async function syncLinks(agents: XontelAgent[]): Promise<{ valid: Map<string, st
   return { valid: plan.valid, moved: plan.moves.length, stale: plan.stale };
 }
 
-const kwTime = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 16).replace("T", " ");
+export const kwTime = (ms: number) => new Date(ms + KW_OFFSET_MS).toISOString().slice(0, 16).replace("T", " ");
 
 // ---- Connection test ("Test XonTel") ------------------------------------------------
 // Asks Swipr the questions the job depends on and reports them. Changes nothing.

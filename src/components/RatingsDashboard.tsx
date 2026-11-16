@@ -1,3 +1,4 @@
+import CallVerification from "./CallVerification.tsx";
 import { useCallback, useEffect, useState } from "react";
 import { User } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
@@ -389,6 +390,8 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
               </div>
             )}
           </div>
+
+          <CallVerification source="ratings" from={range.from} to={range.to} what="call attempt" />
         </>
       )}
     </div>

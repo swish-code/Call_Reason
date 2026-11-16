@@ -12,6 +12,7 @@ import { registerNameRoutes } from "./server/nameRoutes.js";
 import { getRatingsDashboard } from "./server/ratingsDashboard.js";
 import { fetchCancelledOrders, fillRatingItems, itemsConfigured, itemsText } from "./server/orderItems.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
+import { runAttemptCallChecks, getAttemptVerification, attemptStatus, ATTEMPT_SOURCES, type AttemptSource } from "./server/attemptChecks.js";
 import { xontelConfigured, runSurveyCallChecks, checkStatus, isReachedClaim, MIN_TALK_SECONDS, fetchXontelAgents, suggestLinks, runProbe, probeStatus } from "./server/xontel.js";
 import { readReport, readDeductions, readTalabatFacts, plainCsv, gzip, gunzip, TalabatReportError } from "./server/talabat.js";
 import { readKeetaOrders, readKeetaRefunds, KeetaReportError } from "./server/keeta.js";
@@ -4264,6 +4265,28 @@ app.get("/api/surveys/call-verification/status", authenticateJWT, requireCallVer
   res.json({ ...checkStatus });
 });
 
+// ---- The same check for Ratings & Reviews call attempts and Shakir Campaign calls (server/attemptChecks.ts) ----
+const attemptSource = (v: any): AttemptSource | null => ((ATTEMPT_SOURCES as string[]).includes(String(v)) ? (v as AttemptSource) : null);
+app.get("/api/call-checks/:source", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
+  const source = attemptSource(req.params.source);
+  if (!source) return res.status(404).json({ error: "Unknown list." });
+  const fromISO = kwDayToUtc(qs(req.query.from), false), toISO = kwDayToUtc(qs(req.query.to) || qs(req.query.from), true);
+  if (!fromISO || !toISO) return res.status(400).json({ error: "Pick a period first." });
+  res.json(await getAttemptVerification(source, fromISO, toISO, qs(req.query.campaign) || null));
+}));
+app.post("/api/call-checks/:source/run", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
+  const source = attemptSource(req.params.source);
+  if (!source) return res.status(404).json({ error: "Unknown list." });
+  if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet." });
+  const from = qs(req.body?.from), to = qs(req.body?.to);
+  const fromISO = kwDayToUtc(from, false), toISO = kwDayToUtc(to || from, true);
+  if (!fromISO || !toISO) return res.status(400).json({ error: "Pick a period first." });
+  if ((new Date(toISO).getTime() - new Date(fromISO).getTime()) > 8 * 86400_000) return res.status(400).json({ error: "Pick at most 7 days at a time." });
+  if (attemptStatus[source].running) return res.status(409).json({ error: "A check is already running — wait for it to finish." });
+  runAttemptCallChecks(source, { mode: "manual", fromISO, toISO }).catch(() => {});
+  res.json({ started: true });
+}));
+
 // Right after links change (a supervisor linking several employees in a row), check their surveys
 // once things settle instead of waiting for the next timer tick.
 let callCheckSoon: NodeJS.Timeout | null = null;
@@ -4276,7 +4299,12 @@ const scheduleCallCheck = () => {
 // record may have arrived late). Silent when XonTel isn't configured.
 const CALL_CHECK_EVERY_MIN = Number(process.env.SURVEY_CALL_CHECK_MINUTES ?? 10);
 if (CALL_CHECK_EVERY_MIN > 0) {
-  const tick = () => { if (xontelConfigured()) runSurveyCallChecks({ mode: "auto" }).then((r) => { if (r.error && r.error !== "a check is already running" && r.error !== "paused") console.warn("[call-check]", r.error); }).catch(() => {}); };
+  const tick = async () => {
+    if (!xontelConfigured()) return;
+    await runSurveyCallChecks({ mode: "auto" }).then((r) => { if (r.error && r.error !== "a check is already running" && r.error !== "paused") console.warn("[call-check]", r.error); }).catch(() => {});
+    // Then the other lists, one after the other (each is a single question to Swipr).
+    for (const src of ATTEMPT_SOURCES) await runAttemptCallChecks(src, { mode: "auto" }).then((r) => { if (r.error && r.error !== "a check is already running") console.warn(`[call-check] ${src}:`, r.error); }).catch(() => {});
+  };
   setTimeout(tick, 60_000).unref?.();
   setInterval(tick, CALL_CHECK_EVERY_MIN * 60_000).unref?.();
 }

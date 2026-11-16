@@ -1,3 +1,4 @@
+import CallVerification from "./CallVerification.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { apiFetch } from "../lib/api.ts";
@@ -216,6 +217,8 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
           <Nps rows={d.nps || []} grown={grown} periodText={periodText} />
 
           <AgentPerformance rows={d.performance || []} periodText={periodText} />
+
+          <CallVerification source="offers" campaignId={camp.id} from={range.from} to={range.to} what="campaign call" />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
             <Agents agents={d.agents} grown={grown} periodText={periodText} />

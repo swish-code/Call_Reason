@@ -706,6 +706,22 @@ export class DB {
       -- basis = 'agent' once a verdict was judged on the employee's own XonTel user. Verdicts without
       -- it came from the first version (customer number only, any agent) and are ignored and redone.
       ALTER TABLE survey_call_checks ADD COLUMN IF NOT EXISTS basis TEXT;
+      -- The same verdicts for one logged call of the other lists (server/attemptChecks.ts): source 'ratings' =
+      -- rating_call_attempts.id, source 'offers' = offer_events.id (kind 'call').
+      CREATE TABLE IF NOT EXISTS call_checks (
+        source TEXT NOT NULL,
+        ref_id TEXT NOT NULL,
+        checked_at TIMESTAMPTZ DEFAULT now(),
+        result TEXT NOT NULL,
+        talk_seconds INTEGER DEFAULT 0,
+        calls_found INTEGER DEFAULT 0,
+        call_id TEXT,
+        call_time TIMESTAMPTZ,
+        call_direction TEXT,
+        xontel_agent TEXT,
+        agent_relation TEXT,
+        PRIMARY KEY (source, ref_id)
+      );
       -- Which XonTel agent (user) is each employee? One XonTel agent belongs to one employee.
       CREATE TABLE IF NOT EXISTS xontel_agent_links (
         user_id TEXT PRIMARY KEY,
