@@ -459,7 +459,7 @@ export default function SurveysDashboard({ currentUser }: Props) {
           {!cv ? <div className="text-xs text-[var(--muted)]">Call verification is not available.</div> : !cv.configured ? (
             <div className="p-4 bg-amber-950/20 border border-amber-500/20 rounded-2xl text-xs text-amber-300 space-y-1">
               <p className="font-bold">XonTel is not connected to this system yet.</p>
-              <p className="text-amber-300/80">An admin has to set <span className="font-mono">XONTEL_TOKEN</span> and <span className="font-mono">XONTEL_DISCOVER_URL</span> on the server (the same values the QA / Swipr systems use). Until then no calls are checked and nothing is flagged.</p>
+              <p className="text-amber-300/80">The XonTel calls are read from Swipr. An admin has to set <span className="font-mono">SWIPR_CALLS_URL</span> and <span className="font-mono">SWIPR_CALLS_KEY</span> on this server (and <span className="font-mono">CALLS_API_KEY</span> on Swipr). Until then no calls are checked and nothing is flagged.</p>
             </div>
           ) : (
             <>

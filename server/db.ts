@@ -2660,6 +2660,24 @@ export class DB {
         WHERE COALESCE(r.agent_id, at.agent_id, a.assigned_agent_id) = $1)`, [userId]);
   }
 
+  /**
+   * The XonTel server was replaced and renumbered its users: links that follow their XonTel name to a
+   * new id (moves), and links whose XonTel user is gone, parked under "old:<id>" so the freed number
+   * cannot be mistaken for whoever holds it now. Verdicts are kept — they were judged on the old server.
+   */
+  static async moveXontelLinks(moves: { user_id: string; agent_id: string; agent_name: string }[], parked: { user_id: string; agent_id: string }[]): Promise<void> {
+    if (!moves.length && !parked.length) return;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      // xontel_agent_id is UNIQUE and a new id may equal another link's old one: step aside first.
+      for (const m of [...moves, ...parked]) await client.query(`UPDATE xontel_agent_links SET xontel_agent_id = 'moving:' || user_id WHERE user_id = $1`, [m.user_id]);
+      for (const p of parked) await client.query(`UPDATE xontel_agent_links SET xontel_agent_id = $2 WHERE user_id = $1`, [p.user_id, p.agent_id]);
+      for (const m of moves) await client.query(`UPDATE xontel_agent_links SET xontel_agent_id = $2, xontel_agent_name = $3 WHERE user_id = $1`, [m.user_id, m.agent_id, m.agent_name]);
+      await client.query("COMMIT");
+    } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+  }
+
   static async removeXontelLink(userId: string): Promise<void> {
     await pool.query(`DELETE FROM xontel_agent_links WHERE user_id = $1`, [userId]);
     await pool.query(`DELETE FROM survey_call_checks WHERE assignment_id IN (

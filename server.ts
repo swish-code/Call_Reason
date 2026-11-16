@@ -4185,7 +4185,7 @@ app.get("/api/surveys/call-verification", authenticateJWT, requireCallVerificati
   });
 }));
 
-// "Test XonTel": times a few requests and shows what an outgoing call record looks like (numbers masked).
+// "Test XonTel": asks Swipr (where the XonTel calls are read from) and reports what it has. Changes nothing.
 app.post("/api/surveys/call-verification/probe", authenticateJWT, requireCallVerification, asyncHandler(async (_req: any, res) => {
   if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet." });
   runProbe().catch(() => {});          // runs in the background — can take a few minutes if XonTel is slow
@@ -4203,7 +4203,7 @@ const requireCallLinking = (req: any, res: any, next: any) => {
 app.get("/api/surveys/call-verification/links", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
   if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet." });
   let agents: { id: string; name: string }[];
-  try { agents = await fetchXontelAgents(); } catch (e: any) { return res.status(502).json({ error: `XonTel: ${e?.message || e}` }); }
+  try { agents = await fetchXontelAgents(); } catch (e: any) { return res.status(502).json({ error: `${e?.message || e}` }); }
   const [users, links] = await Promise.all([DB.getLinkableUsers(), DB.getXontelLinks()]);
   const linkOf = new Map(links.map((l) => [l.user_id, l]));
   const taken = new Set(links.map((l) => l.xontel_agent_id));
@@ -4230,7 +4230,7 @@ app.put("/api/surveys/call-verification/links/:userId", authenticateJWT, require
   }
   // The name is taken from XonTel itself, never from the browser.
   let agents: { id: string; name: string }[];
-  try { agents = await fetchXontelAgents(); } catch (e: any) { return res.status(502).json({ error: `XonTel: ${e?.message || e}` }); }
+  try { agents = await fetchXontelAgents(); } catch (e: any) { return res.status(502).json({ error: `${e?.message || e}` }); }
   const agent = agents.find((a) => a.id === agentId);
   if (!agent) return res.status(400).json({ error: "That XonTel user was not found." });
   try { await DB.setXontelLink(userId, agent.id, agent.name, req.user.id); }
@@ -4248,7 +4248,7 @@ app.put("/api/surveys/call-verification/links/:userId", authenticateJWT, require
 
 // "Verify now": look the calls up for a period right away (re-checks everything not yet confirmed).
 app.post("/api/surveys/call-verification/run", authenticateJWT, requireCallVerification, asyncHandler(async (req: any, res) => {
-  if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet (XONTEL_TOKEN and XONTEL_DISCOVER_URL are not set)." });
+  if (!xontelConfigured()) return res.status(400).json({ error: "XonTel is not connected to this system yet (SWIPR_CALLS_URL and SWIPR_CALLS_KEY are not set)." });
   const from = qs(req.body?.from), to = qs(req.body?.to);
   const fromISO = kwDayToUtc(from, false), toISO = kwDayToUtc(to || from, true);
   if (!fromISO || !toISO) return res.status(400).json({ error: "Pick a period first." });
