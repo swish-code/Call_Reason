@@ -275,6 +275,9 @@ export function registerOfferRoutes(app: any, d: Deps) {
   }));
 
   // ---- the customers list (leaders) ----
+  // The list and its Excel export hold every matching customer. The limit was 5,000 until the campaign passed it
+  // (2026-11-16): the oldest uploads, and their orders, silently fell out of the export.
+  const CUSTOMERS_CAP = 100000;
   app.get(`${B}/:id/customers`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {
     const camp = await getCampaign(req.params.id);
     if (!camp) return res.status(404).json({ error: "Campaign not found." });
@@ -303,11 +306,12 @@ export function registerOfferRoutes(app: any, d: Deps) {
              ${WORK_SQL} AS work
         FROM offer_customers oc LEFT JOIN users u ON u.id = oc.assigned_agent_id
        WHERE ${where.join(" AND ")}
-       ORDER BY oc.uploaded_at DESC, oc.id LIMIT 5000`, vals);
+       ORDER BY oc.uploaded_at DESC, oc.id LIMIT ${CUSTOMERS_CAP + 1}`, vals);
     const now = Date.now();
-    let out = rows.map((r: any) => ({ ...r, eligibility: eligibility(r, camp.steps, r.orders.length, now) }));
+    const capped = rows.length > CUSTOMERS_CAP;
+    let out = rows.slice(0, CUSTOMERS_CAP).map((r: any) => ({ ...r, eligibility: eligibility(r, camp.steps, r.orders.length, now) }));
     if (q("offer")) out = out.filter((r: any) => r.eligibility.state === q("offer"));
-    res.json({ rows: out, cap: 5000 });
+    res.json({ rows: out, cap: CUSTOMERS_CAP, capped });
   }));
 
   app.get(`${B}/:id/agents`, authenticateJWT, MANAGE, asyncHandler(async (req, res) => {

@@ -220,6 +220,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
   // The table shows one page at a time (the tiles above and the Excel export still cover every matching customer).
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(1);
+  const [capped, setCapped] = useState(false);   // more customers match than one list can hold — the totals and the export would be short
   const [agents, setAgents] = useState<{ id: string; full_name: string; open: number; untouched?: number }[]>([]);
   const [giveMode, setGiveMode] = useState<"give" | "take">("give");
   const [loading, setLoading] = useState(true);
@@ -238,7 +239,9 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
       const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v) as [string, string][]);
       const [r, a] = await Promise.all([apiFetch(`/api/offer-campaigns/${camp.id}/customers?${qs}`), apiFetch(`/api/offer-campaigns/${camp.id}/agents`)]);
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Could not load the customers.");
-      setRows((await r.json()).rows);
+      const body = await r.json();
+      setRows(body.rows);
+      setCapped(!!body.capped);
       setPage((pg) => (filterKey.current === JSON.stringify(f) ? pg : 1));   // a refresh keeps the page, a new filter starts at the first
       filterKey.current = JSON.stringify(f);
       if (a.ok) setAgents(await a.json());
@@ -386,6 +389,7 @@ function Customers({ camp, tick, onOpen, role }: { camp: Campaign; tick: number;
       </div>
 
       <Err text={error} /><Ok text={msg} />
+      {capped && <div className="p-3 rounded-xl text-xs border border-amber-500/40 bg-amber-500/10 text-amber-600 font-bold">More customers match than this list can hold, so the totals above and the Excel file are NOT complete. Narrow the filter (dates, agent or status) to get everything.</div>}
       <div className={box + " overflow-hidden"}>
         <div className="px-4 py-3 text-xs text-[var(--muted)] border-b border-[var(--border)]">{loading ? "Loading…" : `${rows.length.toLocaleString()} customer(s)${rows.length > PAGE_SIZE ? ` — ${PAGE_SIZE} per page` : ""}`}</div>
         {!loading && !rows.length ? <div className="p-8 text-center text-xs text-[var(--muted)]">No customers match.</div> : (
