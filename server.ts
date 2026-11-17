@@ -2309,7 +2309,8 @@ app.post("/api/ratings/upload", authenticateJWT, requireUpload, asyncHandler(asy
       const names = resolveNames(cat, brandName, pick(r, "Branch"));
       const rowFields = {
         platform_id, order_id: orderId, rating: ratingVal, review_text: review_text || undefined, customer_phone: phone || undefined,
-        order_date: normaliseExcelDate(dash(pick(r, "Date", "Order Rating Date"))) || undefined,
+        // The day of the review when the file has one (Keeta: "Review date", Talabat: "Order Rating Date"), else the row's date.
+        order_date: normaliseExcelDate(dash(pick(r, "Review date")) || dash(pick(r, "Order Rating Date")) || dash(pick(r, "Date"))) || undefined,
         customer_name: pick(r, "Customer Name") || enrichedName || undefined,
         filled_by: pick(r, "Served By", "Filled By") || undefined,
         following_date: normaliseExcelDate(pick(r, "Following Date")) || undefined,

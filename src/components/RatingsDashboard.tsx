@@ -90,7 +90,7 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
   };
   const periodText = PRESETS.find(([k]) => k === range.preset)?.[1] || (range.from === range.to ? dayText(range.from) : `${dayText(range.from)} – ${dayText(range.to)}`);
   const p = d?.period;
-  const S_DAYS: Series[] = [{ key: "uploaded", label: "Uploaded", color: CC.blue }, { key: "tasks", label: "Tasks (need a call)", color: CC.orange }, { key: "closed", label: "Closed by agents", color: CC.aqua }];
+  const S_DAYS: Series[] = [{ key: "uploaded", label: "Reviews", color: CC.blue }, { key: "tasks", label: "Tasks (need a call)", color: CC.orange }, { key: "closed", label: "Closed by agents", color: CC.aqua }];
   const cats = (d?.days || []).map((x) => ({ key: x.day, label: String(Number(x.day.slice(8, 10))) }));
   const dayMap = new Map((d?.days || []).map((x) => [x.day, x]));
   const results = (d?.results || []).filter((r) => !statusF || (statusF === "open" ? ["pending", "in_progress"].includes(r.action_status) : statusF.startsWith("reach:") ? (statusF === "reach:unreached" ? r.reach !== "reached" : r.reach === statusF.slice(6)) : r.action_status === statusF));
@@ -152,9 +152,9 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
           )}
 
           {/* the period */}
-          <Section icon={Star} tone="text-amber-500" title={`Reviews — ${periodText}`} sub={`Uploaded in the period (by upload day)${platformName ? `, ${platformName} only` : ""}${agentName ? `, assigned to ${agentName}` : ""}. Closed = finished by a person in the period (by closing day).`} />
+          <Section icon={Star} tone="text-amber-500" title={`Reviews — ${periodText}`} sub={`Reviews dated in the period (by the review's own date, not the upload day)${platformName ? `, ${platformName} only` : ""}${agentName ? `, assigned to ${agentName}` : ""}. Closed = finished by a person in the period (by closing day).`} />
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-            <Tile label="Uploaded" value={p.uploaded} icon={Star} tone="text-[var(--heading)]" hint={`avg ${p.avg_rating.toFixed(2)} ★`} />
+            <Tile label="Reviews" value={p.uploaded} icon={Star} tone="text-[var(--heading)]" hint={`avg ${p.avg_rating.toFixed(2)} ★`} />
             <Tile label="Tasks" value={p.tasks} icon={Flag} tone="text-orange-500" hint={p.uploaded ? `${pct(p.tasks, p.uploaded)}% needed a call` : undefined} />
             <Tile label="Closed by the upload" value={p.auto_closed} icon={CheckCircle2} tone="text-zinc-500" hint="4–5 ★, no comment" />
             <Tile label="Closed by agents" value={p.closed} icon={CheckCircle2} tone="text-emerald-500" hint={`avg ${hours(p.avg_hours)} after upload`} />
@@ -179,7 +179,7 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
             </div>
             <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
               <h3 className="text-sm font-bold text-[var(--heading)] mb-1 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Reached customers</h3>
-              <p className="text-[11px] text-[var(--muted)] mb-3">Of the {p.tasks.toLocaleString()} task(s) uploaded in the period: the customer answered a call, or a complaint was recorded.</p>
+              <p className="text-[11px] text-[var(--muted)] mb-3">Of the {p.tasks.toLocaleString()} task(s) dated in the period: the customer answered a call, or a complaint was recorded.</p>
               <div className="text-3xl font-extrabold text-emerald-500 tabular-nums">{pct(reached, p.tasks)}%</div>
               <div className="text-xs text-[var(--muted)] mt-1"><b className="text-[var(--heading)]">{reached.toLocaleString()}</b> reached · <b className="text-[var(--heading)]">{unreachedTotal.toLocaleString()}</b> not reached{p.tasks_with_phone ? ` · ${pct(reached, p.tasks_with_phone)}% of the tasks that have a phone` : ""}</div>
               <div className="h-2.5 bg-[var(--surface-2)] rounded-full overflow-hidden mt-3"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct(reached, p.tasks)}%` }} /></div>
@@ -228,7 +228,7 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
           {/* agent performance — the same table as the Surveys and Shakir dashboards */}
           <div className="bg-[var(--surface)] p-5 border border-[var(--border)] shadow-lg rounded-2xl">
             <h3 className="text-sm font-bold text-[var(--heading)] mb-1 flex items-center gap-2"><Users className="w-4 h-4 text-violet-400" /> Agent Performance</h3>
-            <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}{platformName ? ` · ${platformName}` : ""}. The tasks uploaded in the period, by the agent who holds them, and where they stand now. Completed + Pending = Assigned. Reached = the customer answered or a complaint was recorded.</p>
+            <p className="text-[11px] text-[var(--muted)] mb-4">{periodText}{platformName ? ` · ${platformName}` : ""}. The tasks dated in the period, by the agent who holds them, and where they stand now. Completed + Pending = Assigned. Reached = the customer answered or a complaint was recorded.</p>
             {!d.performance.length ? <div className="text-xs text-[var(--muted)] py-6 text-center">No tasks in this period.</div> : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs min-w-[720px]">
@@ -360,14 +360,14 @@ export default function RatingsDashboard({ currentUser: _u }: Props) {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="text-[10px] text-[var(--muted)] font-bold bg-[var(--bg)]">
-                    <th className="text-left p-3">Uploaded</th><th className="text-left p-3">Brand · branch</th><th className="text-left p-3">Source</th><th className="text-left p-3">★</th><th className="text-left p-3">Comment</th><th className="text-left p-3">Agent</th><th className="text-left p-3">Status</th><th className="text-left p-3">Closed</th>
+                    <th className="text-left p-3">Review date</th><th className="text-left p-3">Brand · branch</th><th className="text-left p-3">Source</th><th className="text-left p-3">★</th><th className="text-left p-3">Comment</th><th className="text-left p-3">Agent</th><th className="text-left p-3">Status</th><th className="text-left p-3">Closed</th>
                   </tr></thead>
                   <tbody>
                     {results.map((r) => {
                       const sv = statusView(r.action_status), isOpen = open === r.id;
                       return [
                         <tr key={r.id} onClick={() => setOpen(isOpen ? null : r.id)} className="border-t border-[var(--border)]/40 cursor-pointer hover:bg-[var(--surface-2)]/40 align-top">
-                          <td className="p-3 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap">{fmtDT(r.uploaded_at)}</td>
+                          <td className="p-3 font-mono text-[11px] text-[var(--muted)] whitespace-nowrap"><span title={`Uploaded ${fmtDT(r.uploaded_at)}`}>{r.review_day || fmtDT(r.uploaded_at)}</span></td>
                           <td className="p-3"><div className="font-bold text-[var(--heading)]">{r.brand_name || "—"}</div><div className="text-[10px] text-[var(--muted)]">{r.branch || ""}</div></td>
                           <td className="p-3 text-[var(--muted)]">{r.platform_name || "—"}<div className="text-[10px] font-mono">{r.order_id}</div></td>
                           <td className={`p-3 font-bold tabular-nums ${starColor(r.rating)}`}>{r.rating}</td>
