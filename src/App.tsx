@@ -432,7 +432,7 @@ export default function App() {
       { page: "reports", label: "Reports & Export", icon: FileText, visible: notAgent },
       { page: "performance", label: "Team Performance", icon: BarChart2, visible: notAgent },
       { page: "teamleaderkpi", label: "Team Leader KPI", icon: Crown, visible: notAgent },
-      { page: "talabat", label: "Delivery Platforms", icon: ShoppingBag, visible: isAdmin },
+      { page: "talabat", label: "Delivery Platforms", icon: ShoppingBag, visible: isAdmin || isSupervisor },
     ] },
     { type: "group", key: "feedback", label: "Feedback", icon: Star, items: [
       { page: "reviews", label: "Ratings & Reviews", icon: Star, visible: !isOpsRole },
@@ -734,7 +734,7 @@ export default function App() {
           {activePage === "teamleaderkpi" && currentUser.role !== "agent" && currentUser.role !== "marketing" && !isOpsRole && (
             <TeamLeaderKpi currentUser={currentUser} onViewTasks={(id) => { setTrackerFocusUserId(id); setActivePage("tracker"); }} />
           )}
-          {activePage === "talabat" && isAdmin && (
+          {activePage === "talabat" && (isAdmin || isSupervisor) && (
             <DeliveryPlatforms currentUser={currentUser} />
           )}
           {activePage === "reviews" && !isOpsRole && (

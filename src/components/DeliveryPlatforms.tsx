@@ -4,6 +4,7 @@ import NetSales from "./NetSales.tsx";
 import TalabatReports, { STYLE } from "./TalabatReports.tsx";
 import KeetaReports from "./KeetaReports.tsx";
 import FoodicsCompare from "./FoodicsCompare.tsx";
+import TalabatReviews from "./TalabatReviews.tsx";
 import { BarChart3, GitCompareArrows, ShoppingBag, Store } from "lucide-react";
 
 // One admin-only page for the delivery platforms: the company-wide Net sales dashboard (Talabat + Keeta) and each
@@ -17,6 +18,20 @@ const VIEWS: { key: View; label: string; icon: any; color: string }[] = [
 ];
 
 export default function DeliveryPlatforms({ currentUser }: { currentUser: User }) {
+  // Supervisors get the Talabat Ratings & Reviews only (the rest of this page is for admins).
+  if (currentUser.role === "supervisor") {
+    const yesterday = new Date(Date.now() + 3 * 3600_000 - 86400_000).toISOString().slice(0, 10); // Kuwait time
+    return (
+      <div className="tlb space-y-5 text-[var(--text)]">
+        <style>{STYLE}</style>
+        <div className="bg-gradient-to-r from-[var(--surface)] via-[var(--surface-2)] to-[var(--bg)] border border-[var(--border)] p-5 rounded-3xl shadow-xl">
+          <span className="text-xs font-bold px-3 py-1 rounded-full border" style={{ color: "var(--t-orange)", borderColor: "color-mix(in srgb, var(--t-orange) 40%, transparent)", background: "color-mix(in srgb, var(--t-orange) 12%, transparent)" }}>Delivery platforms · Talabat</span>
+          <h1 className="text-2xl font-extrabold text-[var(--heading)] tracking-tight mt-2">Ratings &amp; Reviews</h1>
+        </div>
+        <TalabatReviews initialDay={yesterday} />
+      </div>
+    );
+  }
   const [view, setView] = useState<View>(() => { try { const v = localStorage.getItem("delivery-platforms-view"); return v === "talabat" || v === "keeta" || v === "foodics" ? v : "all"; } catch { return "all"; } });
   const pick = (v: View) => { setView(v); try { localStorage.setItem("delivery-platforms-view", v); } catch { /* storage blocked */ } };
   return (

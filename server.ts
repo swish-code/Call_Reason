@@ -3786,7 +3786,7 @@ app.get("/api/talabat-reports", authenticateJWT, requireAdmin, asyncHandler(asyn
 }));
 
 // Ratings and reviews (Talabat's own report): the reviews of a period.
-app.get("/api/talabat-reports/reviews", authenticateJWT, requireAdmin, asyncHandler(async (req: any, res) => {
+app.get("/api/talabat-reports/reviews", authenticateJWT, requireAdminOrSupervisor, asyncHandler(async (req: any, res) => {
   const from = String(req.query.from || ""), to = String(req.query.to || req.query.from || "");
   if (!TALABAT_DAY.test(from) || !TALABAT_DAY.test(to) || to < from) return res.status(400).json({ error: "from and to must be YYYY-MM-DD." });
   if ((Date.parse(to) - Date.parse(from)) / 86400_000 > 92) return res.status(400).json({ error: "Pick at most 3 months at a time." });
