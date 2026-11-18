@@ -2363,7 +2363,7 @@ export class DB {
     template: any; questions: any[];
     answers: { response_id: string; customer_phone: string; agent_name: string | null;
       answered_at: string; brand_name: string | null; segment: string | null;
-      question_id: string; answer_value: string | null }[];
+      question_id: string; answer_value: string | null; [customerField: string]: any }[];
   }> {
     const template = await DB.getSurveyTemplateById(templateId);
     if (!template) throw new Error("Template not found.");
@@ -2371,6 +2371,8 @@ export class DB {
     const { rows: answers } = await pool.query(`
       SELECT r.id AS response_id, asg.customer_phone, u.full_name AS agent_name,
         r.answered_at, b.brand_name, asg.segment,
+        asg.customer_name, asg.order_id, asg.order_date, asg.branch, asg.platform_label, asg.item_name, asg.item_kind,
+        asg.order_status, asg.action_type, asg.attempt_count,
         a.question_id, a.answer_value
       FROM survey_answers a
       JOIN survey_questions q ON q.id = a.question_id

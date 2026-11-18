@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { User, SurveyTemplate, SurveyQuestion, AnswerType, Brand, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
+import { downloadXlsx } from "../lib/xlsx.ts";
 import {
   ClipboardList, RefreshCw, Plus, X, AlertCircle, Trash2, Download, Lock, Copy,
 } from "lucide-react";
@@ -50,46 +51,26 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
     try {
       const res = await apiFetch(`/api/survey-templates/${t.id}/export`);
       if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error || "Export failed."); return; }
-      const data: {
-        questions: { id: string; text: string; q_order: number }[];
-        answers: { response_id: string; customer_phone: string; agent_name: string | null;
-          answered_at: string; brand_name: string | null; segment: string | null;
-          question_id: string; answer_value: string | null }[];
-      } = await res.json();
+      const data: { questions: { id: string; text: string; q_order: number }[]; answers: any[] } = await res.json();
 
+      // One row per customer: their own details, then one column per question with what they answered.
       const questions = [...data.questions].sort((a, b) => a.q_order - b.q_order);
-      const byResponse = new Map<string, {
-        customer_phone: string; agent_name: string | null; answered_at: string;
-        brand_name: string | null; segment: string | null; answers: Record<string, string>;
-      }>();
+      const byResponse = new Map<string, { c: any; answers: Record<string, string> }>();
       for (const a of data.answers) {
         let row = byResponse.get(a.response_id);
-        if (!row) {
-          row = { customer_phone: a.customer_phone, agent_name: a.agent_name, answered_at: a.answered_at, brand_name: a.brand_name, segment: a.segment, answers: {} };
-          byResponse.set(a.response_id, row);
-        }
+        if (!row) { row = { c: a, answers: {} }; byResponse.set(a.response_id, row); }
         row.answers[a.question_id] = a.answer_value || "";
-      }
-
-      const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-      const header = ["Phone", "Brand", "Segment", "Agent", "Completed At", ...questions.map(q => q.text)];
-      const lines = [header.map(esc).join(",")];
-      for (const row of byResponse.values()) {
-        const cells = [
-          row.customer_phone, row.brand_name || "", row.segment || "", row.agent_name || "",
-          fmtDate(row.answered_at), ...questions.map(q => row.answers[q.id] ?? ""),
-        ];
-        lines.push(cells.map(esc).join(","));
       }
       if (byResponse.size === 0) { setError("No completed responses to export yet."); return; }
 
-      const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${t.name.replace(/[^a-z0-9]+/gi, "-")}-responses-${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const header = ["Customer name", "Phone", "Order ID", "Order date", "Brand", "Branch", "Platform", "Item", "Item type", "Order status",
+        "Segment", "Agent", "Completed at", "Attempts", "Complaint", ...questions.map((q, i) => `Q${i + 1}. ${q.text}`)];
+      const rows = [...byResponse.values()].map(({ c, answers }) => [
+        c.customer_name, c.customer_phone, c.order_id, c.order_date, c.brand_name, c.branch, c.platform_label, c.item_name, c.item_kind, c.order_status,
+        c.segment, c.agent_name, fmtDate(c.answered_at), c.attempt_count ?? "", c.action_type === "complaint" ? "Yes" : "",
+        ...questions.map((q) => answers[q.id] ?? ""),
+      ]);
+      await downloadXlsx(header, rows, `${t.name.replace(/[^a-z0-9؀-ۿ]+/gi, "-")}-responses-${new Date().toISOString().slice(0, 10)}.xlsx`, "Responses");
     } catch (e: any) {
       setError(e.message || "Export error.");
     } finally {
@@ -342,10 +323,10 @@ export default function SurveyTemplates({ currentUser }: SurveyTemplatesProps) {
                         <button
                           onClick={(e) => { e.stopPropagation(); exportTemplate(t); }}
                           disabled={exportingId === t.id}
-                          title="Export this survey's questions and answers to CSV"
+                          title="Excel: every customer's details and what they answered to each question"
                           className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 text-emerald-400 border border-emerald-500/20 rounded-lg text-[10px] font-bold inline-flex items-center gap-1.5 transition active:scale-95"
                         >
-                          <Download className="w-3.5 h-3.5" /> {exportingId === t.id ? 'Exporting…' : 'Export'}
+                          <Download className="w-3.5 h-3.5" /> {exportingId === t.id ? 'Exporting…' : 'Export Excel'}
                         </button>
                       </div>
                     </td>
