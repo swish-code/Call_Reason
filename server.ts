@@ -3136,7 +3136,23 @@ const resolveBrand = (label: string, brandMap: Map<string, string>): string | nu
   const full = brandMap.get(label.toLowerCase().trim());
   if (full) return full;
   const part = label.split(/[（(\/|\-]/)[0].trim();
-  return brandMap.get(part.toLowerCase()) || null;
+  const byPart = brandMap.get(part.toLowerCase());
+  if (byPart) return byPart;
+  // A one-letter typo in the brand ("Shawarma Shaki" for "Shawarma Shakir"): taken only when exactly one brand is that close.
+  const want = part.toLowerCase().replace(/\s+/g, " ");
+  if (want.length < 8) return null;
+  const near = [...brandMap].filter(([name]) => oneLetterApart(want, name.replace(/\s+/g, " ")));
+  return near.length === 1 ? near[0][1] : null;
+};
+
+// True when a and b differ by at most one inserted, missing or changed letter.
+const oneLetterApart = (a: string, b: string): boolean => {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i);
 };
 
 // Heuristic: a record is "answered" if it carries a real rate / feedback / comment
