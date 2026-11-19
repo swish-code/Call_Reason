@@ -375,6 +375,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   // untouched reviews back to the pool.
   const [countMode, setCountMode] = useState<"give" | "take">("give");
   const [countAgent, setCountAgent] = useState("");
+  const [takeStarted, setTakeStarted] = useState(false);   // Take back: include reviews the agent already started
   const [countN, setCountN] = useState(20);
   const [countBusy, setCountBusy] = useState(false);
   const [countMsg, setCountMsg] = useState("");
@@ -394,7 +395,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     setCountBusy(true);
     try {
       const res = await apiFetch(countMode === "give" ? '/api/ratings/assign-count' : '/api/ratings/unassign-count', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent_id: countAgent, count: Number(countN), ...(countMode === "give" ? { from: from || undefined, to: to || undefined } : {}) }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent_id: countAgent, count: Number(countN), ...(countMode === "give" ? { from: from || undefined, to: to || undefined } : { include_started: takeStarted }) }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setCountErr(d.error || "Could not save."); return; }
@@ -725,14 +726,15 @@ export default function Reviews({ currentUser }: ReviewsProps) {
             <span className="text-[11px] text-[var(--muted)]">
               {countMode === "give"
                 ? <><b className="text-[var(--heading)]">{rLoad ? rLoad.unassigned : "…"}</b> open review(s) without an agent{from || to ? <> dated <b className="text-[var(--heading)]">{from || "…"}</b> to <b className="text-[var(--heading)]">{to || "…"}</b></> : <> (all dates — set From / To in the filter above to give from one period)</>}</>
-                : "Takes back only reviews the agent has not started (no call attempt), the newest first"}
+                : takeStarted ? "Takes back the reviews the agent has not started first, then the ones in progress (their call history stays; they return to pending)" : "Takes back only reviews the agent has not started (no call attempt), the newest first"}
             </span>
             <select value={countAgent} onChange={e => setCountAgent(e.target.value)} className={selCls + " min-w-[12rem]"}>
               <option value="">— agent —</option>
               {countMode === "give"
                 ? agents.map(a => <option key={a.id} value={a.id}>{a.full_name}{rLoad?.agents.find(x => x.id === a.id) ? ` — has ${rLoad.agents.find(x => x.id === a.id)!.open} open` : ""}</option>)
-                : (rLoad?.agents || []).filter(a => a.untouched > 0).map(a => <option key={a.id} value={a.id}>{a.full_name} — {a.untouched} not started</option>)}
+                : (rLoad?.agents || []).filter(a => (takeStarted ? a.open : a.untouched) > 0).map(a => <option key={a.id} value={a.id}>{a.full_name} — {takeStarted ? `${a.open} open (${a.untouched} not started)` : `${a.untouched} not started`}</option>)}
             </select>
+            {countMode === "take" && <label className="flex items-center gap-1.5 text-[11px] text-[var(--text)] cursor-pointer select-none"><input type="checkbox" checked={takeStarted} onChange={e => { setTakeStarted(e.target.checked); setCountAgent(""); }} className="w-4 h-4 rounded accent-violet-600" /> Include reviews already started</label>}
             <input type="number" min={1} max={5000} value={countN} onChange={e => setCountN(Number(e.target.value))} className={inputCls + " w-24"} />
             <button onClick={saveCount} disabled={countBusy || !countAgent || !(Number(countN) > 0)} className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50">{countBusy ? 'Saving…' : countMode === "give" ? 'Give' : 'Take back'}</button>
           </div>

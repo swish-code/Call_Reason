@@ -2606,8 +2606,9 @@ app.post("/api/ratings/assign-count", authenticateJWT, requireReviewAssigner, as
 app.post("/api/ratings/unassign-count", authenticateJWT, requireReviewAssigner, asyncHandler(async (req: any, res) => {
   const { agent_id, count } = req.body || {};
   if (!agent_id || !(Number(count) > 0)) return res.status(400).json({ error: "Pick the agent and how many reviews." });
-  const n = await DB.unassignRatingsByCount(String(agent_id), Math.min(5000, Number(count)));
-  req.auditExtra = { details: `took ${n} review(s) back from ${(await DB.getUserById(String(agent_id)))?.full_name || agent_id}` };
+  const includeStarted = req.body?.include_started === true;
+  const n = await DB.unassignRatingsByCount(String(agent_id), Math.min(5000, Number(count)), includeStarted);
+  req.auditExtra = { details: `took ${n} review(s)${includeStarted ? " (started ones included)" : ""} back from ${(await DB.getUserById(String(agent_id)))?.full_name || agent_id}` };
   res.json({ unassigned: n });
 }));
 

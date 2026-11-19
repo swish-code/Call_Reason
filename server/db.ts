@@ -2223,13 +2223,18 @@ export class DB {
   }
 
   // Take N of an agent's open reviews they have not started (pending, no call attempt) back to the pool, newest first.
-  static async unassignRatingsByCount(agentId: string, count: number): Promise<number> {
+  // includeStarted: also the ones the agent already worked on (in progress, or with call attempts). Their call history stays
+  // on the review; an "in progress" one goes back to pending so it can be given out again.
+  static async unassignRatingsByCount(agentId: string, count: number, includeStarted = false): Promise<number> {
     const { rows } = await pool.query(
-      `SELECT r.id FROM ratings r WHERE r.assigned_agent_id = $1 AND r.action_status = 'pending'
-         AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id)
-       ORDER BY r.uploaded_at DESC LIMIT $2`, [agentId, count]);
+      includeStarted
+        ? `SELECT r.id FROM ratings r WHERE r.assigned_agent_id = $1 AND r.requires_action = true AND r.action_status IN ('pending','in_progress')
+           ORDER BY (r.action_status = 'pending' AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id)) DESC, r.uploaded_at DESC LIMIT $2`
+        : `SELECT r.id FROM ratings r WHERE r.assigned_agent_id = $1 AND r.action_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM rating_call_attempts c WHERE c.rating_id = r.id)
+           ORDER BY r.uploaded_at DESC LIMIT $2`, [agentId, count]);
     if (!rows.length) return 0;
-    await pool.query("UPDATE ratings SET assigned_agent_id = NULL WHERE id = ANY($1)", [rows.map((r) => r.id)]);
+    await pool.query("UPDATE ratings SET assigned_agent_id = NULL, action_status = CASE WHEN action_status = 'in_progress' THEN 'pending' ELSE action_status END WHERE id = ANY($1)", [rows.map((r) => r.id)]);
     return rows.length;
   }
 
