@@ -3155,6 +3155,13 @@ const parseRate = (raw: string): number | null => {
   return n >= 1 && n <= 5 ? n : null;
 };
 
+// "18/11/2026" (day first, as the team's sheets write it) -> 2026-11-18; anything else goes through the usual date reader.
+const dmyToIso = (v: string): string => {
+  const m = String(v || "").trim().match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+  if (m && Number(m[1]) <= 31 && Number(m[2]) <= 12) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return normaliseExcelDate(v);
+};
+
 // Registry of uploadable survey-record types (extensible)
 const RECORD_TYPES: Record<string, {
   label: string; columns: string[];
@@ -3163,17 +3170,29 @@ const RECORD_TYPES: Record<string, {
   new_items: {
     label: "New Items Survey",
     columns: ["Order Date", "OrderSource", "NewItemName", "New Order ID", "MobileNo", "Customer suggestion for the item", "Comment", "Complaint if needed", "Served By", "Product Feedback", "Rate", "trials", "Segment"],
-    map: (row) => {
-      const rate = parseRate(pick(row, "Rate"));
+    // Two layouts are read: the New Items sheet above, and the team's numbers sheet (Survey Date, Order date, Brand, Branch,
+    // Platform, Order ID, Phone Number, Name, Products, Reachability, Overall Satisfaction, Taste & Flavor, Value for
+    // Money, Purchase Intent, Comment, Served By ...). A row of the second layout with NO result filled in yet is a number
+    // nobody has surveyed: it is not stored as a "No answer" (pending: true).
+    map: (row, ctx) => {
+      const SCORES = ["Overall Satisfaction {1-5}", "Taste & Flavor{ 1-5}", "Value for Money { 1-5}", "Purchase Intent { 1-5}"];
+      const hasReach = Object.keys(row).some((k) => k.toLowerCase().trim() === "reachability");
+      const reach = pick(row, "Reachability");
+      const scores = SCORES.map((n) => parseRate(pick(row, n)));
+      const rate = parseRate(pick(row, "Rate")) ?? scores[0];
       const pf = pick(row, "Product Feedback");
       const comment = pick(row, "Comment");
+      const brandLabel = pick(row, "Brand");
+      const reached = /reach/i.test(reach) && !/not\s*reach/i.test(reach);
+      const anyResult = !!(reach || comment || pf || rate != null || scores.some((x) => x != null));
       return {
         record_type: "new_items",
-        brand_id: null, brand_label: "",
-        platform_id: null, platform_label: pick(row, "OrderSource", "Order Source"),
+        brand_id: brandLabel ? resolveBrand(brandLabel, ctx.brandMap) : null, brand_label: brandLabel,
+        platform_id: null, platform_label: pick(row, "OrderSource", "Order Source", "Platform"),
         order_id: pick(row, "New Order ID", "Order ID"),
-        phone: normalisePhone(pick(row, "MobileNo", "Mobile No", "Phone")),
-        item_name: pick(row, "NewItemName", "New Item Name"),
+        phone: normalisePhone(pick(row, "MobileNo", "Mobile No", "Phone Number", "Phone")),
+        customer_name: pick(row, "Name", "Customer Name") || null,
+        item_name: pick(row, "NewItemName", "New Item Name", "Products"),
         rate, product_feedback: pf || null,
         served_by: pick(row, "Served By"),
         customer_suggestion: pick(row, "Customer suggestion for the item", "Customer suggestion"),
@@ -3181,8 +3200,14 @@ const RECORD_TYPES: Record<string, {
         complaint: pick(row, "Complaint if needed", "Complaint"),
         trials: pick(row, "trials", "Trials"),
         segment: pick(row, "Segment") || null,
-        record_date: normaliseExcelDate(pick(row, "Order Date")),
-        answered: isAnswered(rate, pf, comment),
+        record_date: dmyToIso(pick(row, "Order Date", "Order date", "Survey Date")),
+        answered: reached || isAnswered(rate, pf, comment) || scores.some((x) => x != null),
+        pending: hasReach && !anyResult,
+        extra: hasReach ? {
+          branch: pick(row, "Branch") || undefined, reachability: reach || undefined,
+          taste: scores[1] ?? undefined, value_for_money: scores[2] ?? undefined, purchase_intent: scores[3] ?? undefined,
+          reachability_date: pick(row, "Reachability Date") || undefined, survey_type: pick(row, "Survey Type") || undefined,
+        } : undefined,
       };
     },
   },
@@ -4421,7 +4446,7 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
     platMap: new Map(platforms.map((p) => [p.name.toLowerCase(), p.id])),
   };
 
-  const result = { total: rows.length, inserted: 0, answered: 0, no_answer: 0, invalid: 0, enriched: 0, errors: [] as { row: number; message: string }[] };
+  const result = { total: rows.length, inserted: 0, answered: 0, no_answer: 0, invalid: 0, not_surveyed: 0, enriched: 0, errors: [] as { row: number; message: string }[] };
   const records: any[] = [];
   const issues: UploadIssueRow[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -4433,6 +4458,8 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
         issues.push({ row: i + 2, reason: "empty_row", detail: "No order ID, phone, item, brand or rate in this row" });
         continue;
       }
+      // A numbers sheet row with no result yet: nobody has surveyed this customer, so it is not a "No answer" to record.
+      if (rec.pending) { result.not_surveyed++; continue; }
       rec.uploaded_by = req.user.id;
       records.push(rec);
       if (rec.answered) result.answered++; else result.no_answer++;
@@ -4464,8 +4491,8 @@ app.post("/api/survey-records/:type/upload", authenticateJWT, requireUpload, asy
     id: uploadBatchId, upload_type: "survey_records", sub_type: req.params.type,
     uploaded_by: req.user.id, uploaded_by_name: req.user.full_name,
     total_rows: result.total, inserted: result.inserted,
-    skipped: result.invalid, errors: result.errors.length,
-    skip_breakdown: { empty_row: result.invalid, error: result.errors.length },
+    skipped: result.invalid + result.not_surveyed, errors: result.errors.length,
+    skip_breakdown: { empty_row: result.invalid, error: result.errors.length, ...(result.not_surveyed ? { not_surveyed_yet: result.not_surveyed } : {}) },
     issue_rows: issues,
   });
   res.json(result);

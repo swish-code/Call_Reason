@@ -6,7 +6,7 @@ import { Upload, FileDown, X, AlertCircle } from "lucide-react";
 interface Props { currentUser: User; onUploaded?: () => void; }
 interface UploadResult {
   total: number; inserted: number; answered: number;
-  no_answer: number; invalid: number; enriched?: number; errors: { row: number; message: string }[];
+  no_answer: number; invalid: number; not_surveyed?: number; enriched?: number; errors: { row: number; message: string }[];
 }
 
 const inputCls = "px-3 py-2.5 bg-[var(--bg)] text-[var(--heading)] border border-[var(--border)] rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none";
@@ -145,6 +145,7 @@ export default function SurveyDataUploadButton({ currentUser, onUploaded }: Prop
                   <span className="text-[var(--muted)]">Inserted:</span><span className="font-bold text-emerald-400">{uploadResult.inserted}</span>
                   <span className="text-[var(--muted)]">Answered:</span><span className="font-bold">{uploadResult.answered}</span>
                   <span className="text-[var(--muted)]">No answer:</span><span className="font-bold">{uploadResult.no_answer}</span>
+                  {!!uploadResult.not_surveyed && <><span className="text-[var(--muted)]" title="Rows with no result filled in yet (no Reachability, rating or comment): nobody has surveyed them, so they are not recorded">Not surveyed yet (skipped):</span><span className="font-bold text-amber-400">{uploadResult.not_surveyed}</span></>}
                   <span className="text-[var(--muted)]">Invalid:</span><span className="font-bold">{uploadResult.invalid}</span>
                   <span className="text-[var(--muted)]" title="Rows with an order ID but no phone, filled from the Keeta/Snoonu order lookup">Phones filled:</span><span className="font-bold text-violet-400">{uploadResult.enriched ?? 0}</span>
                 </div>
