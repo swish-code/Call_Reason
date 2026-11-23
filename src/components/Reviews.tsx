@@ -9,7 +9,7 @@ import { phoneOnCopy } from "./phoneCopy.ts";
 import { useCancelledOrders, cancelledOf, CancelledOrderBadge, CancelledOrderBanner } from "./OrderStatus.tsx";
 import OtherContacts, { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
 import FeedbackDashboard from "./FeedbackDashboard.tsx";
-import {
+import { Pencil,
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download, Users, BarChart2, LayoutList,
 } from "lucide-react";
 
@@ -247,6 +247,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
         const data: Rating = await res.json();
         setDetail(data);
         setActionNote(data.action_note || "");
+        setEditStatus(""); setEditNote(data.action_note || ""); setEditMsg("");
         setCustName(data.customer_name || "");
         setCustPhone(data.customer_phone || "");
         setAttemptOutcome('no_answer');
@@ -260,11 +261,28 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   const openDetail = (r: Rating) => {
     setDetail(r);
     setActionNote(r.action_note || "");
+    setEditStatus(""); setEditNote(r.action_note || ""); setEditMsg("");
     setCustName(r.customer_name || "");
     setCustPhone(r.customer_phone || "");
     setAttemptOutcome('no_answer');
     setAttemptNote("");
     fetchDetail(r.id);
+  };
+
+  const canEditClosed = ['admin', 'owner', 'manager', 'supervisor', 'leader'].includes(currentUser.role);
+  const saveClosedEdit = async () => {
+    if (!detail) return;
+    setEditBusy(true); setEditMsg("");
+    try {
+      const res = await apiFetch(`/api/ratings/${detail.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action_status: editStatus || detail.action_status, action_note: editNote }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setEditMsg(d.error || "Could not save."); return; }
+      setEditMsg(editStatus === 'pending' ? "Reopened. It is open work again." : "Saved.");
+      fetchDetail(detail.id); fetchRatings();
+    } finally { setEditBusy(false); }
   };
 
   const saveContact = async () => {
@@ -375,7 +393,12 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   // untouched reviews back to the pool.
   const [countMode, setCountMode] = useState<"give" | "take">("give");
   const [countAgent, setCountAgent] = useState("");
-  const [takeStarted, setTakeStarted] = useState(false);   // Take back: include reviews the agent already started
+  const [takeStarted, setTakeStarted] = useState(false);
+  // Leaders correcting a closed review (the customer called back after it was closed)
+  const [editStatus, setEditStatus] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editMsg, setEditMsg] = useState("");   // Take back: include reviews the agent already started
   const [countN, setCountN] = useState(20);
   const [countBusy, setCountBusy] = useState(false);
   const [countMsg, setCountMsg] = useState("");
@@ -1327,6 +1350,27 @@ export default function Reviews({ currentUser }: ReviewsProps) {
                       </div>
                     )}
                   </div>
+
+                  {/* Leaders: change the result of a closed review */}
+                  {canEditClosed && ['resolved', 'no_action_needed', 'unreachable'].includes(detail.action_status) && (
+                    <div className="space-y-3 border-t border-[var(--border)] pt-4">
+                      <p className="text-xs font-extrabold text-[var(--heading)] flex items-center gap-2"><Pencil className="w-4 h-4 text-violet-400" /> Edit the result <span className="text-[10px] text-[var(--muted)] font-normal">(leaders only — the change is kept in the audit log)</span></p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <select value={editStatus || detail.action_status} onChange={e => setEditStatus(e.target.value)} className={selCls + " w-full"}>
+                          <option value="resolved">Complaint recorded</option>
+                          <option value="no_action_needed">No action required</option>
+                          <option value="unreachable">Unreachable</option>
+                          <option value="pending">Reopen — back to Pending</option>
+                        </select>
+                        <span className="text-[11px] text-[var(--muted)] self-center">Reopening keeps the call attempts and the agent.</span>
+                      </div>
+                      <textarea value={editNote} onChange={e => setEditNote(e.target.value)} rows={2} placeholder="Note (what the customer said, why it changed)…" className={`w-full resize-none ${inputCls}`} />
+                      <div className="flex items-center gap-3">
+                        <button onClick={saveClosedEdit} disabled={editBusy || ((!editStatus || editStatus === detail.action_status) && editNote === (detail.action_note || ""))} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition">{editBusy ? 'Saving…' : 'Save changes'}</button>
+                        {editMsg && <span className={`text-[11px] font-bold ${editMsg.startsWith('Saved') || editMsg.startsWith('Reopened') ? 'text-emerald-400' : 'text-rose-400'}`}>{editMsg}</span>}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Action section */}
                   {!isDone(detail.action_status) && currentUser.role !== 'marketing' && (

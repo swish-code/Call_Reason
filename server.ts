@@ -2687,6 +2687,13 @@ app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res
 
   const { action_status, action_note, assigned_agent_id, customer_phone, customer_name } = req.body;
   const fields: any = {};
+  // A closed review's result (or note) is changed later only by leaders: the customer may call back after it was closed.
+  const wasClosed = ["resolved", "no_action_needed", "unreachable"].includes(rating.action_status);
+  const changesResult = (action_status !== undefined && action_status !== rating.action_status) || (action_note !== undefined && (action_note || "") !== (rating.action_note || ""));
+  // (An "unreachable" review stays workable by its agent, as before: the agent can still record it as a complaint.)
+  const lockedForAgent = rating.action_status === "resolved" || rating.action_status === "no_action_needed";
+  if (lockedForAgent && changesResult && !["admin", "owner", "manager", "supervisor", "leader"].includes(req.user.role))
+    return res.status(403).json({ error: "Only leaders can edit a closed review." });
   if (action_note !== undefined) fields.action_note = action_note;
   if (customer_phone !== undefined) fields.customer_phone = normalisePhone(String(customer_phone)) || null;
   if (customer_name !== undefined) fields.customer_name = customer_name ? String(customer_name).trim() : null;
@@ -2703,7 +2710,10 @@ app.patch("/api/ratings/:id", authenticateJWT, asyncHandler(async (req: any, res
       fields.recorded_by = req.user.id;
       fields.recorded_at = new Date().toISOString();
     }
+    // Reopened by a leader: it is open work again (call attempts stay), so the closing stamps go.
+    if (wasClosed && !closingStatuses.includes(action_status)) { fields.resolved_at = null; fields.recorded_by = null; fields.recorded_at = null; }
   }
+  if (wasClosed && changesResult) req.auditExtra = { details: `edited the closed review ${rating.order_id}: ${rating.action_status} -> ${action_status ?? rating.action_status}${action_note !== undefined ? " (note changed)" : ""}` };
   const updated = await DB.updateRating(req.params.id, fields);
   if (fields.resolved_at) await logClosedReview(req.user, rating, action_status);
   res.json(updated);
@@ -4402,6 +4412,36 @@ app.patch("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (r
   if (reachability !== undefined && !["reached", "not_reached"].includes(reachability))
     return res.status(400).json({ error: "Invalid reachability." });
   res.json(await DB.updateSurveyAssignment(req.params.id, { status, action_type, reachability }));
+}));
+
+// A leader opens a FINISHED survey to correct its result, and saves the corrected result (see DB.editSurveyResult).
+const SURVEY_FINISHED = ["successful", "unreachable", "declined", "refused", "not_interested"];
+app.get("/api/surveys/assignments/:id/result", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Only leaders can edit a finished survey." });
+  const r = await DB.getSurveyResult(req.params.id);
+  if (!r) return res.status(404).json({ error: "Assignment not found." });
+  res.json(r);
+}));
+app.post("/api/surveys/assignments/:id/edit-result", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (!isLeaderLevel(req.user.role)) return res.status(403).json({ error: "Only leaders can edit a finished survey." });
+  const a = await DB.getSurveyAssignmentById(req.params.id);
+  if (!a) return res.status(404).json({ error: "Assignment not found." });
+  if (!SURVEY_FINISHED.includes(a.status)) return res.status(400).json({ error: "Only a finished survey can be edited here." });
+  const { answers, reachability, action_type, outcome } = req.body || {};
+  const notReached = reachability === "not_reached";
+  const declined = !notReached && (outcome === "refused" || outcome === "not_interested");
+  if (!notReached && !declined) {
+    if (!Array.isArray(answers) || !answers.some((x: any) => x.answered && String(x.answer_value ?? "").trim() !== ""))
+      return res.status(400).json({ error: "At least one question must be answered." });
+  }
+  const was = `${a.status}${a.action_type === "complaint" ? " + complaint" : ""}`;
+  const updated = await DB.editSurveyResult(req.params.id, {
+    answers: (notReached || declined) ? [] : answers.map((x: any) => ({ question_id: x.question_id, answer_value: x.answer_value, answered: !!x.answered })),
+    reachability: notReached ? "not_reached" : "reached", action_type: action_type === "complaint" ? "complaint" : "no_action",
+    outcome: declined ? outcome : "completed", segment: a.segment || undefined,
+  });
+  req.auditExtra = { details: `edited the finished survey of ${a.customer_phone} (${a.template_name || "survey"}): was ${was}, now ${updated?.status}${updated?.action_type === "complaint" ? " + complaint" : ""}` };
+  res.json(updated);
 }));
 
 // Campaign assignments + manual distribution

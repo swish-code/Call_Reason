@@ -3,7 +3,8 @@ import { User, SURVEY_SEGMENTS } from "../types.js";
 import { apiFetch } from "../lib/api.ts";
 import { useDoNotCall } from "../lib/dnc.ts";
 import DncBadge from "./DncBadge.tsx";
-import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw, UserX, Search, X } from "lucide-react";
+import SurveyResultEdit from "./SurveyResultEdit.tsx";
+import { LayoutList, RefreshCw, Users, CheckCircle2, PhoneOff, Clock, ListChecks, RotateCcw, UserX, Search, X, Pencil } from "lucide-react";
 
 interface AllSurveysProps { currentUser: User; }
 
@@ -178,6 +179,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
 
   // Team-leader edit of a survey's outcome (status / action), and the
   // "return to Pending" path for reworking a finished survey.
+  const [editId, setEditId] = useState<string | null>(null);   // a finished survey being corrected
   const patchRow = async (id: string, body: Record<string, string>, confirmMsg?: string) => {
     if (confirmMsg && !window.confirm(confirmMsg)) return;
     setSavingId(id);
@@ -389,7 +391,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                 <th className="text-center p-4">Attempts</th>
                 <th className="text-left p-4">Scheduled</th>
                 <th className="text-left p-4">Completed</th>
-                {canAssign && <th className="text-center p-4">Reopen</th>}
+                {canAssign && <th className="text-center p-4">Edit / Reopen</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -484,6 +486,14 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                     {canAssign && (
                       <td className="p-4 text-center">
                         {['successful', 'unreachable', 'declined', 'refused', 'not_interested'].includes(r.status) ? (
+                          <div className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => setEditId(r.id)}
+                            className="px-2.5 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 transition"
+                            title="Correct the answers and the result of this finished survey"
+                          >
+                            <Pencil className="w-3 h-3" /> Edit
+                          </button>
                           <button
                             onClick={() => patchRow(r.id, { status: 'pending' },
                               "Return this survey to Pending?\nIts outcome and call attempts will be cleared so it can be worked again.")}
@@ -493,6 +503,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
                           >
                             <RotateCcw className="w-3 h-3" /> Reopen
                           </button>
+                          </div>
                         ) : <span className="text-[var(--muted)]">—</span>}
                       </td>
                     )}
@@ -503,6 +514,7 @@ export default function AllSurveys({ currentUser }: AllSurveysProps) {
           </table>
         </div>
       </div>
+      {editId && <SurveyResultEdit assignmentId={editId} onClose={() => setEditId(null)} onSaved={() => fetchRows()} />}
     </div>
   );
 }

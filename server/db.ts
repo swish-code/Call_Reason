@@ -3393,7 +3393,7 @@ export class DB {
          VALUES ($1,'survey_live',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, to_char(now() + interval '3 hours','YYYY-MM-DD'), $13, now(),$14,$15,$16)`,
         [srid, data.brand_id, asg?.brand_name || null, data.customer_phone, agentName, rate, answered,
          comment, complaint, action_type, data.segment || null,
-         JSON.stringify({ reachability, action_type, outcome: newStatus, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name, branch: asg?.branch || undefined, order_date: asg?.order_date || undefined, item_kind: asg?.item_kind || undefined }),
+         JSON.stringify({ assignment_id: data.assignment_id, reachability, action_type, outcome: newStatus, segment: data.segment || null, campaign_id: asg?.campaign_id, template: asg?.template_name, branch: asg?.branch || undefined, order_date: asg?.order_date || undefined, item_kind: asg?.item_kind || undefined }),
          data.agent_id, asg?.item_name || null, asg?.order_id || null, asg?.customer_name || null]
       );
       // Update contact recency
@@ -3412,6 +3412,47 @@ export class DB {
     } finally {
       client.release();
     }
+  }
+
+  // What a finished survey holds now: its questions and the answers of its latest response (for the leader's edit form).
+  static async getSurveyResult(assignmentId: string): Promise<any | undefined> {
+    const asg = await DB.getSurveyAssignmentById(assignmentId);
+    if (!asg) return undefined;
+    const { rows } = await pool.query(
+      `SELECT a.question_id, a.answer_value FROM survey_answers a JOIN survey_responses r ON r.id = a.response_id
+        WHERE r.assignment_id = $1 AND r.id = (SELECT id FROM survey_responses WHERE assignment_id = $1 ORDER BY answered_at DESC LIMIT 1)`, [assignmentId]);
+    return { assignment: asg, questions: asg.questions, answers: Object.fromEntries(rows.map((r: any) => [r.question_id, r.answer_value ?? ""])) };
+  }
+
+  // A leader changes the result of a FINISHED survey (the customer called back, a wrong answer...). The new result is
+  // written first and the old response + its Survey Data record are removed only after that worked. The survey keeps its
+  // surveyor, its completion time, its call attempts and its place in Survey Data's dates.
+  static async editSurveyResult(assignmentId: string, data: {
+    answers: { question_id: string; answer_value?: string; answered: boolean }[];
+    reachability: string; action_type: string; outcome: "completed" | "refused" | "not_interested"; segment?: string;
+  }): Promise<any> {
+    const asg = await DB.getSurveyAssignmentById(assignmentId);
+    if (!asg) throw new Error("Assignment not found.");
+    const oldResp = (await pool.query("SELECT id, agent_id, answered_at FROM survey_responses WHERE assignment_id = $1 ORDER BY answered_at DESC", [assignmentId])).rows;
+    const oldRec = (await pool.query(
+      `SELECT id, created_at FROM survey_records WHERE record_type = 'survey_live'
+          AND (extra->>'assignment_id' = $1 OR (extra->>'assignment_id' IS NULL AND phone = $2 AND brand_id IS NOT DISTINCT FROM $3 AND COALESCE(order_id,'') = COALESCE($4,'')))`,
+      [assignmentId, asg.customer_phone, asg.brand_id, asg.order_id || ""])).rows;
+    const surveyor = oldResp[0]?.agent_id || asg.assigned_agent_id;
+    if (!surveyor) throw new Error("This survey has no surveyor to keep the result under.");
+    const completedAt = asg.completed_at;
+    const oldRespIds = oldResp.map((r: any) => r.id);
+    const oldRecIds = oldRec.map((r: any) => r.id);
+
+    await DB.addSurveyResponse({ assignment_id: assignmentId, agent_id: surveyor, answers: data.answers, brand_id: asg.brand_id, customer_phone: asg.customer_phone,
+      reachability: data.reachability, action_type: data.action_type, segment: data.segment, outcome: data.outcome });
+
+    if (oldRespIds.length) await pool.query("DELETE FROM survey_responses WHERE id = ANY($1)", [oldRespIds]);
+    if (oldRecIds.length) await pool.query("DELETE FROM survey_records WHERE id = ANY($1)", [oldRecIds]);
+    if (oldResp[0]) await pool.query("UPDATE survey_responses SET answered_at = $2 WHERE assignment_id = $1", [assignmentId, oldResp[0].answered_at]);
+    if (oldRec[0]) await pool.query("UPDATE survey_records SET created_at = $2 WHERE record_type = 'survey_live' AND extra->>'assignment_id' = $1", [assignmentId, oldRec[0].created_at]);
+    if (completedAt) await pool.query("UPDATE survey_assignments SET completed_at = $2 WHERE id = $1", [assignmentId, completedAt]);
+    return DB.getSurveyAssignmentById(assignmentId);
   }
 
   // The agent found the order was cancelled: the survey closes with its own status. It is not a contact (nobody was
