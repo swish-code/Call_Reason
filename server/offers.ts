@@ -758,7 +758,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
                        COALESCE(sum((details->>'work_seconds')::int), 0)::int AS work_seconds,
                        count(*) FILTER (WHERE COALESCE((details->>'work_seconds')::int, 0) > 0)::int AS timed
                   FROM offer_events WHERE campaign_id = $1 AND kind = 'call' AND ${DAY("created_at")} BETWEEN $2::date AND $3::date GROUP BY 1`, [camp.id, wFrom, to, REACHED_STATUSES]),
-      DB.query(`SELECT to_char(order_date, 'YYYY-MM-DD') AS day, step, count(*)::int AS n, COALESCE(sum(order_value), 0)::float AS value
+      DB.query(`SELECT to_char(order_date, 'YYYY-MM-DD') AS day, step, count(*)::int AS n, COALESCE(sum(order_value), 0)::float AS value,
+                       COALESCE(sum(order_value * (100 - discount) / 100.0), 0)::float AS net
                   FROM offer_orders WHERE campaign_id = $1 AND order_date BETWEEN $2::date AND $3::date GROUP BY 1, 2`, [camp.id, wFrom, to]),
       // Per person: the calls they made themselves; "accepted" and "orders" go to the customer's agent even when a
       // colleague recorded them (the business, 2026-10-26), with how many of those a colleague did (by_colleagues)
@@ -819,8 +820,8 @@ export function registerOfferRoutes(app: any, d: Deps) {
     for (let day = wFrom; day <= to; day = addDays(day, 1)) {
       const c = calls.find((r: any) => r.day === day) || {};
       const row: any = { day, uploaded: uploads.find((r: any) => r.day === day)?.n || 0, calls: c.calls || 0, outbound: c.outbound || 0, inbound: c.inbound || 0,
-        first_calls: c.first_calls || 0, reached: c.reached || 0, accepted: c.accepted || 0, work_seconds: c.work_seconds || 0, timed: c.timed || 0, value: 0 };
-      camp.steps.forEach((_s: number, i: number) => { const o = orders.find((r: any) => r.day === day && r.step === i + 1); row[`o${i + 1}`] = o?.n || 0; row.value += o?.value || 0; });
+        first_calls: c.first_calls || 0, reached: c.reached || 0, accepted: c.accepted || 0, work_seconds: c.work_seconds || 0, timed: c.timed || 0, value: 0, net: 0 };
+      camp.steps.forEach((_s: number, i: number) => { const o = orders.find((r: any) => r.day === day && r.step === i + 1); row[`o${i + 1}`] = o?.n || 0; row.value += o?.value || 0; row.net += o?.net || 0; });
       days.push(row);
     }
     const now = Date.now();

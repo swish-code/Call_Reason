@@ -112,6 +112,7 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
   const stepCounts = steps.map((_s, i) => sum(`o${i + 1}`));
   const ordersTotal = stepCounts.reduce((a, b) => a + b, 0);
   const value = sum("value");
+  const net = sum("net");   // the same orders after each one's own discount (20 / 30 / 50 %), delivery fees not counted
 
   const cats = (d?.days || []).map((x: any) => ({ key: x.day, label: String(Number(x.day.slice(8, 10))) }));
   const dayMap = new Map((d?.days || []).map((x: any) => [x.day, x]));
@@ -193,7 +194,8 @@ export default function OfferDashboard({ camp, tick }: { camp: Campaign; tick: n
                 </div>
                 <div className="mt-4 pt-3 border-t border-[var(--border)] flex flex-wrap items-baseline justify-between gap-2 text-xs">
                   <span className="text-[var(--muted)]"><Num v={ordersTotal} className="text-base font-extrabold text-[var(--heading)]" /> offer {ordersTotal === 1 ? "order" : "orders"} in total</span>
-                  {value > 0 && <span className="text-[var(--muted)]">worth <b className="text-[var(--heading)]">{value.toFixed(3)} KWD</b></span>}
+                  {value > 0 && <span className="text-[var(--muted)]" title="What the customers paid for the items, after the offer discount (20% / 30% / 50% by step). Delivery fees are not counted.">after discount <b className="text-[var(--heading)]">{net.toFixed(3)} KWD</b></span>}
+                  {value > 0 && <span className="text-[var(--muted)]" title="The order value before the discount, without delivery fees (what the agents logged).">worth <b className="text-[var(--heading)]">{value.toFixed(3)} KWD</b></span>}
                 </div>
               </div>
             </motion.div>
