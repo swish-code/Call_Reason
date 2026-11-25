@@ -10,7 +10,7 @@ import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRati
 import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
 import { registerNameRoutes } from "./server/nameRoutes.js";
 import { getRatingsDashboard } from "./server/ratingsDashboard.js";
-import { getBranchReport, getBranchOptions, getPlatformAnalysis } from "./server/branchReport.js";
+import { getBranchReport, getBranchOptions, getPlatformAnalysis, getPerformance } from "./server/branchReport.js";
 import { fetchCancelledOrders, fillRatingItems, itemsConfigured, itemsText } from "./server/orderItems.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { runAttemptCallChecks, getAttemptVerification, attemptStatus, ATTEMPT_SOURCES, type AttemptSource } from "./server/attemptChecks.js";
@@ -2593,6 +2593,18 @@ app.get("/api/ratings/branch-report", authenticateJWT, branchReportAudience, asy
   const maxStars = Number(req.query.max_stars) === 3 ? 3 : 2;   // a complaint is a 1-2 star review (1-3 on request)
   const platformId = typeof req.query.platform_id === "string" && req.query.platform_id ? req.query.platform_id : null;
   res.json(await getBranchReport({ from, to, brandId, branch, platformId, maxStars }));
+}));
+// Brand & branch performance: the whole picture (all brands / all aggregators unless filtered) for a period.
+app.get("/api/ratings/performance", authenticateJWT, branchReportAudience, asyncHandler(async (req: any, res) => {
+  const isDay = (v: any) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const today = new Date(Date.now() + KW_OFFSET_MS).toISOString().slice(0, 10);
+  const to = isDay(req.query.to) ? String(req.query.to) : today;
+  const from = isDay(req.query.from) ? String(req.query.from) : to;
+  if (from > to) return res.status(400).json({ error: "From is after To." });
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) return res.status(400).json({ error: "Pick a period of a year or less." });
+  const brandId = typeof req.query.brand_id === "string" && req.query.brand_id ? req.query.brand_id : null;
+  const platformId = typeof req.query.platform_id === "string" && req.query.platform_id ? req.query.platform_id : null;
+  res.json(await getPerformance({ from, to, brandId, platformId, maxStars: Number(req.query.max_stars) === 3 ? 3 : 2 }));
 }));
 // Platform analysis: per aggregator, for a brand / aggregator / period.
 app.get("/api/ratings/platform-analysis", authenticateJWT, branchReportAudience, asyncHandler(async (req: any, res) => {

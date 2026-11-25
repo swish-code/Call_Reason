@@ -39,7 +39,7 @@ function useCountUp(value: number, decimals = 0) {
 const Num = ({ v, decimals = 0, suffix = "" }: { v: number; decimals?: number; suffix?: string }) => <>{useCountUp(v, decimals)}{suffix}</>;
 
 /** Vertical bars, one per platform, with the value on top: the two charts of the sheet. */
-function BarChart({ title, rows, max, fmt, ticks }: { title: string; rows: { name: string; v: number; color: string }[]; max: number; fmt: (v: number) => string; ticks: number[] }) {
+export function BarChart({ title, rows, max, fmt, ticks, rotate }: { rotate?: boolean; title: string; rows: { name: string; v: number; color: string }[]; max: number; fmt: (v: number) => string; ticks: number[] }) {
   const reduce = useReducedMotion();
   const H = 190;
   return (
@@ -60,9 +60,9 @@ function BarChart({ title, rows, max, fmt, ticks }: { title: string; rows: { nam
           ))}
         </div>
       </div>
-      <div className="flex gap-2 mt-1.5">
+      <div className={`flex gap-2 mt-1.5 ${rotate ? "h-16" : ""}`}>
         <span className="w-10" />
-        <div className="flex-1 flex justify-around gap-3">{rows.map((r) => <span key={r.name} className="flex-1 max-w-[90px] text-center text-[11px] font-bold text-[var(--text)] truncate" title={r.name}>{r.name}</span>)}</div>
+        <div className="flex-1 flex justify-around gap-3">{rows.map((r) => <span key={r.name} className={`flex-1 max-w-[90px] text-[11px] font-bold text-[var(--text)] ${rotate ? "text-right whitespace-nowrap origin-top-right -rotate-[35deg] translate-y-1" : "text-center truncate"}`} title={r.name}>{r.name}</span>)}</div>
       </div>
     </div>
   );

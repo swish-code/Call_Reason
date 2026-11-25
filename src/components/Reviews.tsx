@@ -7,11 +7,12 @@ import NamesToFix from "./NamesToFix.tsx";
 import RatingsDashboard from "./RatingsDashboard.tsx";
 import BranchReport from "./BranchReport.tsx";
 import PlatformAnalysis from "./PlatformAnalysis.tsx";
+import BrandPerformance from "./BrandPerformance.tsx";
 import { phoneOnCopy } from "./phoneCopy.ts";
 import { useCancelledOrders, cancelledOf, CancelledOrderBadge, CancelledOrderBanner } from "./OrderStatus.tsx";
 import OtherContacts, { useContactFlags, ContactFlagBadge } from "./OtherContacts.tsx";
 import FeedbackDashboard from "./FeedbackDashboard.tsx";
-import { Store, Pencil, Layers,
+import { Store, Pencil, Layers, LayoutDashboard,
   Star, RefreshCw, Upload, FileDown, X, AlertCircle, Flag, ChevronLeft, ChevronRight, Phone, Trash2, Download, Users, BarChart2, LayoutList,
 } from "lucide-react";
 
@@ -577,7 +578,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     return (
       <div className="space-y-6 animate-fade-in text-[var(--text)]">
         <ReviewTabs tab={tab} setTab={setTab} />
-        {tab === "dashboard" ? <RatingsDashboard currentUser={currentUser} /> : tab === "branch" ? <BranchReport /> : tab === "platform" ? <PlatformAnalysis /> : <FeedbackDashboard currentUser={currentUser} embedded />}
+        {tab === "dashboard" ? <RatingsDashboard currentUser={currentUser} /> : tab === "branch" ? <BranchReport /> : tab === "platform" ? <PlatformAnalysis /> : tab === "performance" ? <BrandPerformance /> : <FeedbackDashboard currentUser={currentUser} embedded />}
       </div>
     );
   }
@@ -1420,11 +1421,11 @@ export default function Reviews({ currentUser }: ReviewsProps) {
   );
 }
 
-type ReviewTab = "list" | "dashboard" | "analytics" | "branch" | "platform";
+type ReviewTab = "list" | "dashboard" | "analytics" | "branch" | "platform" | "performance";
 // Reviews = the list; Dashboard = right now + the period, per agent/day (like Surveys); Analytics = ratings over time by brand, branch and platform.
 const ReviewTabs = ({ tab, setTab }: { tab: ReviewTab; setTab: (t: ReviewTab) => void }) => (
   <div className="flex flex-wrap items-center gap-2 bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-2 shadow-lg">
-    {([["list", "Reviews", LayoutList], ["dashboard", "Dashboard", BarChart2], ["analytics", "Analytics", Star], ["branch", "Branch report", Store], ["platform", "Platform analysis", Layers]] as const).map(([k, l, Icon]) => (
+    {([["list", "Reviews", LayoutList], ["dashboard", "Dashboard", BarChart2], ["analytics", "Analytics", Star], ["branch", "Branch report", Store], ["platform", "Platform analysis", Layers], ["performance", "Brand & Branch", LayoutDashboard]] as const).map(([k, l, Icon]) => (
       <button key={k} onClick={() => setTab(k)} className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition active:scale-95 ${tab === k ? 'bg-blue-600 text-white shadow-sm shadow-blue-900/30' : 'text-[var(--text)] hover:bg-[var(--surface-2)]'}`}>
         <Icon className="w-4 h-4" /> {l}
       </button>
