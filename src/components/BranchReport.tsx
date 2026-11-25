@@ -134,7 +134,7 @@ export default function BranchReport() {
     if (!d) return;
     await downloadXlsx(["#", "Date", "Brand", "Branch", "Platform", "Order ID", "Rating", "Issue(s)", "Review text"],
       d.complaints.map((c, i) => [i + 1, dmy(c.day), c.brand, c.branch, c.platform, c.order_id, c.rating, c.reasons.join(", ") || "Unspecified", c.text]),
-      `complaints-${scopeName.replace(/[^a-z0-9]+/gi, "-")}-${from}_${to}.xlsx`, "Complaints");
+      `negative-reviews-${scopeName.replace(/[^a-z0-9]+/gi, "-")}-${from}_${to}.xlsx`, "Negative reviews");
   };
 
   const k = d?.kpi, co = d?.company;
@@ -167,7 +167,7 @@ export default function BranchReport() {
           </div>
           <span className="flex-1" />
           <button onClick={load} className="p-2.5 rounded-xl border border-[var(--border)] glass hover:bg-[var(--surface-2)] text-[var(--muted)] transition active:scale-95" title="Refresh"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></button>
-          <button onClick={exportXlsx} disabled={!d || !d.complaints.length} className="px-4 py-2.5 rounded-xl text-xs font-extrabold text-white flex items-center gap-1.5 shadow-lg disabled:opacity-40 transition active:scale-95" style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}><Download className="w-4 h-4" /> Export complaints</button>
+          <button onClick={exportXlsx} disabled={!d || !d.complaints.length} className="px-4 py-2.5 rounded-xl text-xs font-extrabold text-white flex items-center gap-1.5 shadow-lg disabled:opacity-40 transition active:scale-95" style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}><Download className="w-4 h-4" /> Export negative reviews</button>
         </div>
         <div className="relative flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)]">Brand
@@ -193,8 +193,8 @@ export default function BranchReport() {
               <button key={key} onClick={f} className={`px-3 py-2 rounded-lg transition ${activePreset === key ? "text-white shadow" : "text-[var(--muted)] hover:text-[var(--heading)]"}`} style={activePreset === key ? { background: "linear-gradient(135deg,#8b5cf6,#6366f1)" } : undefined}>{l}</button>
             ))}
           </div>
-          <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-0.5 text-[11px] font-extrabold" title="Which reviews count as a complaint">
-            {([[2, "Complaint = 1–2 ★"], [3, "1–3 ★"]] as const).map(([n, l]) => (
+          <div className="flex rounded-xl bg-[var(--bg)] border border-[var(--border)] p-0.5 text-[11px] font-extrabold" title="Which reviews count as a negative review">
+            {([[2, "Negative = 1–2 ★"], [3, "1–3 ★"]] as const).map(([n, l]) => (
               <button key={n} onClick={() => setMaxStars(n)} className={`px-3 py-2 rounded-lg transition ${maxStars === n ? "text-white shadow" : "text-[var(--muted)] hover:text-[var(--heading)]"}`} style={maxStars === n ? { background: "linear-gradient(135deg,#f43f5e,#e11d48)" } : undefined}>{l}</button>
             ))}
           </div>
@@ -221,12 +221,12 @@ export default function BranchReport() {
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">{hasData && <Stars n={Math.round(k.avg)} size={11} />}<Delta diff={k.avg - co.avg} unit="" hide={!hasData} /></div>
             </motion.div>
             <motion.div {...fade(2)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><MessageSquareText className="w-3.5 h-3.5 text-rose-500" /> Complaints</p>
+              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><MessageSquareText className="w-3.5 h-3.5 text-rose-500" /> Negative reviews</p>
               <p className="text-3xl font-extrabold text-[var(--heading)] mt-2 tabular-nums"><Num v={k.complaints} /></p>
               <p className="text-[10px] text-[var(--muted)] mt-1">1–{d.max_stars} star reviews</p>
             </motion.div>
             <motion.div {...fade(3)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><Flame className="w-3.5 h-3.5 text-orange-500" /> Complaint rate</p>
+              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><Flame className="w-3.5 h-3.5 text-orange-500" /> Negative rate</p>
               <p className="text-3xl font-extrabold text-[var(--heading)] mt-2 tabular-nums">{hasData ? <Num v={k.complaint_rate} decimals={1} suffix="%" /> : "—"}</p>
               {hasData && (
                 <div className="mt-2 relative h-1.5 rounded-full bg-[var(--surface-2)]" title={`All branches: ${co.complaint_rate.toFixed(1)}%`}>
@@ -254,7 +254,7 @@ export default function BranchReport() {
               ) : <p className="text-2xl font-extrabold text-[var(--muted)] mt-3">—</p>}
             </motion.div>
           </div>
-          <p className="text-[11px] text-[var(--muted)] -mt-2 px-1">All branches in the same period: average <b className="text-[var(--heading)]">{co.avg.toFixed(2)}</b> · complaint rate <b className="text-[var(--heading)]">{co.complaint_rate.toFixed(1)}%</b> ({co.complaints.toLocaleString()} of {co.reviews.toLocaleString()}). <b>ACTION</b> = this branch's complaint rate is above the all-branch rate.</p>
+          <p className="text-[11px] text-[var(--muted)] -mt-2 px-1">All branches in the same period: average <b className="text-[var(--heading)]">{co.avg.toFixed(2)}</b> · negative-review rate <b className="text-[var(--heading)]">{co.complaint_rate.toFixed(1)}%</b> ({co.complaints.toLocaleString()} of {co.reviews.toLocaleString()}). <b>ACTION</b> = this branch's negative-review rate is above the all-branch rate.</p>
 
           {!hasData ? (
             <div className="p-10 text-center bg-[var(--surface)] border border-[var(--border)] rounded-3xl shadow-lg">
@@ -268,8 +268,8 @@ export default function BranchReport() {
               <motion.div {...fade(6)} className="grid grid-cols-1 xl:grid-cols-5 gap-5">
                 <div className="xl:col-span-3 rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg p-5">
                   <div className="flex items-baseline justify-between mb-3">
-                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Complaint reasons</h3>
-                    <span className="text-[10px] text-[var(--muted)]">click a reason to list its complaints · the tick marks all branches</span>
+                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Negative review reasons</h3>
+                    <span className="text-[10px] text-[var(--muted)]">click a reason to list its negative reviews · the tick marks all branches</span>
                   </div>
                   <div className="space-y-1">
                     {d.reasons.map((r, i) => {
@@ -280,18 +280,18 @@ export default function BranchReport() {
                           <span className="flex items-center gap-2 text-xs font-bold text-[var(--heading)]"><span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: t.c2 }} />{r.label}</span>
                           <span className="relative h-3.5 rounded-full bg-[var(--surface-2)]">
                             <motion.span className="absolute inset-y-0 left-0 rounded-full" initial={reduce ? false : { width: 0 }} animate={{ width: `${(r.count / maxBar) * 100}%` }} transition={{ duration: 0.8, delay: 0.1 + i * 0.05, ease: "easeOut" }} style={{ background: `linear-gradient(90deg, ${t.c1}, ${t.c2})`, boxShadow: `0 4px 14px -6px ${t.c2}` }} />
-                            <span className="absolute -top-0.5 w-0.5 rounded bg-[var(--heading)] opacity-60" style={{ left: `${Math.min(100, (r.pct_all / 100) * (d.kpi.complaints || 1) / maxBar * 100)}%`, height: 18 }} title={`All branches: ${r.pct_all}% of complaints`} />
+                            <span className="absolute -top-0.5 w-0.5 rounded bg-[var(--heading)] opacity-60" style={{ left: `${Math.min(100, (r.pct_all / 100) * (d.kpi.complaints || 1) / maxBar * 100)}%`, height: 18 }} title={`All branches: ${r.pct_all}% of negative reviews`} />
                           </span>
                           <span className="flex items-center gap-2 text-[11px] tabular-nums">
                             <b className="w-9 text-right text-[var(--heading)]">{r.count}</b>
                             <span className="w-10 text-right font-bold" style={{ color: t.c2 }}>{r.pct_branch}%</span>
-                            <span className="w-14 text-right text-[var(--muted)]" title="Share of all-branch complaints">all {r.pct_all}%</span>
+                            <span className="w-14 text-right text-[var(--muted)]" title="Share of all-branch negative reviews">all {r.pct_all}%</span>
                           </span>
                         </button>
                       );
                     })}
                   </div>
-                  <p className="text-[10px] text-[var(--muted)] mt-3 px-1">A review can name more than one reason, so the counts can add up to more than the complaints.</p>
+                  <p className="text-[10px] text-[var(--muted)] mt-3 px-1">A review can name more than one reason, so the counts can add up to more than the negative reviews.</p>
                 </div>
 
                 <div className="xl:col-span-2 rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg p-5 flex flex-col items-center">
@@ -315,7 +315,7 @@ export default function BranchReport() {
               <motion.div {...fade(7)} className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
                 <div className="p-5 pb-3 flex flex-wrap items-center gap-3">
                   <div>
-                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Complaints</h3>
+                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Negative reviews</h3>
                     <p className="text-[11px] text-[var(--muted)]">{listed.length === d.complaints_total ? `All ${d.complaints_total}` : `${listed.length} of ${d.complaints_total}`}{d.complaints_total > d.complaints.length ? ` · latest ${d.cap} loaded` : ""}</p>
                   </div>
                   <span className="flex-1" />
@@ -355,7 +355,7 @@ export default function BranchReport() {
                           );
                         })}
                       </AnimatePresence>
-                      {!listed.length && <tr><td colSpan={8} className="p-8 text-center text-[var(--muted)]">No complaints match.</td></tr>}
+                      {!listed.length && <tr><td colSpan={8} className="p-8 text-center text-[var(--muted)]">No negative reviews match.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -373,7 +373,7 @@ export default function BranchReport() {
   );
 }
 
-/** The share of each named reason as a ring; hover or click a slice. The middle shows the complaints. */
+/** The share of each named reason as a ring; hover or click a slice. The middle shows the negative reviews. */
 function Donut({ reasons, total, complaints, reduce, pick, setPick }: { reasons: Reason[]; total: number; complaints: number; reduce: boolean; pick: string | null; setPick: (k: string | null) => void }) {
   const R = 62, C = 2 * Math.PI * R, GAP = 3;
   const [hover, setHover] = useState<string | null>(null);
@@ -382,7 +382,7 @@ function Donut({ reasons, total, complaints, reduce, pick, setPick }: { reasons:
   const shownKey = hover || pick;
   const sel = live.find((r) => r.key === shownKey);
   const center = useCountUp(sel ? sel.count : complaints, 600);
-  if (!total) return <div className="flex-1 flex items-center justify-center text-xs text-[var(--muted)] py-10">No named reasons yet — the complaints carry no comment.</div>;
+  if (!total) return <div className="flex-1 flex items-center justify-center text-xs text-[var(--muted)] py-10">No named reasons yet — the negative reviews carry no comment.</div>;
   return (
     <div className="relative my-3">
       <svg viewBox="0 0 160 160" className="w-52 h-52 -rotate-90">
@@ -401,7 +401,7 @@ function Donut({ reasons, total, complaints, reduce, pick, setPick }: { reasons:
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
         <span className="text-3xl font-extrabold text-[var(--heading)] tabular-nums">{center}</span>
-        <span className="text-[10px] font-bold text-[var(--muted)] max-w-[7rem] leading-tight">{sel ? `${sel.label} · ${Math.round((sel.count / total) * 100)}% of named` : "complaints"}</span>
+        <span className="text-[10px] font-bold text-[var(--muted)] max-w-[7rem] leading-tight">{sel ? `${sel.label} · ${Math.round((sel.count / total) * 100)}% of named` : "negative reviews"}</span>
       </div>
     </div>
   );
