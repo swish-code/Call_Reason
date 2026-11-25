@@ -390,11 +390,11 @@ export function registerOfferRoutes(app: any, d: Deps) {
                   FROM offer_events e WHERE e.customer_id = oc.id AND e.kind IN ('call','order') AND e.user_id IS DISTINCT FROM $2
                  ORDER BY e.created_at DESC LIMIT 1) AS colleague          -- the latest thing someone else did on my customer
           FROM offer_customers oc
-         WHERE oc.campaign_id = $1 AND oc.assigned_agent_id = $2 AND oc.call_status IN ('not_called','no_answer','busy','call_back')
+         WHERE oc.campaign_id = $1 AND oc.assigned_agent_id = $2 AND oc.call_status IN ('not_called','call_back')   -- no answer / busy = done for the agent (still counted in every report)
            AND (oc.contact_date IS NULL OR oc.contact_date <= $3::date)
            AND NOT EXISTS (SELECT 1 FROM do_not_call d WHERE d.phone_key = oc.phone_key)
          ORDER BY oc.contact_date NULLS FIRST, (oc.call_status = 'call_back') DESC, oc.uploaded_at, oc.id LIMIT 500`, [camp.id, req.user.id, today]),
-      DB.query(`SELECT count(*)::int AS n FROM offer_customers WHERE campaign_id = $1 AND assigned_agent_id = $2 AND call_status IN ('not_called','no_answer','busy','call_back') AND contact_date > $3::date`, [camp.id, req.user.id, today]),
+      DB.query(`SELECT count(*)::int AS n FROM offer_customers WHERE campaign_id = $1 AND assigned_agent_id = $2 AND call_status IN ('not_called','call_back') AND contact_date > $3::date`, [camp.id, req.user.id, today]),
       DB.query(`SELECT count(*)::int AS calls, count(*) FILTER (WHERE call_status = ANY($4))::int AS reached
                   FROM offer_events WHERE campaign_id = $1 AND user_id = $2 AND kind = 'call' AND (created_at AT TIME ZONE 'Asia/Kuwait')::date = $3::date`, [camp.id, req.user.id, today, REACHED_STATUSES]),
     ]);
