@@ -2760,16 +2760,19 @@ app.post("/api/ratings/:id/attempts", authenticateJWT, asyncHandler(async (req: 
 
   // Auto-update status
   const newAttemptNumber = attemptsCount + 1;
-  const fields: any = { action_status: "in_progress" };
+  // A review already closed as "complaint recorded" / "no action required" stays closed: a late or repeated attempt
+  // (second tab, double click) must not flip it back to In Progress.
+  const stayClosed = rating.action_status === "resolved" || rating.action_status === "no_action_needed";
+  const fields: any = stayClosed ? {} : { action_status: "in_progress" };
   // Three calls without an answer close the review as unreachable. "Without phone number" closes it at once: there is
   // nobody to call again.
-  if (outcome === "no_phone" || (outcome !== "answered" && newAttemptNumber >= 3)) {
+  if (!stayClosed && (outcome === "no_phone" || (outcome !== "answered" && newAttemptNumber >= 3))) {
     fields.action_status = "unreachable";
     fields.resolved_at = new Date().toISOString();
     fields.recorded_by = req.user.id;
     fields.recorded_at = new Date().toISOString();
   }
-  await DB.updateRating(req.params.id, fields);
+  if (Object.keys(fields).length) await DB.updateRating(req.params.id, fields);
   if (fields.resolved_at) await logClosedReview(req.user, { ...rating, attempts: [...(rating.attempts || []), attempt] }, "unreachable");
   res.json(attempt);
 }));

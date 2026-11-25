@@ -385,6 +385,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     });
     setAttemptSaving(false);
     if (res.ok) { fetchDetail(detail.id); fetchRatings(); }
+    else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Could not log the attempt."); }
   };
 
   const openAssign = (r: Rating) => { setAssignIds([r.id]); setAssignAgentId(r.assigned_agent_id || ""); };
@@ -512,6 +513,7 @@ export default function Reviews({ currentUser }: ReviewsProps) {
     });
     setPatching(false);
     if (res.ok) { fetchDetail(detail.id); fetchRatings(); }
+    else { const dt = await res.json().catch(() => ({})); setError(dt.error || "Could not save the status — the review is still open. Please try again."); }
   };
 
   // Pagination
