@@ -115,3 +115,36 @@ export async function getBranchReport(opts: { from: string; to: string; brandId:
     complaints_total: complaints, cap: CAP,
   };
 }
+
+/** Platform analysis (the "Platform Analysis" sheet): per aggregator, ratings, average, negative reviews and what they name. */
+export async function getPlatformAnalysis(opts: { from: string; to: string; brandId: string | null; platformId: string | null; maxStars: number }): Promise<any> {
+  const { from, to, brandId, platformId, maxStars } = opts;
+  const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+  const w = (brandId ? ` AND r.brand_id = ${lit(brandId)}` : "") + (platformId ? ` AND r.platform_id = ${lit(platformId)}` : "");
+  const rows = (await pool.query(
+    `SELECT COALESCE(p.name, '—') AS platform, r.rating, r.review_text
+       FROM ratings r LEFT JOIN platforms p ON p.id = r.platform_id
+      WHERE ${IN_PERIOD}${w}`, [from, to])).rows as { platform: string; rating: number; review_text: string | null }[];
+  const by = new Map<string, { total: number; sum: number; neg: number; reasons: Record<string, number> }>();
+  for (const r of rows) {
+    const x = by.get(r.platform) || { total: 0, sum: 0, neg: 0, reasons: Object.fromEntries(KEYS.map((k) => [k, 0])) };
+    x.total++; x.sum += r.rating;
+    if (r.rating <= maxStars) {
+      x.neg++;
+      const rs = reasonsOf(r.review_text);
+      if (!rs.length) x.reasons.unspecified++;
+      for (const k of rs) x.reasons[k]++;
+    }
+    by.set(r.platform, x);
+  }
+  const platforms = [...by.entries()].map(([name, x]) => ({
+    name, total: x.total, avg: Math.round((x.sum / x.total) * 100) / 100, negative: x.neg, rate: pct(x.neg, x.total), reasons: x.reasons,
+  })).sort((a, b) => b.total - a.total);
+  const total = rows.length, negative = platforms.reduce((a, p) => a + p.negative, 0);
+  return {
+    range: { from, to }, max_stars: maxStars,
+    reasons: KEYS.map((k) => ({ key: k, label: LABEL.get(k)!, short: SHORT.get(k)! })),
+    totals: { total, negative, rate: pct(negative, total), avg: total ? Math.round((rows.reduce((a, r) => a + r.rating, 0) / total) * 100) / 100 : 0 },
+    platforms,
+  };
+}
