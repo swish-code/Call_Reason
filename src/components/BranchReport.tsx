@@ -15,11 +15,24 @@ interface Reason { key: string; label: string; count: number; pct_branch: number
 interface Complaint { day: string; platform: string; order_id: string; rating: number; reasons: string[]; text: string; branch: string; brand: string }
 interface Report {
   range: { from: string; to: string }; max_stars: number;
-  kpi: { reviews: number; avg: number; complaints: number; complaint_rate: number; main_issue: string; status: "ACTION" | "OK" };
+  platforms: { name: string; total: number; avg: number; negative: number; rate: number }[];
+  kpi: { reviews: number; written: number; rating_only: number; avg: number; complaints: number; complaint_rate: number; main_issue: string; status: "ACTION" | "OK" };
   company: { reviews: number; avg: number; complaints: number; complaint_rate: number };
   reasons: Reason[]; stars: number[]; complaints: Complaint[]; complaints_total: number; cap: number;
 }
-interface Opts { brands: { id: string; name: string; branches: string[] }[] }
+interface Opts { brands: { id: string; name: string; branches: string[] }[]; platforms: { id: string; name: string }[] }
+
+/** One headline box of the strip. */
+function Kpi({ i, fade, label, Icon, tone, value, sub, bar, small }: { i: number; fade: (i: number) => any; label: string; Icon: any; tone: string; value: any; sub?: any; bar?: any; small?: boolean }) {
+  return (
+    <motion.div {...fade(i)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3.5 shadow-lg">
+      <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5 leading-tight"><Icon className={`w-3.5 h-3.5 shrink-0 ${tone}`} /> {label}</p>
+      <p className={`${small ? "text-xl" : "text-3xl"} font-extrabold text-[var(--heading)] mt-2 tabular-nums leading-tight`}>{value}</p>
+      {bar}
+      {sub != null && <div className="text-[10px] text-[var(--muted)] mt-1.5 flex flex-wrap items-center gap-1.5">{sub}</div>}
+    </motion.div>
+  );
+}
 
 const KW_MS = 3 * 3600_000;
 const kwToday = () => new Date(Date.now() + KW_MS).toISOString().slice(0, 10);
@@ -94,7 +107,8 @@ function Delta({ diff, unit, lowerIsBetter, hide }: { diff: number; unit: string
 
 export default function BranchReport() {
   const reduce = useReducedMotion();
-  const [opts, setOpts] = useState<Opts>({ brands: [] });
+  const [opts, setOpts] = useState<Opts>({ brands: [], platforms: [] });
+  const [platformId, setPlatformId] = useState("");
   const [from, setFrom] = useState(() => addDays(kwToday(), -29));
   const [to, setTo] = useState(kwToday);
   const [brandId, setBrandId] = useState("");
@@ -107,7 +121,7 @@ export default function BranchReport() {
   const [q, setQ] = useState("");
   const [shown, setShown] = useState(40);
 
-  useEffect(() => { apiFetch("/api/ratings/branch-options").then((r) => (r.ok ? r.json() : { brands: [] })).then(setOpts).catch(() => {}); }, []);
+  useEffect(() => { apiFetch("/api/ratings/branch-options").then((r) => (r.ok ? r.json() : { brands: [], platforms: [] })).then(setOpts).catch(() => {}); }, []);
   const branches = useMemo(() => opts.brands.find((b) => b.id === brandId)?.branches || [], [opts, brandId]);
 
   const load = useCallback(async () => {
@@ -116,19 +130,20 @@ export default function BranchReport() {
       const p = new URLSearchParams({ from, to, max_stars: String(maxStars) });
       if (brandId) p.set("brand_id", brandId);
       if (branch) p.set("branch", branch);
+      if (platformId) p.set("platform_id", platformId);
       const r = await apiFetch(`/api/ratings/branch-report?${p}`);
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Could not load the report.");
       setD(j);
     } catch (e: any) { setError(e.message); } finally { setLoading(false); }
-  }, [from, to, brandId, branch, maxStars]);
+  }, [from, to, brandId, branch, platformId, maxStars]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPick(null); setShown(40); }, [brandId, branch, from, to, maxStars]);
+  useEffect(() => { setPick(null); setShown(40); }, [brandId, branch, platformId, from, to, maxStars]);
   useEffect(() => { setShown(40); }, [pick, q]);
 
   const today = kwToday();
   const activePreset = to === today ? (from === addDays(today, -6) ? "7" : from === addDays(today, -29) ? "30" : from === today.slice(0, 8) + "01" ? "month" : "") : "";
-  const scopeName = [opts.brands.find((b) => b.id === brandId)?.name, branch].filter(Boolean).join(" · ") || "All brands";
+  const scopeName = [opts.brands.find((b) => b.id === brandId)?.name, branch, opts.platforms.find((p) => p.id === platformId)?.name].filter(Boolean).join(" · ") || "All brands";
 
   const exportXlsx = async () => {
     if (!d) return;
@@ -182,6 +197,12 @@ export default function BranchReport() {
               {branches.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
+          <label className="flex flex-col gap-1 text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)]">Aggregator
+            <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} className={sel + " min-w-[10rem]"}>
+              <option value="">All aggregators</option>
+              {opts.platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
           <label className="flex flex-col gap-1 text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)]">From
             <input type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} className={sel} />
           </label>
@@ -208,53 +229,33 @@ export default function BranchReport() {
 
       {d && k && co && (
         <div className={`space-y-5 transition-opacity duration-300 ${loading ? "opacity-50" : ""}`}>
-          {/* Headline numbers */}
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-            <motion.div {...fade(0)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><Layers className="w-3.5 h-3.5 text-sky-500" /> Reviews</p>
-              <p className="text-3xl font-extrabold text-[var(--heading)] mt-2 tabular-nums"><Num v={k.reviews} /></p>
-              <p className="text-[10px] text-[var(--muted)] mt-1">{co.reviews.toLocaleString()} across all branches</p>
-            </motion.div>
-            <motion.div {...fade(1)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><Star className="w-3.5 h-3.5 text-amber-500" /> Avg rating</p>
-              <p className="text-3xl font-extrabold text-[var(--heading)] mt-2 tabular-nums">{hasData ? <Num v={k.avg} decimals={2} /> : "—"}</p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">{hasData && <Stars n={Math.round(k.avg)} size={11} />}<Delta diff={k.avg - co.avg} unit="" hide={!hasData} /></div>
-            </motion.div>
-            <motion.div {...fade(2)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><MessageSquareText className="w-3.5 h-3.5 text-rose-500" /> Negative reviews</p>
-              <p className="text-3xl font-extrabold text-[var(--heading)] mt-2 tabular-nums"><Num v={k.complaints} /></p>
-              <p className="text-[10px] text-[var(--muted)] mt-1">1–{d.max_stars} star reviews</p>
-            </motion.div>
-            <motion.div {...fade(3)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><Flame className="w-3.5 h-3.5 text-orange-500" /> Negative rate</p>
-              <p className="text-3xl font-extrabold text-[var(--heading)] mt-2 tabular-nums">{hasData ? <Num v={k.complaint_rate} decimals={1} suffix="%" /> : "—"}</p>
-              {hasData && (
-                <div className="mt-2 relative h-1.5 rounded-full bg-[var(--surface-2)]" title={`All branches: ${co.complaint_rate.toFixed(1)}%`}>
-                  <motion.div className="h-full rounded-full" initial={reduce ? false : { width: 0 }} animate={{ width: `${Math.min(100, k.complaint_rate)}%` }} transition={{ duration: 0.8, ease: "easeOut" }} style={{ background: k.status === "ACTION" ? "linear-gradient(90deg,#fb923c,#e11d48)" : "linear-gradient(90deg,#34d399,#10b981)" }} />
-                  <span className="absolute -top-1 w-0.5 h-3.5 rounded bg-[var(--heading)]" style={{ left: `${Math.min(100, co.complaint_rate)}%` }} />
-                </div>
-              )}
-              <div className="mt-1.5"><Delta diff={k.complaint_rate - co.complaint_rate} unit="%" lowerIsBetter hide={!hasData} /></div>
-            </motion.div>
-            <motion.div {...fade(4)} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-lg">
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-violet-500" /> Main issue</p>
-              <p className="text-2xl font-extrabold mt-2 leading-tight" style={{ color: TONE[Object.keys(KEY_OF_SHORT).includes(k.main_issue) ? KEY_OF_SHORT[k.main_issue] : "unspecified"].c2 }}>{k.main_issue}</p>
-              <p className="text-[10px] text-[var(--muted)] mt-1">most named reason</p>
-            </motion.div>
-            <motion.div {...fade(5)} className="rounded-2xl p-4 shadow-lg text-center flex flex-col items-center justify-center border"
+          {/* Headline numbers: the same eight boxes, in the same order, as the branch Excel sheet */}
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+            <Kpi i={0} fade={fade} label="Total ratings" Icon={Layers} tone="text-sky-500" value={<Num v={k.reviews} />} sub={`${co.reviews.toLocaleString()} across all branches`} />
+            <Kpi i={1} fade={fade} label="Total written reviews" Icon={MessageSquareText} tone="text-indigo-500" value={<Num v={k.written} />} sub="ratings with a comment" />
+            <Kpi i={2} fade={fade} label="Total negative reviews" Icon={AlertCircle} tone="text-rose-500" value={<Num v={k.complaints} />} sub={`1–${d.max_stars} star ratings`} />
+            <Kpi i={3} fade={fade} label="Avg rating" Icon={Star} tone="text-amber-500" value={hasData ? <Num v={k.avg} decimals={2} /> : "—"} sub={<><Stars n={Math.round(k.avg)} size={10} /><Delta diff={k.avg - co.avg} unit="" hide={!hasData} /></>} />
+            <Kpi i={4} fade={fade} label="Rating only" Icon={Minus} tone="text-slate-500" value={<Num v={k.rating_only} />} sub="stars, no comment" />
+            <Kpi i={5} fade={fade} label="Negative review rate" Icon={Flame} tone="text-orange-500" value={hasData ? <Num v={k.complaint_rate} decimals={1} suffix="%" /> : "—"} sub={<Delta diff={k.complaint_rate - co.complaint_rate} unit="%" lowerIsBetter hide={!hasData} />}
+              bar={hasData ? <div className="mt-2 relative h-1.5 rounded-full bg-[var(--surface-2)]" title={`All branches: ${co.complaint_rate.toFixed(1)}%`}>
+                <motion.div className="h-full rounded-full" initial={reduce ? false : { width: 0 }} animate={{ width: `${Math.min(100, k.complaint_rate)}%` }} transition={{ duration: 0.8, ease: "easeOut" }} style={{ background: k.status === "ACTION" ? "linear-gradient(90deg,#fb923c,#e11d48)" : "linear-gradient(90deg,#34d399,#10b981)" }} />
+                <span className="absolute -top-1 w-0.5 h-3.5 rounded bg-[var(--heading)]" style={{ left: `${Math.min(100, co.complaint_rate)}%` }} />
+              </div> : null} />
+            <Kpi i={6} fade={fade} label="Main issue" Icon={Sparkles} tone="text-violet-500" small value={<span style={{ color: TONE[Object.keys(KEY_OF_SHORT).includes(k.main_issue) ? KEY_OF_SHORT[k.main_issue] : "unspecified"].c2 }}>{k.main_issue}</span>} sub="most named reason" />
+            <motion.div {...fade(7)} className="rounded-2xl p-3 shadow-lg text-center flex flex-col items-center justify-center border"
               style={{ ["--ring" as any]: status === "ACTION" ? "rgba(225,29,72,.45)" : "rgba(16,185,129,.4)", background: !hasData ? "var(--surface)" : status === "ACTION" ? "linear-gradient(135deg,rgba(248,113,113,.18),rgba(225,29,72,.10))" : "linear-gradient(135deg,rgba(52,211,153,.2),rgba(16,185,129,.1))", borderColor: !hasData ? "var(--border)" : status === "ACTION" ? "rgba(225,29,72,.35)" : "rgba(16,185,129,.35)" }}>
               <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)]">Status</p>
               {hasData ? (
                 <>
-                  <span className={`mt-2 w-11 h-11 rounded-full flex items-center justify-center text-white brp-pulse`} style={{ background: status === "ACTION" ? "linear-gradient(135deg,#fb7185,#e11d48)" : "linear-gradient(135deg,#34d399,#059669)" }}>
+                  <span className="mt-2 w-10 h-10 rounded-full flex items-center justify-center text-white brp-pulse" style={{ background: status === "ACTION" ? "linear-gradient(135deg,#fb7185,#e11d48)" : "linear-gradient(135deg,#34d399,#059669)" }}>
                     {status === "ACTION" ? <Flame className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
                   </span>
-                  <p className="mt-1.5 text-lg font-extrabold tracking-wider" style={{ color: status === "ACTION" ? "#e11d48" : "#059669" }}>{status}</p>
+                  <p className="mt-1.5 text-base font-extrabold tracking-wider" style={{ color: status === "ACTION" ? "#e11d48" : "#059669" }}>{status}</p>
                 </>
               ) : <p className="text-2xl font-extrabold text-[var(--muted)] mt-3">—</p>}
             </motion.div>
           </div>
-          <p className="text-[11px] text-[var(--muted)] -mt-2 px-1">All branches in the same period: average <b className="text-[var(--heading)]">{co.avg.toFixed(2)}</b> · negative-review rate <b className="text-[var(--heading)]">{co.complaint_rate.toFixed(1)}%</b> ({co.complaints.toLocaleString()} of {co.reviews.toLocaleString()}). <b>ACTION</b> = this branch's negative-review rate is above the all-branch rate.</p>
+          <p className="text-[11px] text-[var(--muted)] -mt-2 px-1">Compare: all-branch average rating <b className="text-[var(--heading)]">{co.avg.toFixed(2)}</b> | all-branch negative review rate <b className="text-[var(--heading)]">{co.complaint_rate.toFixed(1)}%</b> ({co.complaints.toLocaleString()} of {co.reviews.toLocaleString()}). <b>ACTION</b> = this branch's negative review rate is above the all-branch rate.</p>
 
           {!hasData ? (
             <div className="p-10 text-center bg-[var(--surface)] border border-[var(--border)] rounded-3xl shadow-lg">
@@ -268,8 +269,12 @@ export default function BranchReport() {
               <motion.div {...fade(6)} className="grid grid-cols-1 xl:grid-cols-5 gap-5">
                 <div className="xl:col-span-3 rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg p-5">
                   <div className="flex items-baseline justify-between mb-3">
-                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Negative review reasons</h3>
-                    <span className="text-[10px] text-[var(--muted)]">click a reason to list its negative reviews · the tick marks all branches</span>
+                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Negative Review reasons</h3>
+                    <span className="text-[10px] text-[var(--muted)]">click an issue to list its negative reviews · the tick marks all branches</span>
+                  </div>
+                  <div className="grid grid-cols-[9.5rem_1fr_auto] gap-3 px-2.5 pb-1.5 text-[9px] font-extrabold uppercase tracking-wide text-[var(--muted)]">
+                    <span>Issue</span><span />
+                    <span className="flex gap-2 text-right"><span className="w-9">Count</span><span className="w-10" title="% of branch negative reviews">% branch</span><span className="w-14" title="% of all-branch negative reviews">% all</span></span>
                   </div>
                   <div className="space-y-1">
                     {d.reasons.map((r, i) => {
@@ -285,7 +290,7 @@ export default function BranchReport() {
                           <span className="flex items-center gap-2 text-[11px] tabular-nums">
                             <b className="w-9 text-right text-[var(--heading)]">{r.count}</b>
                             <span className="w-10 text-right font-bold" style={{ color: t.c2 }}>{r.pct_branch}%</span>
-                            <span className="w-14 text-right text-[var(--muted)]" title="Share of all-branch negative reviews">all {r.pct_all}%</span>
+                            <span className="w-14 text-right text-[var(--muted)]" title="Share of all-branch negative reviews">{r.pct_all}%</span>
                           </span>
                         </button>
                       );
@@ -295,7 +300,7 @@ export default function BranchReport() {
                 </div>
 
                 <div className="xl:col-span-2 rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg p-5 flex flex-col items-center">
-                  <h3 className="text-sm font-extrabold text-[var(--heading)] self-start">What they complain about</h3>
+                  <h3 className="text-sm font-extrabold text-[var(--heading)] self-start">Negative reviews by reason</h3>
                   <Donut reasons={named} total={namedTotal} complaints={k.complaints} reduce={!!reduce} pick={pick} setPick={setPick} />
                   <div className="w-full mt-3 pt-3 border-t border-[var(--border)]">
                     <p className="text-[10px] font-extrabold uppercase tracking-wide text-[var(--muted)] mb-2">Ratings</p>
@@ -311,11 +316,61 @@ export default function BranchReport() {
                 </div>
               </motion.div>
 
+              {/* Rating by platform + Reviews by rating (this branch) */}
+              <motion.div {...fade(7)} className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                  <h3 className="px-5 pt-5 pb-3 text-sm font-extrabold text-[var(--heading)]">Rating by platform <span className="font-medium text-[var(--muted)]">(this branch)</span></h3>
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-[10px] uppercase tracking-wide text-white bg-[#1f3864]">
+                      <th className="p-2.5 text-left">Platform</th><th className="p-2.5 text-center">Total Ratings</th><th className="p-2.5 text-center">Avg Rating</th><th className="p-2.5 text-center">Negative Reviews</th><th className="p-2.5 text-center">Negative Review Rate</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {d.platforms.map((p) => (
+                        <tr key={p.name} className="hover:bg-[var(--surface-2)]/50">
+                          <td className="p-2.5 font-bold text-[var(--heading)]">{p.name}</td>
+                          <td className="p-2.5 text-center tabular-nums">{p.total}</td>
+                          <td className="p-2.5 text-center tabular-nums">{p.avg.toFixed(2)}</td>
+                          <td className="p-2.5 text-center tabular-nums">{p.negative}</td>
+                          <td className="p-2.5 text-center tabular-nums font-bold" style={{ color: p.rate > co.complaint_rate ? "#e11d48" : "#059669" }}>{p.rate.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                  <h3 className="px-5 pt-5 pb-3 text-sm font-extrabold text-[var(--heading)]">Reviews by rating <span className="font-medium text-[var(--muted)]">(this branch)</span></h3>
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-[10px] uppercase tracking-wide text-white bg-[#1f3864]">
+                      <th className="p-2.5 text-left">Rating</th><th className="p-2.5 text-left">Total Ratings (% of branch)</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {[5, 4, 3, 2, 1].map((n) => {
+                        const c = d.stars[n - 1], neg = n <= d.max_stars;
+                        return (
+                          <tr key={n} className="hover:bg-[var(--surface-2)]/50">
+                            <td className="p-2.5 font-bold text-[var(--heading)]">{n} star{n > 1 ? "s" : ""} <span className="font-medium" style={{ color: neg ? "#e11d48" : "var(--muted)" }}>({neg ? "negative review" : n >= 4 ? "good" : "neutral"})</span></td>
+                            <td className="p-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className="w-24 tabular-nums">{c} ({Math.round((c / (k.reviews || 1)) * 100)}%)</span>
+                                <span className="flex-1 h-2 rounded-full bg-[var(--surface-2)] overflow-hidden"><motion.span className="block h-full rounded-full" initial={reduce ? false : { width: 0 }} animate={{ width: `${(c / (k.reviews || 1)) * 100}%` }} transition={{ duration: 0.7 }} style={{ background: neg ? "#e11d48" : n === 3 ? "#f59e0b" : "#10b981" }} /></span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <tr className="bg-[var(--bg)] font-extrabold"><td className="p-2.5 text-[var(--heading)]">Total ratings (customers rated)</td><td className="p-2.5 tabular-nums">{k.reviews}</td></tr>
+                      <tr className="bg-[var(--bg)] font-extrabold"><td className="p-2.5 text-[var(--heading)]">Written reviews (with text)</td><td className="p-2.5 tabular-nums">{k.written}</td></tr>
+                      <tr className="bg-[var(--bg)] font-extrabold"><td className="p-2.5 text-[var(--heading)]">Rating only (no text)</td><td className="p-2.5 tabular-nums">{k.rating_only}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </motion.div>
+
               {/* Complaints */}
               <motion.div {...fade(7)} className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
                 <div className="p-5 pb-3 flex flex-wrap items-center gap-3">
                   <div>
-                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Negative reviews</h3>
+                    <h3 className="text-sm font-extrabold text-[var(--heading)]">Latest negative reviews <span className="font-medium text-[var(--muted)]">({d.complaints_total} total)</span></h3>
                     <p className="text-[11px] text-[var(--muted)]">{listed.length === d.complaints_total ? `All ${d.complaints_total}` : `${listed.length} of ${d.complaints_total}`}{d.complaints_total > d.complaints.length ? ` · latest ${d.cap} loaded` : ""}</p>
                   </div>
                   <span className="flex-1" />

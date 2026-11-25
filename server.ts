@@ -2591,7 +2591,8 @@ app.get("/api/ratings/branch-report", authenticateJWT, branchReportAudience, asy
   const brandId = typeof req.query.brand_id === "string" && req.query.brand_id ? req.query.brand_id : null;
   const branch = typeof req.query.branch === "string" && req.query.branch.trim() ? req.query.branch.trim() : null;
   const maxStars = Number(req.query.max_stars) === 3 ? 3 : 2;   // a complaint is a 1-2 star review (1-3 on request)
-  res.json(await getBranchReport({ from, to, brandId, branch, maxStars }));
+  const platformId = typeof req.query.platform_id === "string" && req.query.platform_id ? req.query.platform_id : null;
+  res.json(await getBranchReport({ from, to, brandId, branch, platformId, maxStars }));
 }));
 
 // Items of the reviews on screen: stored ones, plus a GrubTech lookup for the ones still missing (asked again after a while).
