@@ -85,7 +85,7 @@ const fmtDate = (ts?: string) => {
 
 const statusLabel = (s: string) =>
   s === 'resolved' ? 'Complaint Recorded'
-  : s === 'no_action_needed' ? 'No Action Required'
+  : s === 'no_action_needed' ? 'Done · No Action Required'
   : s === 'in_progress' ? 'In Progress'
   : s === 'unreachable' ? 'Unreachable'
   : 'Pending';
