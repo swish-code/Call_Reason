@@ -10,6 +10,7 @@ import { loadCatalog, resolveNames, seedNameRegistry, stampRatingNames, holdRati
 import { normalize as normalizeName, splitVendor } from "./server/nameMatch.js";
 import { registerNameRoutes } from "./server/nameRoutes.js";
 import { getRatingsDashboard } from "./server/ratingsDashboard.js";
+import { getBranchReport, getBranchOptions } from "./server/branchReport.js";
 import { fetchCancelledOrders, fillRatingItems, itemsConfigured, itemsText } from "./server/orderItems.js";
 import { lookupOrders, enrichablePlatforms, lookupPhonesForOrders } from "./server/enrich.js";
 import { runAttemptCallChecks, getAttemptVerification, attemptStatus, ATTEMPT_SOURCES, type AttemptSource } from "./server/attemptChecks.js";
@@ -2572,6 +2573,25 @@ app.get("/api/ratings/dashboard", authenticateJWT, asyncHandler(async (req: any,
   const agent = typeof req.query.agent_id === "string" && req.query.agent_id ? req.query.agent_id : null;
   const platform = typeof req.query.platform_id === "string" && req.query.platform_id ? req.query.platform_id : null;
   res.json(await getRatingsDashboard(from, to, agent, platform));
+}));
+
+// The branch report (team leaders and up): one brand / branch over a period, its complaints and what they are about.
+const branchReportAudience = (req: any, res: any, next: any) =>
+  (req.user.role === "agent" || NON_LEGACY_ROLES.has(req.user.role)) ? res.status(403).json({ error: "Access denied." }) : next();
+app.get("/api/ratings/branch-options", authenticateJWT, branchReportAudience, asyncHandler(async (_req: any, res) => {
+  res.json(await getBranchOptions());
+}));
+app.get("/api/ratings/branch-report", authenticateJWT, branchReportAudience, asyncHandler(async (req: any, res) => {
+  const isDay = (v: any) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const today = new Date(Date.now() + KW_OFFSET_MS).toISOString().slice(0, 10);
+  const to = isDay(req.query.to) ? String(req.query.to) : today;
+  const from = isDay(req.query.from) ? String(req.query.from) : to;
+  if (from > to) return res.status(400).json({ error: "From is after To." });
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) return res.status(400).json({ error: "Pick a period of a year or less." });
+  const brandId = typeof req.query.brand_id === "string" && req.query.brand_id ? req.query.brand_id : null;
+  const branch = typeof req.query.branch === "string" && req.query.branch.trim() ? req.query.branch.trim() : null;
+  const maxStars = Number(req.query.max_stars) === 3 ? 3 : 2;   // a complaint is a 1-2 star review (1-3 on request)
+  res.json(await getBranchReport({ from, to, brandId, branch, maxStars }));
 }));
 
 // Items of the reviews on screen: stored ones, plus a GrubTech lookup for the ones still missing (asked again after a while).

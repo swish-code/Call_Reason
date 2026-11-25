@@ -6,8 +6,8 @@ import { pool } from "./db.js";
 const DAY = (col: string) => `(${col} AT TIME ZONE 'Asia/Kuwait')::date`;
 // The day of the review itself (order_date is text, YYYY-MM-DD once normalised by the upload). A review with no usable
 // date counts on the day it was uploaded, so nothing drops out of the dashboard.
-const REVIEW_DAY = `(CASE WHEN r.order_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN r.order_date ELSE to_char(${DAY("r.uploaded_at")}, 'YYYY-MM-DD') END)`;
-const IN_PERIOD = `${REVIEW_DAY} BETWEEN to_char($1::date, 'YYYY-MM-DD') AND to_char($2::date, 'YYYY-MM-DD')`;
+export const REVIEW_DAY = `(CASE WHEN r.order_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN r.order_date ELSE to_char(${DAY("r.uploaded_at")}, 'YYYY-MM-DD') END)`;
+export const IN_PERIOD = `${REVIEW_DAY} BETWEEN to_char($1::date, 'YYYY-MM-DD') AND to_char($2::date, 'YYYY-MM-DD')`;
 const CLOSED = `('resolved','no_action_needed','unreachable')`;
 
 const HAS_PHONE = `(r.customer_phone IS NOT NULL AND btrim(r.customer_phone) <> '')`;
