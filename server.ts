@@ -4128,8 +4128,48 @@ app.get("/api/surveys/work-time", authenticateJWT, asyncHandler(async (req: any,
   res.json({ agents, surveys, cap, truncated: rows.length >= cap });
 }));
 
+// Find customer (for agents too): every survey ever made for one phone number, with who handled it, how it ended, the
+// call attempts and — for a finished survey — the answers. Read-only. Matches on the last 8 digits, like Do Not Call.
+app.get("/api/surveys/lookup", authenticateJWT, asyncHandler(async (req: any, res) => {
+  if (NON_LEGACY_ROLES.has(req.user.role)) return res.status(403).json({ error: "Access denied." });
+  const key = DB.dncKey(String(req.query.phone || ""));
+  if (!key) return res.status(400).json({ error: "Type the customer's phone number (at least 8 digits)." });
+  const rows = await DB.query(`
+    SELECT a.id, a.task_no, a.customer_phone, a.customer_name, a.order_id, a.item_name, a.status, a.action_type, a.reachability,
+           a.attempt_count, a.scheduled_date, a.created_at, a.completed_at, a.assigned_agent_id,
+           b.brand_name, u.full_name AS agent_name, c.survey_type, t.name AS template_name, c.template_id
+      FROM survey_assignments a
+      LEFT JOIN brands b ON b.id = a.brand_id
+      LEFT JOIN users u ON u.id = a.assigned_agent_id
+      LEFT JOIN survey_campaigns c ON c.id = a.campaign_id
+      LEFT JOIN survey_templates t ON t.id = c.template_id
+     WHERE right(regexp_replace(COALESCE(a.customer_phone, ''), '[^0-9]', '', 'g'), 8) = $1
+     ORDER BY a.created_at DESC LIMIT 50`, [key]);
+  const ids = rows.map((r: any) => r.id);
+  const attempts = ids.length ? await DB.query(
+    `SELECT sa.assignment_id, sa.attempt_number, sa.outcome, sa.note, sa.created_at, u.full_name AS agent_name
+       FROM survey_call_attempts sa LEFT JOIN users u ON u.id = sa.agent_id WHERE sa.assignment_id = ANY($1) ORDER BY sa.attempt_number`, [ids]) : [];
+  const answers = ids.length ? await DB.query(
+    `SELECT r.assignment_id, q.text AS question, q.q_order, an.answer_value
+       FROM survey_responses r
+       JOIN survey_answers an ON an.response_id = r.id
+       JOIN survey_questions q ON q.id = an.question_id
+      WHERE r.assignment_id = ANY($1)
+        AND r.id = (SELECT r2.id FROM survey_responses r2 WHERE r2.assignment_id = r.assignment_id ORDER BY r2.answered_at DESC LIMIT 1)
+        AND COALESCE(btrim(an.answer_value), '') <> ''
+      ORDER BY r.assignment_id, q.q_order`, [ids]) : [];
+  res.json({
+    key, dnc: (await DB.getDnc(key)) || null,
+    rows: rows.map((r: any) => ({
+      ...r, mine: r.assigned_agent_id === req.user.id,
+      attempts: attempts.filter((x: any) => x.assignment_id === r.id),
+      answers: answers.filter((x: any) => x.assignment_id === r.id).map((x: any) => ({ question: x.question, answer: x.answer_value })),
+    })),
+  });
+}));
+
 // Assignment detail (with template questions + attempts)
-app.get("/api/surveys/assignments/:id", authenticateJWT, asyncHandler(async (req, res) => {
+app.get("/api/surveys/assignments/:id",authenticateJWT, asyncHandler(async (req, res) => {
   const a = await DB.getSurveyAssignmentById(req.params.id);
   if (!a) return res.status(404).json({ error: "Assignment not found." });
   res.json(a);

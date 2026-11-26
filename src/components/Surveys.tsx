@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { User } from "../types.js";
-import { Megaphone, ListChecks, ClipboardList, Database, LayoutList, BarChart2, PhoneOff } from "lucide-react";
+import { Megaphone, ListChecks, ClipboardList, Database, LayoutList, BarChart2, PhoneOff, Search } from "lucide-react";
+import SurveyFindCustomer from "./SurveyFindCustomer.tsx";
 import SurveyCampaigns from "./SurveyCampaigns.tsx";
 import SurveyQueue from "./SurveyQueue.tsx";
 import SurveyTemplates from "./SurveyTemplates.tsx";
@@ -11,7 +12,7 @@ import DoNotCall from "./DoNotCall.tsx";
 
 interface SurveysProps { currentUser: User; }
 
-type Tab = "dashboard" | "campaigns" | "queue" | "all" | "templates" | "data" | "dnc";
+type Tab = "dashboard" | "campaigns" | "queue" | "find" | "all" | "templates" | "data" | "dnc";
 
 export default function Surveys({ currentUser }: SurveysProps) {
   const role = currentUser.role;
@@ -22,6 +23,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
     { key: "templates", label: "Templates", icon: <ClipboardList className="w-4 h-4" />, visible: ["admin", "manager", "supervisor", "leader"].includes(role) },
     { key: "campaigns", label: "Campaigns", icon: <Megaphone className="w-4 h-4" />, visible: !isAgent && !isMarketing },
     { key: "queue", label: "Survey Queue", icon: <ListChecks className="w-4 h-4" />, visible: !isMarketing },
+    { key: "find", label: "Find customer", icon: <Search className="w-4 h-4" />, visible: !isMarketing },
     { key: "all", label: "All Surveys", icon: <LayoutList className="w-4 h-4" />, visible: !isAgent },
     { key: "data", label: "Survey Data", icon: <Database className="w-4 h-4" />, visible: !isAgent },
     { key: "dashboard", label: "Dashboard", icon: <BarChart2 className="w-4 h-4" />, visible: !isAgent && !isMarketing },
@@ -58,6 +60,7 @@ export default function Surveys({ currentUser }: SurveysProps) {
       {activeTab === "dnc" && <DoNotCall currentUser={currentUser} />}
       {activeTab === "campaigns" && <SurveyCampaigns currentUser={currentUser} />}
       {activeTab === "queue" && <SurveyQueue currentUser={currentUser} />}
+      {activeTab === "find" && <SurveyFindCustomer />}
       {activeTab === "all" && <AllSurveys currentUser={currentUser} />}
       {activeTab === "templates" && <SurveyTemplates currentUser={currentUser} />}
       {activeTab === "data" && <SurveysData currentUser={currentUser} />}
